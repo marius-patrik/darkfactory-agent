@@ -14,7 +14,6 @@ plans/**
 .vscode/**
 .vscode-test.mjs
 .husky/**
-node_modules/**
 .env*
 *.log
 *.vsix
@@ -34,9 +33,12 @@ tailwind.config.js
 tsconfig.json
 tsconfig.test.json
 bun.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # Documentation (keep README and CHANGELOG at root for marketplace)
 docs/**
 
 # Notices and license are kept by VSCE automatically
-# Keep: package.json, README.md, CHANGELOG.md, LICENSE, ThirdPartyNotices.txt, media/, out/extension/, out/webview/
+# Keep: package.json, README.md, CHANGELOG.md, LICENSE, ThirdPartyNotices.txt, media/, out/extension/, out/webview/, node_modules/

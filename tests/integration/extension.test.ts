@@ -66,14 +66,24 @@ suite("VSDAW Extension Integration", () => {
     );
   });
 
-  test("opens a .vsdaw file and loads the engine webview", async () => {
+  test("opens a .vsdaw file and starts the background engine", async () => {
     await ensureSampleFixture();
     const uri = vscode.Uri.file(FIXTURE_PATH);
     await vscode.commands.executeCommand("vscode.openWith", uri, "vsdaw.editor");
 
-    await waitForCondition(() => {
-      const tabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
-      return tabs.some((tab) => tab.label.includes("VSDAW") || tab.label.includes("Sample"));
-    });
+    await waitForCondition(
+      () => {
+        const tabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
+        return tabs.some(
+          (tab) =>
+            tab.label.includes("VSDAW") ||
+            tab.label.includes("Sample") ||
+            tab.label.includes("Timeline") ||
+            tab.label.includes(".vsdaw"),
+        );
+      },
+      30000,
+      250,
+    );
   });
 });

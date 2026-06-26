@@ -2,6 +2,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { MessageType } from "../shared/protocol.js";
+import type { PlaywrightEngineManager } from "./playwrightEngine.js";
 import type { ProjectManager } from "./projectManager.js";
 import type {
   BrowserWebviewProvider,
@@ -13,6 +14,7 @@ import type {
 export interface CommandDependencies {
   context: vscode.ExtensionContext;
   projectManager: ProjectManager;
+  engineManager: PlaywrightEngineManager;
   mixerProvider: MixerWebviewProvider;
   pianoRollProvider: PianoRollWebviewProvider;
   browserProvider: BrowserWebviewProvider;
@@ -130,6 +132,43 @@ export function registerCommands(deps: CommandDependencies): vscode.Disposable[]
 
   register("vsdaw.settings", () => {
     void vscode.commands.executeCommand("workbench.action.openSettings", "vsdaw");
+  });
+
+  register("vsdaw.showEngineMenu", async () => {
+    const { engineManager } = deps;
+    const running = engineManager.isRunning;
+    const items: vscode.QuickPickItem[] = [
+      {
+        label: running ? "$(debug-stop) Stop Engine" : "$(play) Start Engine",
+        description: running
+          ? "Stop the background Chrome audio engine"
+          : "Launch background Chrome audio engine",
+      },
+      {
+        label: "$(debug-restart) Restart Engine",
+        description: "Restart the background Chrome audio engine",
+      },
+      { label: "$(output) Show Output", description: "Open the VSDAW output channel" },
+      { label: "$(gear) Open Settings", description: "Open VSDAW settings" },
+    ];
+
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: `VSDAW Engine — ${running ? "running" : "stopped"}`,
+    });
+    if (!picked) return;
+
+    if (picked.label.includes("Stop Engine")) {
+      await engineManager.stop();
+    } else if (picked.label.includes("Start Engine")) {
+      await engineManager.start();
+    } else if (picked.label.includes("Restart Engine")) {
+      await engineManager.stop();
+      await engineManager.start();
+    } else if (picked.label.includes("Show Output")) {
+      outputChannel.show();
+    } else if (picked.label.includes("Open Settings")) {
+      void vscode.commands.executeCommand("workbench.action.openSettings", "vsdaw");
+    }
   });
 
   return disposables;

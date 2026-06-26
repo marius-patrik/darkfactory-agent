@@ -79,6 +79,11 @@
         "command": "vsdaw.settings",
         "title": "Open Settings",
         "category": "VSDAW"
+      },
+      {
+        "command": "vsdaw.showEngineMenu",
+        "title": "Show Engine Menu",
+        "category": "VSDAW"
       }
     ],
     "keybindings": [
@@ -180,13 +185,20 @@
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
     "typecheck:engine": "tsc --noEmit --project tsconfig.engine.json",
-    "package": "bun run build && npx @vscode/vsce package --no-dependencies",
+    "package": "bun run build && node scripts/package.mjs",
     "version": "standard-version"
   },
   "lint-staged": {
     "*.{ts,tsx,mjs,js,json,md,yml,yaml}": ["biome check --write --no-errors-on-unmatched"]
   },
   "dependencies": {
+    "chrome-launcher": "^1.2.1",
+    "playwright-core": "^1.61.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@hookform/resolvers": "^5.4.0",
     "@opendaw/lib-dsp": "^0.0.85",
     "@opendaw/lib-runtime": "^0.0.80",
@@ -213,28 +225,6 @@
     "@radix-ui/react-tabs": "^1.1.15",
     "@radix-ui/react-tooltip": "^1.2.10",
     "@tanstack/react-query": "^5.101.1",
-    "autoprefixer": "^10.5.2",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "dagre": "^0.8.5",
-    "framer-motion": "^12.42.0",
-    "immer": "^11.1.8",
-    "jszip": "^3.10.1",
-    "lucide-react": "^1.21.0",
-    "postcss": "^8.5.15",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-hook-form": "^7.80.0",
-    "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^3.4.0",
-    "webmidi": "^3.1.16",
-    "zod": "^3.24.3",
-    "zustand": "^5.0.14"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
-    "@ffmpeg/ffmpeg": "^0.12.15",
-    "@ffmpeg/util": "^0.12.2",
     "@types/bun": "^1.1.0",
     "@types/dagre": "^0.7.54",
     "@types/jest": "^29.5.14",
@@ -248,15 +238,31 @@
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.3.0",
+    "autoprefixer": "^10.5.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dagre": "^0.8.5",
     "esbuild": "^0.25.0",
+    "framer-motion": "^12.42.0",
     "husky": "^9.1.7",
+    "immer": "^11.1.8",
     "jest": "^29.7.0",
+    "jszip": "^3.10.1",
     "lint-staged": "^15.4.0",
+    "lucide-react": "^1.21.0",
     "mocha": "^10.7.0",
     "ovsx": "^0.10.0",
-    "playwright": "^1.61.0",
+    "postcss": "^8.5.15",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-hook-form": "^7.80.0",
     "standard-version": "^9.5.0",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^3.4.0",
     "ts-jest": "^29.4.11",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "webmidi": "^3.1.16",
+    "zod": "^3.24.3",
+    "zustand": "^5.0.14"
   }
 }

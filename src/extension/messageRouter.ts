@@ -1,5 +1,6 @@
 import type * as vscode from "vscode";
 import { MessageSchema, MessageType } from "../shared/protocol.js";
+import type { EngineTransport } from "./engineTransport.js";
 import type { MessageEnvelope, PendingRequest } from "./types.js";
 
 export interface MessageRouterCallbacks {
@@ -9,7 +10,7 @@ export interface MessageRouterCallbacks {
 }
 
 export class MessageRouter implements vscode.Disposable {
-  private engines = new Map<string, vscode.WebviewPanel>();
+  private engines = new Map<string, EngineTransport>();
   private views = new Map<string, Set<vscode.WebviewPanel>>();
   private pending = new Map<string, Map<string, PendingRequest>>();
 
@@ -30,24 +31,32 @@ export class MessageRouter implements vscode.Disposable {
     this.views.clear();
   }
 
-  registerEngine(projectId: string, panel: vscode.WebviewPanel): void {
-    this.engines.set(projectId, panel);
+  registerEngine(projectId: string, transport: EngineTransport): vscode.Disposable {
+    this.engines.set(projectId, transport);
     const disposables: vscode.Disposable[] = [];
 
     disposables.push(
-      panel.webview.onDidReceiveMessage((raw: unknown) => {
-        this.handleEngineMessage(projectId, raw);
+      transport.onDidReceiveMessage((message) => {
+        this.handleEngineMessage(projectId, message);
       }),
     );
 
     disposables.push(
-      panel.onDidDispose(() => {
+      transport.onDidDispose(() => {
         this.unregisterEngine(projectId);
         for (const d of disposables) {
           d.dispose();
         }
       }),
     );
+
+    return {
+      dispose: () => {
+        for (const d of disposables) {
+          d.dispose();
+        }
+      },
+    };
   }
 
   unregisterEngine(projectId: string): void {
@@ -56,7 +65,7 @@ export class MessageRouter implements vscode.Disposable {
     if (pending) {
       for (const [, req] of pending) {
         clearTimeout(req.timeout);
-        req.reject(new Error("Engine webview disposed"));
+        req.reject(new Error("Engine transport disposed"));
       }
       this.pending.delete(projectId);
     }
@@ -117,19 +126,21 @@ export class MessageRouter implements vscode.Disposable {
   }
 
   routeToEngine(projectId: string, message: Omit<MessageEnvelope, "direction">): void {
-    const panel = this.engines.get(projectId);
-    if (!panel) {
+    const transport = this.engines.get(projectId);
+    if (!transport) {
       this.outputChannel.appendLine(
         `[router] no engine for project ${projectId} (dropping ${message.type})`,
       );
       return;
     }
     const envelope: MessageEnvelope = { ...message, direction: "host-to-engine" };
-    Promise.resolve(panel.webview.postMessage(envelope)).catch((error) => {
+    try {
+      transport.postMessage(envelope);
+    } catch (error) {
       this.outputChannel.appendLine(
         `[router] failed to post to engine ${projectId}: ${String(error)}`,
       );
-    });
+    }
   }
 
   routeToViews(projectId: string, message: Omit<MessageEnvelope, "direction">): void {
@@ -151,9 +162,9 @@ export class MessageRouter implements vscode.Disposable {
     payload: unknown,
     options: { responseType?: string; timeoutMs?: number } = {},
   ): Promise<MessageEnvelope> {
-    const panel = this.engines.get(projectId);
-    if (!panel) {
-      throw new Error(`No engine webview for project ${projectId}`);
+    const transport = this.engines.get(projectId);
+    if (!transport) {
+      throw new Error(`No engine transport for project ${projectId}`);
     }
 
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -186,10 +197,12 @@ export class MessageRouter implements vscode.Disposable {
         payload,
         requestId,
       };
-      Promise.resolve(panel.webview.postMessage(envelope)).catch((error) => {
+      try {
+        transport.postMessage(envelope);
+      } catch (error) {
         this.clearPending(projectId, requestId);
         reject(error instanceof Error ? error : new Error(String(error)));
-      });
+      }
     });
   }
 

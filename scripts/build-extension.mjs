@@ -19,7 +19,7 @@ const extensionConfig = {
   format: "cjs",
   target: "node18",
   platform: "node",
-  external: ["vscode"],
+  external: ["vscode", "playwright-core", "chrome-launcher"],
   sourcemap: true,
 };
 

@@ -7,7 +7,6 @@ export type { MessageEnvelope };
 export interface ProjectSession {
   projectId: string;
   uri: vscode.Uri;
-  enginePanel: vscode.WebviewPanel;
   engineReady: boolean;
   pendingEngineMessages: MessageEnvelope[];
   views: Map<string, vscode.WebviewPanel>;
@@ -19,6 +18,7 @@ export interface ProjectSession {
   isClosing?: boolean;
   projectJson?: ProjectJson;
   lastSnapshot?: unknown;
+  engineDisposables?: vscode.Disposable[];
 }
 
 export interface PendingRequest {

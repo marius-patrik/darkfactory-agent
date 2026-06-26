@@ -11,14 +11,15 @@ import {
 } from "../shared/protocol.js";
 import type { ProjectJson } from "../shared/schemas.js";
 import { acquireServer, releaseServer } from "./audioServer.js";
-import { createEngineWebview } from "./engineWebview.js";
 import type { MessageRouter } from "./messageRouter.js";
+import type { PlaywrightEngineManager } from "./playwrightEngine.js";
 import type { MessageEnvelope, ProjectSession } from "./types.js";
 
 export interface ProjectManagerOptions {
   context: vscode.ExtensionContext;
   outputChannel: vscode.OutputChannel;
   router: MessageRouter;
+  engineManager: PlaywrightEngineManager;
 }
 
 interface RecoveryMetadata {
@@ -142,18 +143,20 @@ export class ProjectManager implements vscode.Disposable {
     const cleanupDisposables: vscode.Disposable[] = [];
 
     try {
-      const enginePanel = createEngineWebview(this.context, port, projectId, this.router);
-      cleanupDisposables.push(enginePanel);
+      const origin = this.serverOrigin ?? `http://127.0.0.1:${port}`;
+      const engineTransport = await this.options.engineManager.createEngine(projectId, origin);
+      const engineDisposable = this.router.registerEngine(projectId, engineTransport);
+      cleanupDisposables.push(engineTransport, engineDisposable);
 
       const session: ProjectSession = {
         projectId,
         uri,
-        enginePanel,
         engineReady: false,
         pendingEngineMessages: [],
         views: new Map(),
         isDirty: false,
         isUntitled,
+        engineDisposables: [engineTransport, engineDisposable],
       };
 
       session.views.set("vsdaw.editor", timelinePanel);
@@ -164,10 +167,10 @@ export class ProjectManager implements vscode.Disposable {
       this.activeProjectId = projectId;
 
       cleanupDisposables.push(
-        enginePanel.onDidDispose(() => {
+        engineTransport.onDidDispose(() => {
           if (!this.sessions.has(projectId)) return;
           this.outputChannel.appendLine(
-            `[project] engine panel closed for ${projectId}, closing session`,
+            `[project] engine transport closed for ${projectId}, closing session`,
           );
           this.closeProject(projectId).catch(() => {
             // ignore
@@ -229,10 +232,15 @@ export class ProjectManager implements vscode.Disposable {
     this.router.unregisterEngine(projectId);
     session.pendingEngineMessages = [];
 
-    try {
-      session.enginePanel.dispose();
-    } catch {
-      // ignore
+    if (session.engineDisposables) {
+      for (const d of session.engineDisposables) {
+        try {
+          d.dispose();
+        } catch {
+          // ignore
+        }
+      }
+      session.engineDisposables = undefined;
     }
 
     for (const [, panel] of session.views) {

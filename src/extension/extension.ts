@@ -3,6 +3,7 @@ import { releaseServer } from "./audioServer.js";
 import { registerCommands } from "./commands.js";
 import { VsdawEditorProvider } from "./editor/vsdawEditor.js";
 import { MessageRouter } from "./messageRouter.js";
+import { PlaywrightEngineManager } from "./playwrightEngine.js";
 import { ProjectManager } from "./projectManager.js";
 import {
   BrowserWebviewProvider,
@@ -12,6 +13,7 @@ import {
 } from "./views/index.js";
 
 let projectManager: ProjectManager | undefined;
+let statusBarItem: vscode.StatusBarItem | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel("VSDAW");
@@ -33,12 +35,20 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(router);
 
+  const engineManager = new PlaywrightEngineManager({ outputChannel });
+  context.subscriptions.push(engineManager);
+
   projectManager = new ProjectManager({
     context,
     outputChannel,
     router,
+    engineManager,
   });
   context.subscriptions.push(projectManager);
+
+  statusBarItem = createStatusBarItem(engineManager, outputChannel);
+  context.subscriptions.push(statusBarItem);
+  statusBarItem.show();
 
   const getServerOrigin = () => projectManager?.getServerOrigin();
 
@@ -58,6 +68,7 @@ export async function activate(context: vscode.ExtensionContext) {
     ...registerCommands({
       context,
       projectManager,
+      engineManager,
       mixerProvider,
       pianoRollProvider,
       browserProvider,
@@ -72,4 +83,32 @@ export function deactivate(): Thenable<void> {
   return Promise.all([projectManager?.closeAll() ?? Promise.resolve(), releaseServer()]).then(
     () => undefined,
   );
+}
+
+function createStatusBarItem(
+  engineManager: PlaywrightEngineManager,
+  outputChannel: vscode.OutputChannel,
+): vscode.StatusBarItem {
+  const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  item.command = "vsdaw.showEngineMenu";
+
+  const update = () => {
+    const running = engineManager.isRunning;
+    const count = engineManager.projectCount;
+    item.text = running
+      ? `$(play-circle) VSDAW Engine${count > 0 ? ` (${count})` : ""}`
+      : "$(circle-slash) VSDAW Engine";
+    item.tooltip = running
+      ? `VSDAW audio engine is running with ${count} project(s). Click for options.`
+      : "VSDAW audio engine is stopped. Click for options.";
+  };
+
+  engineManager.onDidChange(update);
+  update();
+
+  return item;
+}
+
+export function updateStatusBar(): void {
+  statusBarItem?.show();
 }

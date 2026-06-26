@@ -32,6 +32,25 @@ function setStatus(text: string) {
   log("status", text);
 }
 
+declare global {
+  interface Window {
+    vsdawSend?: (message: Message<unknown>) => void;
+    vsdawReceiveMessage?: (message: Message<unknown>) => void;
+  }
+}
+
+function isPlaywrightBridge(): boolean {
+  return typeof window.vsdawSend === "function";
+}
+
+function sendToHost<T>(message: Message<T>) {
+  if (isPlaywrightBridge()) {
+    window.vsdawSend?.(message as Message<unknown>);
+  } else {
+    window.parent.postMessage(message, "*");
+  }
+}
+
 function post<T>(type: string, payload: T, requestId?: string) {
   const message: Message<T> = {
     direction: "engine-to-host",
@@ -40,7 +59,7 @@ function post<T>(type: string, payload: T, requestId?: string) {
     payload,
     requestId,
   };
-  window.parent.postMessage(message, "*");
+  sendToHost(message);
 }
 
 function broadcast<T>(type: string, payload: T) {
@@ -50,7 +69,7 @@ function broadcast<T>(type: string, payload: T) {
     type,
     payload,
   };
-  window.parent.postMessage(message, "*");
+  sendToHost(message);
 }
 
 let controller: ProjectController | null = null;
@@ -142,9 +161,9 @@ function resumeOnUserGesture(audioContext: AudioContext) {
   window.addEventListener("keydown", resume, { once: true });
 }
 
-window.addEventListener("message", async (event) => {
-  if (!isEngineMessage(event.data)) return;
-  const message = event.data as Message;
+async function onHostMessage(event: MessageEvent<unknown> | Message<unknown>) {
+  const message = (event instanceof MessageEvent ? event.data : event) as Message<unknown>;
+  if (!isEngineMessage(message)) return;
   if (message.direction !== "host-to-engine") return;
   if (message.projectId !== projectId) return;
 
@@ -180,6 +199,15 @@ window.addEventListener("message", async (event) => {
     log("message", `unhandled exception for ${message.type}: ${messageText}`);
     post(MessageType.EngineError, { message: messageText, stack }, message.requestId);
   }
+}
+
+window.addEventListener("message", (event) => {
+  void onHostMessage(event);
 });
+
+// Expose a global receive hook for the Playwright/Node bridge.
+window.vsdawReceiveMessage = (message) => {
+  void onHostMessage(message);
+};
 
 boot();
