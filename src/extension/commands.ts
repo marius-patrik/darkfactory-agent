@@ -45,6 +45,18 @@ export function registerCommands(deps: CommandDependencies): vscode.Disposable[]
   register("vsdaw.newProject", () => projectManager.newProject());
   register("vsdaw.openProject", () => projectManager.openProject());
 
+  register("vsdaw.undo", () => {
+    const projectId = getActiveProjectId(projectManager);
+    if (!projectId) return;
+    return projectManager.undo(projectId);
+  });
+
+  register("vsdaw.redo", () => {
+    const projectId = getActiveProjectId(projectManager);
+    if (!projectId) return;
+    return projectManager.redo(projectId);
+  });
+
   register("vsdaw.showTimeline", async () => {
     const projectId = getActiveProjectId(projectManager);
     if (!projectId) return;

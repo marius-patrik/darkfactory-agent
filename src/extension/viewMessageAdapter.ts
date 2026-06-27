@@ -8,6 +8,8 @@
  */
 
 import {
+  type DeviceIdPayload,
+  type DeviceParameterPayload,
   type MessageEnvelope,
   MessageType,
   type MidiNoteIdPayload,
@@ -17,8 +19,6 @@ import {
   type TrackColorPayload,
   type TrackCreatePayload,
   type TrackIdPayload,
-  type DeviceIdPayload,
-  type DeviceParameterPayload,
   type TrackInsertPayload,
   type TrackNamePayload,
   type TrackPanPayload,

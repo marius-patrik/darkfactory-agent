@@ -1,6 +1,7 @@
 import type * as vscode from "vscode";
 import type { MessageEnvelope } from "../shared/protocol.js";
 import type { ProjectJson } from "../shared/schemas.js";
+import type { UndoManager } from "./undoManager.js";
 
 export type { MessageEnvelope };
 
@@ -19,6 +20,7 @@ export interface ProjectSession {
   projectJson?: ProjectJson;
   lastSnapshot?: unknown;
   engineDisposables?: vscode.Disposable[];
+  undoManager?: UndoManager<Uint8Array>;
   audioFiles: Map<string, Uint8Array>;
 }
 

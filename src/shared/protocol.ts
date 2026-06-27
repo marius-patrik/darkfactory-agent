@@ -150,6 +150,7 @@ export enum MessageType {
   ExportRender = "export.render",
 
   StateGet = "state.get",
+  StateSet = "state.set",
   StateUpdate = "state.update",
 }
 
@@ -175,6 +176,11 @@ export interface ProjectLoadPayload {
 
 export interface ProjectSavePayload {
   format?: "arraybuffer" | "base64";
+}
+
+export interface StateSetPayload {
+  /** Base64-encoded engine project binary. */
+  data: string;
 }
 
 export interface TransportSeekPayload {

@@ -99,7 +99,13 @@ export type ViewMessage =
   | { type: "track/create"; trackType: "audio" | "midi" | "bus"; name?: string; color?: string }
   | { type: "track/delete"; trackId: string }
   | { type: "track/setColor"; trackId: string; color: string }
-  | { type: "track/addInsert"; trackId: string; deviceName: string; slot?: DeviceCategory; insertIndex?: number }
+  | {
+      type: "track/addInsert";
+      trackId: string;
+      deviceName: string;
+      slot?: DeviceCategory;
+      insertIndex?: number;
+    }
   | { type: "timeline/selectRegion"; regionId: string | null }
   | { type: "timeline/moveRegion"; regionId: string; start: number }
   | { type: "pianoRoll/addNote"; note: NoteState }

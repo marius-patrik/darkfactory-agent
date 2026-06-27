@@ -10,6 +10,7 @@ import {
   type ProjectLoadPayload,
   type ProjectNewPayload,
   type ProjectState,
+  type StateSetPayload,
 } from "../shared/protocol.js";
 import type { ProjectJson } from "../shared/schemas.js";
 import { acquireServer, releaseServer } from "./audioServer.js";
@@ -17,6 +18,7 @@ import type { MessageRouter } from "./messageRouter.js";
 import type { PlaywrightEngineManager } from "./playwrightEngine.js";
 import { ProjectStateProjector } from "./stateProjector.js";
 import type { MessageEnvelope, ProjectSession } from "./types.js";
+import { UndoManager } from "./undoManager.js";
 
 export interface ProjectManagerOptions {
   context: vscode.ExtensionContext;
@@ -161,6 +163,7 @@ export class ProjectManager implements vscode.Disposable {
         isDirty: false,
         isUntitled,
         engineDisposables: [engineTransport, engineDisposable],
+        undoManager: new UndoManager<Uint8Array>({ limit: 100 }),
         audioFiles: new Map(),
       };
 
@@ -411,8 +414,104 @@ export class ProjectManager implements vscode.Disposable {
     vscode.window.showErrorMessage(`VSDAW engine error: ${JSON.stringify(payload)}`);
   }
 
-  onViewMessage(projectId: string, _message: MessageEnvelope): void {
+  onViewMessage(projectId: string, message: MessageEnvelope): void {
+    if (message.type === "command/undo") {
+      void this.undo(projectId);
+      return;
+    }
+    if (message.type === "command/redo") {
+      void this.redo(projectId);
+      return;
+    }
     this.markDirty(projectId);
+  }
+
+  async onBeforeViewMessage(projectId: string, message: MessageEnvelope): Promise<boolean> {
+    if (!isMutableMessage(message)) {
+      return false;
+    }
+
+    const session = this.sessions.get(projectId);
+    if (!session?.undoManager) {
+      return false;
+    }
+
+    try {
+      // Establish the base snapshot on the first mutable action.
+      if (!session.undoManager.current) {
+        const base = await this.captureEngineSnapshot(projectId);
+        session.undoManager.setBase(base);
+      }
+
+      await this.router.requestEngine(projectId, message.type, message.payload, {
+        responseType: `${message.type}.ack`,
+        timeoutMs: 30000,
+      });
+
+      const snapshot = await this.captureEngineSnapshot(projectId);
+      session.undoManager.push(snapshot);
+      this.markDirty(projectId);
+      return true;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      this.outputChannel.appendLine(`[project] mutation failed for ${message.type}: ${text}`);
+      vscode.window.showErrorMessage(`VSDAW: ${text}`);
+      return true;
+    }
+  }
+
+  async undo(projectId: string): Promise<void> {
+    const session = this.sessions.get(projectId);
+    if (!session?.undoManager?.canUndo) {
+      return;
+    }
+
+    const snapshot = session.undoManager.undo();
+    if (!snapshot) {
+      return;
+    }
+
+    await this.restoreEngineSnapshot(projectId, snapshot);
+    this.markDirty(projectId);
+  }
+
+  async redo(projectId: string): Promise<void> {
+    const session = this.sessions.get(projectId);
+    if (!session?.undoManager?.canRedo) {
+      return;
+    }
+
+    const snapshot = session.undoManager.redo();
+    if (!snapshot) {
+      return;
+    }
+
+    await this.restoreEngineSnapshot(projectId, snapshot);
+    this.markDirty(projectId);
+  }
+
+  private async captureEngineSnapshot(projectId: string): Promise<Uint8Array> {
+    const response = await this.router.requestEngine(
+      projectId,
+      MessageType.ProjectSave,
+      { format: "arraybuffer" } as const,
+      { responseType: `${MessageType.ProjectSave}.ack`, timeoutMs: 30000 },
+    );
+    const bytes = response.payload as Uint8Array | ArrayBuffer | undefined;
+    if (!bytes) {
+      throw new Error("Engine returned empty project data");
+    }
+    return bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
+  }
+
+  private async restoreEngineSnapshot(projectId: string, snapshot: Uint8Array): Promise<void> {
+    const payload: StateSetPayload = {
+      data: Buffer.from(snapshot).toString("base64"),
+    };
+    await this.router.requestEngine(projectId, MessageType.StateSet, payload, {
+      responseType: `${MessageType.StateSet}.ack`,
+      timeoutMs: 30000,
+    });
   }
 
   onEngineStateUpdate(projectId: string, message: MessageEnvelope): void {
@@ -908,6 +1007,46 @@ async function fileExists(uri: vscode.Uri): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+const MUTABLE_MESSAGE_TYPES = new Set<string>([
+  MessageType.TransportSetTempo,
+  MessageType.TransportSetTimeSignature,
+  MessageType.TrackCreate,
+  MessageType.TrackDelete,
+  MessageType.TrackReorder,
+  MessageType.TrackSetName,
+  MessageType.TrackSetColor,
+  MessageType.TrackSetVolumeDb,
+  MessageType.TrackSetPan,
+  MessageType.TrackSetMute,
+  MessageType.TrackSetSolo,
+  MessageType.TrackSetArm,
+  MessageType.TrackAddInsert,
+  MessageType.TrackRemoveInsert,
+  MessageType.TrackMoveInsert,
+  MessageType.TrackSetInsertParameter,
+  MessageType.RegionCreateAudio,
+  MessageType.RegionCreateMidi,
+  MessageType.RegionMove,
+  MessageType.RegionResize,
+  MessageType.RegionSplit,
+  MessageType.RegionSetFadeIn,
+  MessageType.RegionSetFadeOut,
+  MessageType.RegionDelete,
+  MessageType.MidiAddNote,
+  MessageType.MidiMoveNote,
+  MessageType.MidiResizeNote,
+  MessageType.MidiDeleteNote,
+  MessageType.MidiSetNoteVelocity,
+  MessageType.DeviceCreate,
+  MessageType.DeviceDelete,
+  MessageType.DeviceMove,
+  MessageType.DeviceSetParameter,
+]);
+
+function isMutableMessage(message: MessageEnvelope): boolean {
+  return MUTABLE_MESSAGE_TYPES.has(message.type);
 }
 
 export async function writeEmptyProject(uri: vscode.Uri): Promise<void> {

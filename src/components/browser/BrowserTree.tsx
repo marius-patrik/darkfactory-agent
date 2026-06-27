@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Cpu, FileAudio, Folder, Music, Plus } from "lucide-react";
-import { useState, type KeyboardEvent } from "react";
+import { type KeyboardEvent, useState } from "react";
 import type { BrowserNode, DeviceItem } from "../../views/shared/types.js";
 
 export interface BrowserTreeProps {
@@ -9,7 +9,12 @@ export interface BrowserTreeProps {
   onAddToTrack?: (device: DeviceItem) => void;
 }
 
-export const BrowserTree: React.FC<BrowserTreeProps> = ({ root, onPreview, onDragStart, onAddToTrack }) => {
+export const BrowserTree: React.FC<BrowserTreeProps> = ({
+  root,
+  onPreview,
+  onDragStart,
+  onAddToTrack,
+}) => {
   if ((root.children?.length ?? 0) === 0) {
     return (
       <output

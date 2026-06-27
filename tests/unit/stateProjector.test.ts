@@ -257,12 +257,10 @@ describe("ProjectStateProjector", () => {
 
     await projector.requestDeviceList();
 
-    expect(router.requestEngine).toHaveBeenCalledWith(
-      PROJECT_ID,
-      "device.list",
-      undefined,
-      { responseType: "device.list", timeoutMs: 10000 },
-    );
+    expect(router.requestEngine).toHaveBeenCalledWith(PROJECT_ID, "device.list", undefined, {
+      responseType: "device.list",
+      timeoutMs: 10000,
+    });
 
     const calls = (router.broadcastToViews as jest.Mock).mock.calls as [string, HostMessage][];
     const browserCall = calls.find(([id, msg]) => id === PROJECT_ID && msg.type === "host/browser");

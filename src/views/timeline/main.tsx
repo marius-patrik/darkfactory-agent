@@ -109,6 +109,8 @@ const TimelineView: React.FC = () => {
             onSetTimeSignature={state.transport.setTimeSignature}
             onShowView={state.commands.showView}
             onAddTrack={state.trackActions.createTrack}
+            onUndo={state.commands.undo}
+            onRedo={state.commands.redo}
             onImportAudio={state.commands.importAudio}
             onImportMidi={state.commands.importMidi}
             onSettings={() => state.commands.showView("browser")}

@@ -1,8 +1,8 @@
 import {
-  MessageType,
   type DeviceListItem,
   type RegionState as EngineRegionState,
   type TrackState as EngineTrackState,
+  MessageType,
   type ProjectState,
   type TransportState,
 } from "../shared/protocol.js";

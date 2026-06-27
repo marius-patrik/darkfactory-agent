@@ -11,6 +11,12 @@ export interface MessageRouterCallbacks {
   onEngineStateUpdate: (projectId: string, message: MessageEnvelope) => void;
   onViewMessage: (projectId: string, message: MessageEnvelope) => void;
   onViewSelection?: (projectId: string, regionId: string | null) => void;
+  /**
+   * Called before an adapted view message is forwarded to the engine. Return
+   * `true` to indicate the message has been handled and the default routing
+   * should be skipped.
+   */
+  onBeforeViewMessage?: (projectId: string, message: MessageEnvelope) => Promise<boolean>;
 }
 
 export class MessageRouter implements vscode.Disposable {
@@ -90,7 +96,7 @@ export class MessageRouter implements vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
     disposables.push(
       panel.webview.onDidReceiveMessage((raw: unknown) => {
-        this.handleViewMessage(projectId, raw);
+        void this.handleViewMessage(projectId, raw);
       }),
     );
     disposables.push(
@@ -335,7 +341,7 @@ export class MessageRouter implements vscode.Disposable {
     return true;
   }
 
-  private handleViewMessage(projectId: string, raw: unknown): void {
+  private async handleViewMessage(projectId: string, raw: unknown): Promise<void> {
     if (raw === null || typeof raw !== "object" || !("type" in raw)) {
       this.outputChannel.appendLine(`[router] invalid view message: ${JSON.stringify(raw)}`);
       return;
@@ -350,6 +356,16 @@ export class MessageRouter implements vscode.Disposable {
 
     if (viewMessage.type === "timeline/selectRegion") {
       this.callbacks.onViewSelection?.(projectId, viewMessage.regionId ?? null);
+      return;
+    }
+
+    // Undo/redo are handled by the host project manager, not the engine.
+    if (viewMessage.type === "command/undo" || viewMessage.type === "command/redo") {
+      this.callbacks.onViewMessage(projectId, {
+        projectId,
+        direction: "view-to-host",
+        type: viewMessage.type,
+      });
       return;
     }
 
@@ -411,6 +427,12 @@ export class MessageRouter implements vscode.Disposable {
       this.outputChannel.appendLine(
         `[router] unexpected adapted envelope direction: ${message.direction}`,
       );
+      return;
+    }
+
+    const handled = await (this.callbacks.onBeforeViewMessage?.(projectId, message) ??
+      Promise.resolve(false));
+    if (handled) {
       return;
     }
 

@@ -6,8 +6,10 @@ import {
   LayoutGrid,
   MoreHorizontal,
   Plus,
+  Redo2,
   Save,
   Settings,
+  Undo2,
   Upload,
 } from "lucide-react";
 import * as React from "react";
@@ -37,6 +39,8 @@ export interface ToolbarProps {
   onSetTimeSignature: (timeSignature: TimeSignature) => void;
   onShowView: (view: ViewName) => void;
   onAddTrack?: (trackType: "audio" | "midi" | "bus") => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
   onImportAudio?: () => void;
   onImportMidi?: () => void;
   onSettings: () => void;
@@ -64,6 +68,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onSetTimeSignature,
   onShowView,
   onAddTrack,
+  onUndo,
+  onRedo,
   onImportAudio,
   onImportMidi,
   onSettings,
@@ -162,6 +168,48 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
               }}
             >
+              {onUndo && (
+                <OverflowItem
+                  icon={<Undo2 size={14} />}
+                  label="Undo"
+                  onClick={() => {
+                    setShowOverflow(false);
+                    onUndo();
+                  }}
+                />
+              )}
+              {onRedo && (
+                <OverflowItem
+                  icon={<Redo2 size={14} />}
+                  label="Redo"
+                  onClick={() => {
+                    setShowOverflow(false);
+                    onRedo();
+                  }}
+                />
+              )}
+              <div className="my-1" style={{ height: 1, backgroundColor: "var(--vsdaw-border)" }} />
+              {onImportAudio && (
+                <OverflowItem
+                  icon={<FileAudio size={14} />}
+                  label="Import Audio"
+                  onClick={() => {
+                    setShowOverflow(false);
+                    onImportAudio();
+                  }}
+                />
+              )}
+              {onImportMidi && (
+                <OverflowItem
+                  icon={<FileMusic size={14} />}
+                  label="Import MIDI"
+                  onClick={() => {
+                    setShowOverflow(false);
+                    onImportMidi();
+                  }}
+                />
+              )}
+              <div className="my-1" style={{ height: 1, backgroundColor: "var(--vsdaw-border)" }} />
               <OverflowItem
                 icon={<LayoutGrid size={14} />}
                 label="Show timeline"

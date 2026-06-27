@@ -400,7 +400,10 @@ describe("messageHandlers - device catalog and parameters", () => {
 
   test("DeviceGetParameters returns error when deviceId is missing", async () => {
     const controller = createMockController();
-    const result = await handleMessage(controller, makeMessage(MessageType.DeviceGetParameters, {}));
+    const result = await handleMessage(
+      controller,
+      makeMessage(MessageType.DeviceGetParameters, {}),
+    );
     expect(result.type).toBe("error");
     expect((result as { message: string }).message).toContain("deviceId is required");
   });
