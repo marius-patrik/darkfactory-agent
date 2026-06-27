@@ -46,6 +46,7 @@ function createProjectState(
     notes: [],
     automationLanes: [],
     automationPoints: [],
+    plugins: [],
     transport: { ...DEFAULT_TRANSPORT, ...transportOverrides },
     ...overrides,
   };

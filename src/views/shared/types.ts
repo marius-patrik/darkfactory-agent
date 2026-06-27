@@ -96,12 +96,20 @@ export interface DeviceItem {
   category: DeviceCategory;
 }
 
+export interface PluginItem {
+  id: string;
+  name: string;
+  vendor?: string;
+  category: DeviceCategory;
+}
+
 export interface BrowserNode {
   id: string;
   name: string;
-  type: "folder" | "file" | "device";
+  type: "folder" | "file" | "device" | "plugin";
   children?: BrowserNode[];
   device?: DeviceItem;
+  plugin?: PluginItem;
 }
 
 export interface DeviceParameter {

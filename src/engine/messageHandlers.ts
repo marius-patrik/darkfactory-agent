@@ -646,6 +646,10 @@ function routeMessage(
       }
       return { type: "ok", payload: controller.getDeviceParameters(opts.deviceId) };
     }
+    case MessageType.PluginScan: {
+      const plugins = controller.scanPlugins();
+      return { type: "ok", payload: plugins };
+    }
 
     // Audio import
     case MessageType.AudioImport: {

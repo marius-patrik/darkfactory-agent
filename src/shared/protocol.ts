@@ -160,6 +160,8 @@ export enum MessageType {
   DeviceList = "device.list",
   DeviceGetParameters = "device.getParameters",
 
+  PluginScan = "plugin.scan",
+
   PeaksGet = "peaks.get",
 
   AudioImport = "audio.import",
@@ -480,6 +482,14 @@ export interface DeviceListItem {
   category: DeviceCategory;
 }
 
+export interface PluginState {
+  id: string;
+  name: string;
+  vendor?: string;
+  category: DeviceCategory;
+  path?: string;
+}
+
 export interface DeviceListPayload {
   category?: DeviceCategory;
 }
@@ -607,6 +617,7 @@ export interface ProjectState {
   notes: NoteState[];
   automationLanes: AutomationLaneState[];
   automationPoints: AutomationPointState[];
+  plugins: PluginState[];
   transport: TransportState;
 }
 

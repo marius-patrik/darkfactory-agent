@@ -4,6 +4,7 @@ import {
   type AutomationPointState as EngineAutomationPointState,
   type DeviceListItem,
   type NoteState as EngineNoteState,
+  type PluginState,
   type RegionState as EngineRegionState,
   type TrackState as EngineTrackState,
   MessageType,
@@ -157,14 +158,23 @@ export class ProjectStateProjector {
 
   async requestDeviceList(): Promise<void> {
     try {
-      const response = await this.router.requestEngine(
-        this.projectId,
-        MessageType.DeviceList,
-        undefined,
-        { responseType: MessageType.DeviceList, timeoutMs: 10000 },
-      );
-      const devices = (response.payload as DeviceListItem[] | undefined) ?? [];
-      this.broadcast({ type: "host/browser", root: buildBrowserRoot(devices) });
+      const [deviceResponse, pluginResponse] = await Promise.all([
+        this.router.requestEngine(
+          this.projectId,
+          MessageType.DeviceList,
+          undefined,
+          { responseType: MessageType.DeviceList, timeoutMs: 10000 },
+        ),
+        this.router.requestEngine(
+          this.projectId,
+          MessageType.PluginScan,
+          undefined,
+          { responseType: MessageType.PluginScan, timeoutMs: 10000 },
+        ),
+      ]);
+      const devices = (deviceResponse.payload as DeviceListItem[] | undefined) ?? [];
+      const plugins = (pluginResponse.payload as PluginState[] | undefined) ?? [];
+      this.broadcast({ type: "host/browser", root: buildBrowserRoot(devices, plugins) });
     } catch (error) {
       console.error("[projector] device list request failed", error);
     }
@@ -296,12 +306,18 @@ export class ProjectStateProjector {
   }
 }
 
-function buildBrowserRoot(devices: DeviceListItem[]): BrowserNode {
+function buildBrowserRoot(devices: DeviceListItem[], plugins: PluginState[]): BrowserNode {
   const makeDeviceNode = (device: DeviceListItem): BrowserNode => ({
     id: `dev-${device.id}`,
     name: device.name,
     type: "device",
     device,
+  });
+  const makePluginNode = (plugin: PluginState): BrowserNode => ({
+    id: plugin.id,
+    name: plugin.name,
+    type: "plugin",
+    plugin,
   });
 
   return {
@@ -339,6 +355,12 @@ function buildBrowserRoot(devices: DeviceListItem[]): BrowserNode {
               .map(makeDeviceNode),
           },
         ],
+      },
+      {
+        id: "plugins",
+        name: "Plugins",
+        type: "folder",
+        children: plugins.map(makePluginNode),
       },
       {
         id: "workspace",

@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronRight, Cpu, FileAudio, Folder, Music, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Cpu, FileAudio, Folder, Music, Plug, Plus } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
-import type { BrowserNode, DeviceItem } from "../../views/shared/types.js";
+import type { BrowserNode, DeviceItem, PluginItem } from "../../views/shared/types.js";
 
 export interface BrowserTreeProps {
   root: BrowserNode;
@@ -69,24 +69,39 @@ const TreeNode: React.FC<{
 }> = ({ node, depth, onPreview, onDragStart, onAddToTrack }) => {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = (node.children?.length ?? 0) > 0;
-  const isLeaf = node.type === "file" || node.type === "device";
+  const isLeaf = node.type === "file" || node.type === "device" || node.type === "plugin";
   const device = node.device;
+  const plugin = node.plugin;
+  const pluginAsDevice: DeviceItem | undefined = plugin
+    ? { id: plugin.id.replace(/^plugin-/, ""), name: plugin.name, category: plugin.category }
+    : undefined;
   const Icon =
     node.type === "folder"
       ? Folder
       : node.type === "device"
         ? Cpu
-        : node.name.toLowerCase().endsWith(".mid")
-          ? Music
-          : FileAudio;
+        : node.type === "plugin"
+          ? Plug
+          : node.name.toLowerCase().endsWith(".mid")
+            ? Music
+            : FileAudio;
+
+  const handleActivate = () => {
+    if (pluginAsDevice && onAddToTrack) {
+      onAddToTrack(pluginAsDevice);
+    } else if (isLeaf) {
+      onPreview(node.id);
+    } else if (hasChildren) {
+      setExpanded((s) => !s);
+    }
+  };
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "ArrowRight" && hasChildren && !expanded) setExpanded(true);
     if (e.key === "ArrowLeft" && hasChildren && expanded) setExpanded(false);
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      if (isLeaf) onPreview(node.id);
-      else if (hasChildren) setExpanded((s) => !s);
+      handleActivate();
     }
   };
 
@@ -95,10 +110,7 @@ const TreeNode: React.FC<{
       <div
         draggable={isLeaf}
         onDragStart={() => onDragStart(node.id)}
-        onClick={() => {
-          if (isLeaf) onPreview(node.id);
-          else if (hasChildren) setExpanded((e) => !e);
-        }}
+        onClick={handleActivate}
         onKeyDown={handleKeyDown}
         tabIndex={0}
         role="button"

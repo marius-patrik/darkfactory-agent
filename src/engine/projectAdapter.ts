@@ -56,6 +56,7 @@ import type {
   InsertState,
   NoteState,
   PeaksResultPayload,
+  PluginState,
   ProjectState,
   RegionState,
   SendState,
@@ -93,6 +94,7 @@ export class ProjectController {
   private trackOutputs = new Map<string, string | null>();
   private trackSends = new Map<string, SendState[]>();
   private trackInputDevices = new Map<string, string>();
+  private plugins: PluginState[] = [];
   private takeRegions = new Map<string, AnyRegionBoxAdapter[]>();
   private automationLanes = new Map<string, AutomationLaneState>();
   private automationPoints = new Map<string, AutomationPointState>();
@@ -220,6 +222,7 @@ export class ProjectController {
     this.trackOutputs.clear();
     this.trackSends.clear();
     this.trackInputDevices.clear();
+    this.plugins = [];
     this.takeRegions.clear();
     this.automationLanes.clear();
     this.automationPoints.clear();
@@ -413,6 +416,20 @@ export class ProjectController {
   setTrackInputDevice(trackId: string, inputDeviceId: string) {
     this.trackInputDevices.set(trackId, inputDeviceId);
     this.broadcastState();
+  }
+
+  scanPlugins(): PluginState[] {
+    // Stub: mirror built-in devices as scannable plugins. Native VST3/AU scanning
+    // would require platform-specific native modules and is not implemented yet.
+    const builtIns = this.listDevices();
+    this.plugins = builtIns.map((d) => ({
+      id: `plugin-${d.id}`,
+      name: d.name,
+      vendor: "Built-in",
+      category: d.category,
+    }));
+    this.broadcastState();
+    return this.plugins;
   }
 
   addTrackSend(trackId: string, targetTrackId: string, amount = 0) {
@@ -1268,6 +1285,7 @@ export class ProjectController {
       notes,
       automationLanes: Array.from(this.automationLanes.values()),
       automationPoints: Array.from(this.automationPoints.values()),
+      plugins: this.plugins,
       transport,
     };
   }

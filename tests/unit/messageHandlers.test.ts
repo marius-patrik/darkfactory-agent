@@ -86,6 +86,9 @@ function createMockController(): MockController {
     removeTrackSend: record("removeTrackSend"),
     setTrackSendAmount: record("setTrackSendAmount"),
     setTrackInputDevice: record("setTrackInputDevice"),
+    scanPlugins: record("scanPlugins", [
+      { id: "plugin-1", name: "Plugin One", category: "audio-effect" },
+    ]),
 
     getPeaks: jest.fn().mockResolvedValue({
       sampleId: "sample-1",
@@ -537,6 +540,13 @@ describe("messageHandlers - device catalog and parameters", () => {
     const controller = createMockController();
     const result = await expectOk(handleMessage(controller, makeMessage(MessageType.DeviceList)));
     expect(result.payload).toEqual(controller.listDevices());
+  });
+
+  test("PluginScan returns controller.scanPlugins", async () => {
+    const controller = createMockController();
+    const result = await expectOk(handleMessage(controller, makeMessage(MessageType.PluginScan)));
+    expect(controller.calls).toContainEqual({ method: "scanPlugins", args: [] });
+    expect(result.payload).toEqual(controller.scanPlugins());
   });
 
   test("DeviceGetParameters forwards deviceId and returns descriptors", async () => {
