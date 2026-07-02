@@ -1,0 +1,14 @@
+{
+  "name": "@template/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "template-cli": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "bun run src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
