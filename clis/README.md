@@ -1,10 +1,10 @@
-# agents
+# clis
 
-Agent runtimes and external agent references.
+CLI runtimes and external agent references.
 
 ## Local
 
-- `rommie`
+- `andromeda`
 
 ## External
 

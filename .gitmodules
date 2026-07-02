@@ -1,21 +1,21 @@
-[submodule "agents/andromeda"]
-	path = agents/andromeda
+[submodule "clis/andromeda"]
+	path = clis/andromeda
 	url = https://github.com/marius-patrik/andromeda.git
 	branch = main
 [submodule "agents-cli"]
 	path = agents-cli
 	url = https://github.com/marius-patrik/agents-cli.git
 	branch = main
-[submodule "avatars/personal-assistant"]
-	path = avatars/personal-assistant
+[submodule "agents/personal-assistant"]
+	path = agents/personal-assistant
 	url = https://github.com/marius-patrik/personal-assistant.git
 	branch = main
-[submodule "avatars/skye"]
-	path = avatars/skye
+[submodule "agents/skye"]
+	path = agents/skye
 	url = https://github.com/marius-patrik/skye.git
 	branch = main
-[submodule "avatars/vibe-bot"]
-	path = avatars/vibe-bot
+[submodule "agents/vibe-bot"]
+	path = agents/vibe-bot
 	url = https://github.com/marius-patrik/vibe-bot.git
 	branch = main
 [submodule "plugins/context-engine"]
@@ -46,7 +46,7 @@
 	path = templates/template-web
 	url = https://github.com/marius-patrik/template-web.git
 	branch = main
-[submodule "avatars/rommie"]
-	path = avatars/rommie
+[submodule "agents/rommie"]
+	path = agents/rommie
 	url = https://github.com/marius-patrik/rommie.git
 	branch = main

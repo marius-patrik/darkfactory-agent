@@ -6,10 +6,10 @@ Workspace for agent projects.
 
 - `agents-cli`
 
-## Agents
+## CLIs
 
-- `agents/andromeda`
-- `agents/README.md`
+- `clis/andromeda`
+- `clis/README.md`
 
 ## Templates
 
@@ -19,12 +19,12 @@ Workspace for agent projects.
 - `templates/template-repo`
 - `templates/template-web`
 
-## Avatars
+## Agents
 
-- `avatars/rommie`
-- `avatars/skye`
-- `avatars/personal-assistant`
-- `avatars/vibe-bot`
+- `agents/rommie`
+- `agents/skye`
+- `agents/personal-assistant`
+- `agents/vibe-bot`
 
 ## Plugins
 
