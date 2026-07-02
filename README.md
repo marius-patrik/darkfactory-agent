@@ -22,6 +22,14 @@ Workspace for agent projects.
 
 - `plugins/context-engine`
 
+## Shared
+
+- `.agents/`
+- `.github/`
+- `global/`
+- `hooks/`
+- `skills/`
+
 ## Private
 
 - `private`
