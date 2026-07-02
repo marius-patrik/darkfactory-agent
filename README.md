@@ -1,7 +1,7 @@
-# agents
+# avatars
 
-Bun TypeScript CLI for managing agent packages, shared skills/plugins, CLI data,
-and a common credit store.
+Avatar package-manager workspace with the `agents` CLI for managing agent
+packages, shared skills/plugins, CLI data, and a common credit store.
 
 ## Usage
 
