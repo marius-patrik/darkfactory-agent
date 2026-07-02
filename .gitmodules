@@ -2,8 +2,8 @@
 	path = clis/andromeda
 	url = https://github.com/marius-patrik/andromeda.git
 	branch = main
-[submodule "agents-cli"]
-	path = agents-cli
+[submodule "cli"]
+	path = cli
 	url = https://github.com/marius-patrik/agents-cli.git
 	branch = main
 [submodule "agents/personal-assistant"]
