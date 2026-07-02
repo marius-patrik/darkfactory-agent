@@ -9,6 +9,9 @@ TypeScript GitHub App bot that receives GitHub webhooks, verifies signatures, an
 - Logs GitHub App `ping` events.
 - Comments on newly opened issues.
 - Comments on newly opened pull requests.
+- Checks pull requests in installed repositories for shared repository setup:
+  - `.agents/.global/VERSION` must match the current Vibe Bot version.
+  - `.github/workflows/ci.yml` should exist as the baseline GitHub Actions scaffold.
 
 ## Requirements
 
@@ -27,6 +30,7 @@ Create a GitHub App and configure:
   - `Pull requests`
   - `Ping`
 - Repository permissions:
+  - Contents: Read-only
   - Issues: Read and write
   - Pull requests: Read-only
   - Metadata: Read-only, granted by GitHub automatically
@@ -87,6 +91,7 @@ Use `GET /healthz` as the health check endpoint.
 ## Development notes
 
 - Keep webhook handlers registered in `src/bot.ts`.
+- Keep installed-repository setup enforcement in `src/repository-setup.ts`.
 - Keep HTTP routing and signature handoff behavior in `src/server.ts`.
 - Keep environment parsing in `src/config.ts`.
 - Add tests under `tests/` for any new route, config branch, or webhook behavior.
