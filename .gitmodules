@@ -18,10 +18,6 @@
 	path = agents/vibe-bot
 	url = https://github.com/marius-patrik/vibe-bot.git
 	branch = main
-[submodule "plugins/context-engine"]
-	path = plugins/context-engine
-	url = https://github.com/marius-patrik/memory-plugin.git
-	branch = master
 [submodule "private"]
 	path = private
 	url = https://github.com/marius-patrik/private.git
