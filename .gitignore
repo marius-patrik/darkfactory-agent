@@ -4,3 +4,7 @@ dist/
 *.pem
 coverage/
 
+.agents/env
+.agents/credits.json
+.agents/installs.json
+
