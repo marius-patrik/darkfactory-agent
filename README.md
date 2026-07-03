@@ -17,6 +17,8 @@ package namespace into `agentos_gateway`.
 ```bash
 cd llm-gateway
 uv sync
+uv run ruff check agentos_gateway tests
+uv run mypy agentos_gateway
 uv run pytest -q          # green, no live engines (httpx mocked)
 uv run gateway serve      # listens on http://0.0.0.0:4000
 ```
@@ -98,6 +100,16 @@ refresh path.
 
 ## Tests
 
-`uv run pytest -q` — registry/router/health/fallback/switcher/app suites; no
-live engines required (httpx is mocked; the app smoke test uses TestClient).
+Validation uses:
+
+```bash
+uv run ruff check agentos_gateway tests
+uv run mypy agentos_gateway
+uv run pytest -q
+```
+
+The pytest suite covers registry/router/health/fallback/switcher/app behavior;
+no live engines are required (httpx is mocked; the app smoke test uses
+TestClient). Optional live Postgres coverage remains gated by `GATEWAY_PG_DSN`
+and is skipped by default.
 

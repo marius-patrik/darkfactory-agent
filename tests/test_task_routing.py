@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from agentos_gateway.quota import QuotaTracker
 from agentos_gateway.registry import ActiveRoleManager, ModelRegistry

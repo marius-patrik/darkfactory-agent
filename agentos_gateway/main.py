@@ -37,7 +37,6 @@ from agentos_gateway.schemas import (
     SwitcherStateResponse,
     SwitcherOptionsResponse,
     SwitcherOption,
-    SwitcherSetRequest,
     RouteResolveRequest,
     RouteResolveResponse,
 )

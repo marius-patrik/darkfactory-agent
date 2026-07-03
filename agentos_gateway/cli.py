@@ -153,7 +153,7 @@ def model_update(
     if updated:
         console.print(f"[green]Updated '{field}' on '{model_id}'[/green]")
     else:
-        console.print(f"[red]Update failed[/red]")
+        console.print("[red]Update failed[/red]")
 
 
 @app.command("model-select")

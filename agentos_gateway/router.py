@@ -741,9 +741,8 @@ class Router:
         if content is None:
             return None
         cleaned = cls._THINK_RE.sub("", content)
-        cleaned, _ = cls._strip_reasoning_delta(cleaned, False)
-        cleaned = cleaned.strip() if cleaned is not None else None
-        return cleaned
+        stripped, _ = cls._strip_reasoning_delta(cleaned, False)
+        return stripped.strip() if stripped is not None else None
 
     def _normalize_response(
         self,

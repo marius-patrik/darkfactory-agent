@@ -6,8 +6,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from agentos_gateway.quota import QuotaTracker
 from agentos_gateway.registry import ActiveRoleManager, ModelRegistry
 from agentos_gateway.router import Router
