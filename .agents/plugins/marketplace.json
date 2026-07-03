@@ -1,0 +1,20 @@
+{
+  "name": "agentos-local",
+  "interface": {
+    "displayName": "Agentos Local"
+  },
+  "plugins": [
+    {
+      "name": "rommie",
+      "source": {
+        "source": "local",
+        "path": "./agents/rommie-agent"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

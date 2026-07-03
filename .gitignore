@@ -1,6 +1,8 @@
 node_modules/
 
 .agents/*
+!.agents/plugins/
+!.agents/plugins/marketplace.json
 __pycache__/
 .pytest_cache/
 .venv/
