@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { GITHUB_BOOTSTRAP_WORKFLOW_PATH } from "./managed-files.js";
 
-export const REPOSITORY_SETUP_COMMENT_MARKER = "<!-- vibe-bot:repository-setup -->";
+export const REPOSITORY_SETUP_COMMENT_MARKER = "<!-- dark-factory:repository-setup -->";
 
 const VERSIONED_FOLDERS = [
   {
@@ -17,7 +17,7 @@ const BOOTSTRAP_PATHS = [
   {
     displayPath: ".github",
     requiredPath: GITHUB_BOOTSTRAP_WORKFLOW_PATH,
-    reason: "Vibe Bot bootstrap workflow"
+    reason: "Dark Factory bootstrap workflow"
   }
 ] as const;
 
@@ -57,7 +57,7 @@ export interface BootstrapPathResult {
 }
 
 export function expectedManagedFolderVersion(packageVersion = readPackageVersion()): string {
-  return `vibe-bot@${packageVersion}`;
+  return `dark-factory@${packageVersion}`;
 }
 
 export async function checkRepositorySetup(
@@ -89,7 +89,7 @@ export function formatRepositorySetupComment(report: RepositorySetupReport): str
 
   const lines = [
     REPOSITORY_SETUP_COMMENT_MARKER,
-    "Vibe Bot found repository setup that needs attention.",
+    "Dark Factory found repository setup that needs attention.",
     "",
     `Expected managed agent version: \`${report.expectedVersion}\`.`,
     "",
@@ -113,7 +113,7 @@ export function formatRepositorySetupComment(report: RepositorySetupReport): str
 
   lines.push(
     "",
-    "Update `.agents/.global` from the current Vibe Bot template when the agent version is stale or missing.",
+    "Update `.agents/.global` from the current Dark Factory template when the agent version is stale or missing.",
     `Bootstrap \`${GITHUB_BOOTSTRAP_WORKFLOW_PATH}\` when the GitHub workflow scaffold is missing.`
   );
 
@@ -274,3 +274,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isRequestError(error: unknown): error is { status: number } {
   return isRecord(error) && typeof error.status === "number";
 }
+

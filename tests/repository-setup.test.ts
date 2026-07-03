@@ -9,18 +9,18 @@ import {
   type GitHubRequester
 } from "../src/repository-setup.js";
 
-test("expectedManagedFolderVersion uses the vibe-bot prefix", () => {
-  assert.equal(expectedManagedFolderVersion("1.2.3"), "vibe-bot@1.2.3");
+test("expectedManagedFolderVersion uses the dark-factory prefix", () => {
+  assert.equal(expectedManagedFolderVersion("1.2.3"), "dark-factory@1.2.3");
 });
 
 test("checkRepositorySetup returns no comment when managed setup is current", async () => {
   const report = await checkRepositorySetup(
     createRequester({
-      ".agents/.global/VERSION": "vibe-bot@1.2.3\n",
-      ".github/workflows/vibe-bot-bootstrap.yml": "name: Vibe Bot Bootstrap\n"
+      ".agents/.global/VERSION": "dark-factory@1.2.3\n",
+      ".github/workflows/dark-factory-bootstrap.yml": "name: Dark Factory Bootstrap\n"
     }),
     { owner: "marius-patrik", repo: "example", ref: "abc123" },
-    "vibe-bot@1.2.3"
+    "dark-factory@1.2.3"
   );
 
   assert.equal(report.versionedFolders[0]?.status, "current");
@@ -31,19 +31,19 @@ test("checkRepositorySetup returns no comment when managed setup is current", as
 test("checkRepositorySetup reports stale agents and missing github bootstrap", async () => {
   const report = await checkRepositorySetup(
     createRequester({
-      ".agents/.global/VERSION": "vibe-bot@0.1.0\n"
+      ".agents/.global/VERSION": "dark-factory@0.1.0\n"
     }),
     { owner: "marius-patrik", repo: "example", ref: "abc123" },
-    "vibe-bot@1.2.3"
+    "dark-factory@1.2.3"
   );
   const comment = formatRepositorySetupComment(report);
 
   assert.equal(report.versionedFolders[0]?.status, "stale");
   assert.equal(report.bootstrapPaths[0]?.status, "missing");
   assert.ok(comment?.includes(REPOSITORY_SETUP_COMMENT_MARKER));
-  assert.ok(comment?.includes("vibe-bot@1.2.3"));
+  assert.ok(comment?.includes("dark-factory@1.2.3"));
   assert.ok(comment?.includes(".agents/.global/VERSION"));
-  assert.ok(comment?.includes(".github/workflows/vibe-bot-bootstrap.yml"));
+  assert.ok(comment?.includes(".github/workflows/dark-factory-bootstrap.yml"));
 });
 
 function createRequester(files: Record<string, string>): GitHubRequester {
@@ -70,3 +70,4 @@ function createRequester(files: Record<string, string>): GitHubRequester {
     }
   };
 }
+

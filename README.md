@@ -10,8 +10,8 @@ TypeScript GitHub App bot that receives GitHub webhooks, verifies signatures, an
 - Comments on newly opened issues.
 - Comments on newly opened pull requests.
 - Checks pull requests in installed repositories for shared repository setup:
-  - `.agents/.global/VERSION` must match the current Vibe Bot version.
-  - `.github/workflows/vibe-bot-bootstrap.yml` should exist as the baseline GitHub Actions scaffold.
+  - `.agents/.global/VERSION` must match the current Dark Factory version.
+  - `.github/workflows/dark-factory-bootstrap.yml` should exist as the baseline GitHub Actions scaffold.
 - Opens managed setup PRs when the app is installed on a repository or when repositories are added to an installation.
 - Can sync all installed repositories from the `Sync Managed Repositories` workflow.
 
@@ -37,7 +37,7 @@ Create a GitHub App and configure:
   - Pull requests: Read and write
   - Metadata: Read-only, granted by GitHub automatically
 
-`Contents: Read and write` is required so Vibe Bot can create managed setup branches. `Pull requests: Read and write` is required so it can open setup PRs.
+`Contents: Read and write` is required so Dark Factory can create managed setup branches. `Pull requests: Read and write` is required so it can open setup PRs.
 
 Generate a private key for the app and install the app on the repositories where it should run.
 
@@ -81,8 +81,8 @@ npm start
 Build and run with Docker:
 
 ```powershell
-docker build -t vibe-bot .
-docker run --rm -p 3000:3000 --env-file .env vibe-bot
+docker build -t dark-factory .
+docker run --rm -p 3000:3000 --env-file .env dark-factory
 ```
 
 Production hosts must provide these environment variables:
@@ -96,12 +96,12 @@ Use `GET /healthz` as the health check endpoint.
 
 ## Managed repository setup
 
-Vibe Bot manages shared setup through pull requests. It does not write directly to `main`.
+Dark Factory manages shared setup through pull requests. It does not write directly to `main`.
 
 Managed files:
 
 - `.agents/.global/**`
-- `.github/workflows/vibe-bot-bootstrap.yml`
+- `.github/workflows/dark-factory-bootstrap.yml`
 
 Project-specific files such as `.agents/.project/**` are not changed by managed sync.
 
@@ -112,10 +112,10 @@ Managed sync runs automatically when:
 
 Managed sync can also be run manually from the `Sync Managed Repositories` workflow.
 
-The workflow requires these repository secrets in `marius-patrik/vibe-bot`:
+The workflow requires these repository secrets in `marius-patrik/dark-factory`:
 
-- `VIBE_BOT_APP_ID`
-- `VIBE_BOT_PRIVATE_KEY`
+- `DARK_FACTORY_APP_ID`
+- `DARK_FACTORY_PRIVATE_KEY`
 
 The local equivalent is:
 
@@ -145,15 +145,16 @@ Pushing a `v*.*.*` tag runs the release workflow. It validates the repo, builds 
 Image tags are published under:
 
 ```text
-ghcr.io/marius-patrik/vibe-bot
+ghcr.io/marius-patrik/dark-factory
 ```
 
 ## Development notes
 
 - Keep webhook handlers registered in `src/bot.ts`.
-- Keep managed file templates in `.agents/.global/` and `.github/workflows/vibe-bot-bootstrap.yml`.
+- Keep managed file templates in `.agents/.global/` and `.github/workflows/dark-factory-bootstrap.yml`.
 - Keep managed sync logic in `src/managed-sync.ts`.
 - Keep installed-repository setup enforcement in `src/repository-setup.ts`.
 - Keep HTTP routing and signature handoff behavior in `src/server.ts`.
 - Keep environment parsing in `src/config.ts`.
 - Add tests under `tests/` for any new route, config branch, or webhook behavior.
+

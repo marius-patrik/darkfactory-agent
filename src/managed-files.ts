@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const AGENTS_GLOBAL_VERSION_PATH = ".agents/.global/VERSION";
-export const GITHUB_BOOTSTRAP_WORKFLOW_PATH = ".github/workflows/vibe-bot-bootstrap.yml";
+export const GITHUB_BOOTSTRAP_WORKFLOW_PATH = ".github/workflows/dark-factory-bootstrap.yml";
 
 export interface ManagedFile {
   path: string;
@@ -31,3 +31,4 @@ export function readManagedFiles(root = resolveProjectRoot()): ManagedFile[] {
 function resolveProjectRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
+

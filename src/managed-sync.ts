@@ -4,8 +4,8 @@ import {
   type ManagedFile
 } from "./managed-files.js";
 
-export const MANAGED_SETUP_BRANCH = "vibe-bot/managed-repository-setup";
-export const MANAGED_SETUP_COMMENT_MARKER = "<!-- vibe-bot:managed-setup-pr -->";
+export const MANAGED_SETUP_BRANCH = "dark-factory/managed-repository-setup";
+export const MANAGED_SETUP_COMMENT_MARKER = "<!-- dark-factory:managed-setup-pr -->";
 
 export interface GitHubRequester {
   request(route: string, parameters: Record<string, unknown>): Promise<{ data: unknown }>;
@@ -268,7 +268,7 @@ async function createCommit(
   const response = await github.request("POST /repos/{owner}/{repo}/git/commits", {
     owner: repository.owner,
     repo: repository.repo,
-    message: "Update Vibe Bot managed repository setup",
+    message: "Update Dark Factory managed repository setup",
     tree: treeSha,
     parents: [parentSha]
   });
@@ -315,7 +315,7 @@ async function createPullRequest(
   const response = await github.request("POST /repos/{owner}/{repo}/pulls", {
     owner: repository.owner,
     repo: repository.repo,
-    title: "Update Vibe Bot managed repository setup",
+    title: "Update Dark Factory managed repository setup",
     head: MANAGED_SETUP_BRANCH,
     base,
     body: managedSetupPullRequestBody(changedPaths)
@@ -335,13 +335,13 @@ export function managedSetupPullRequestBody(changedPaths: string[]): string {
     MANAGED_SETUP_COMMENT_MARKER,
     "## Summary",
     "",
-    "Vibe Bot is installing or updating managed repository setup files.",
+    "Dark Factory is installing or updating managed repository setup files.",
     "",
     paths,
     "",
     "## Notes",
     "",
-    "- `.agents/.global` is version-managed by Vibe Bot.",
+    "- `.agents/.global` is version-managed by Dark Factory.",
     `- \`${GITHUB_BOOTSTRAP_WORKFLOW_PATH}\` is bootstrap-managed so repositories have a safe baseline workflow.`,
     "- Project-specific `.agents/.project` files are not changed."
   ].join("\n");
@@ -368,3 +368,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isRequestError(error: unknown): error is { status: number } {
   return isRecord(error) && typeof error.status === "number";
 }
+

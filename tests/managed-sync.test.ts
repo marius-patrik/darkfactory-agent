@@ -12,11 +12,11 @@ import type { ManagedFile } from "../src/managed-files.js";
 test("managedSetupPullRequestBody lists changed files and preserves project-specific state", () => {
   const body = managedSetupPullRequestBody([
     ".agents/.global/VERSION",
-    ".github/workflows/vibe-bot-bootstrap.yml"
+    ".github/workflows/dark-factory-bootstrap.yml"
   ]);
 
   assert.match(body, /\.agents\/\.global\/VERSION/);
-  assert.match(body, /\.github\/workflows\/vibe-bot-bootstrap\.yml/);
+  assert.match(body, /\.github\/workflows\/dark-factory-bootstrap\.yml/);
   assert.match(body, /Project-specific `.agents\/.project` files are not changed/);
 });
 
@@ -70,8 +70,8 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
     }
   };
   const files: ManagedFile[] = [
-    { path: ".agents/.global/VERSION", content: "vibe-bot@1.0.0\n" },
-    { path: ".github/workflows/vibe-bot-bootstrap.yml", content: "name: Vibe Bot Bootstrap\n" }
+    { path: ".agents/.global/VERSION", content: "dark-factory@1.0.0\n" },
+    { path: ".github/workflows/dark-factory-bootstrap.yml", content: "name: Dark Factory Bootstrap\n" }
   ];
 
   const result = await ensureManagedRepositorySetup(
@@ -83,7 +83,7 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
   assert.equal(result.status, "created");
   assert.deepEqual(result.changedPaths, [
     ".agents/.global/VERSION",
-    ".github/workflows/vibe-bot-bootstrap.yml"
+    ".github/workflows/dark-factory-bootstrap.yml"
   ]);
   assert.equal(result.pullRequestUrl, "https://github.com/marius-patrik/example/pull/1");
   assert.ok(
@@ -94,3 +94,4 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
     )
   );
 });
+
