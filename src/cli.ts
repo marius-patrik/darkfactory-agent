@@ -5,6 +5,12 @@ import { App } from "@octokit/app";
 import { createBot } from "./bot.js";
 import { loadAppCredentials, loadConfig } from "./config.js";
 import { ensureManagedRepositorySetup } from "./managed-sync.js";
+import {
+  GhCliRunnerClient,
+  RunnerManager,
+  parseRunnerCommand,
+  type RunnerStatus
+} from "./runners.js";
 import { createWebhookServer } from "./server.js";
 
 export async function runCli(args = process.argv.slice(2)): Promise<void> {
@@ -27,6 +33,11 @@ export async function runCli(args = process.argv.slice(2)): Promise<void> {
 
   if (command === "sync-managed") {
     await syncManagedRepositories();
+    return;
+  }
+
+  if (command === "runners") {
+    await runRunners(args.slice(1));
     return;
   }
 
@@ -84,6 +95,62 @@ async function syncManagedRepositories(): Promise<void> {
   console.log(`Processed ${count} installed repositories.`);
 }
 
+async function runRunners(args: string[]): Promise<void> {
+  const command = parseRunnerCommand(args);
+  const manager = new RunnerManager({ github: new GhCliRunnerClient() });
+
+  if (command.action === "setup") {
+    const record = await manager.setup(command.repository, { root: command.root });
+    const started = await manager.start(command.repository, { root: command.root });
+    console.log(`${record.owner}/${record.repo}: configured ${record.runnerName} at ${record.directory}`);
+    console.log(`${record.owner}/${record.repo}: started pid ${started.pid}`);
+    return;
+  }
+
+  if (command.action === "start") {
+    const records = command.repository ? [command.repository] : await manager.list({ root: command.root });
+    for (const repository of records) {
+      const record = await manager.start(repository, { root: command.root });
+      console.log(`${record.owner}/${record.repo}: started ${record.runnerName} pid ${record.pid}`);
+    }
+    return;
+  }
+
+  if (command.action === "stop") {
+    const records = command.repository ? [command.repository] : await manager.list({ root: command.root });
+    for (const repository of records) {
+      const record = await manager.stop(repository, { root: command.root });
+      console.log(`${record.owner}/${record.repo}: stopped ${record.runnerName}`);
+    }
+    return;
+  }
+
+  if (command.action === "status") {
+    printRunnerStatuses(await manager.status(command.repository, { root: command.root }));
+    return;
+  }
+
+  if (command.action === "remove") {
+    const record = await manager.remove(command.repository, { root: command.root });
+    console.log(`${record.owner}/${record.repo}: removed ${record.runnerName}`);
+  }
+}
+
+function printRunnerStatuses(statuses: RunnerStatus[]): void {
+  if (statuses.length === 0) {
+    console.log("No DarkFactory runners are recorded.");
+    return;
+  }
+
+  for (const status of statuses) {
+    console.log(
+      `${status.repository}: ${status.runnerName} process=${status.process} github=${status.github}` +
+        `${typeof status.busy === "boolean" ? ` busy=${status.busy}` : ""}` +
+        `${status.pid ? ` pid=${status.pid}` : ""}`
+    );
+  }
+}
+
 function printHelp(): void {
   console.log(`darkfactory - DarkFactory GitHub agent
 
@@ -91,6 +158,11 @@ Usage:
   darkfactory serve
   darkfactory install-url
   darkfactory sync-managed
+  darkfactory runners setup <owner/repo> [--root <path>]
+  darkfactory runners start <owner/repo> [--root <path>]
+  darkfactory runners stop <owner/repo> [--root <path>]
+  darkfactory runners status [owner/repo] [--root <path>]
+  darkfactory runners remove <owner/repo> [--root <path>]
 
 Secrets are read from environment variables first, then AGENTS_SECRETS/*.secret.`);
 }
