@@ -18,7 +18,7 @@
   "dataRepo": {
     "id": "darkfactory-workspace",
     "repo": "marius-patrik/agentos-data",
-    "path": "packages/data/data-agentos",
+    "path": "data/data-agentos",
     "branch": "main",
     "managedPath": "managed-repository",
     "env": "DARK_FACTORY_WORKSPACE_ROOT"
@@ -27,3 +27,4 @@
     "cli:darkfactory"
   ]
 }
+

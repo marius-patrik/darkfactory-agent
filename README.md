@@ -51,8 +51,8 @@ To install the app on every repository, use the GitHub App installation UI and c
 ```powershell
 npm ci
 npm run build
-agents packages register packages/workspaces/darkfactory-workspace
-agents packages register packages/agents/darkfactory-agent
+agents packages register workspaces/darkfactory-workspace
+agents packages register agents/darkfactory-agent
 agents data repo path darkfactory-workspace
 ```
 
@@ -190,3 +190,4 @@ ghcr.io/marius-patrik/darkfactory-agent
 - Keep HTTP routing and signature handoff behavior in `src/server.ts`.
 - Keep environment parsing in `src/config.ts`.
 - Add tests under `tests/` for any new route, config branch, or webhook behavior.
+
