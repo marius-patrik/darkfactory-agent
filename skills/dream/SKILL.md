@@ -5,7 +5,7 @@ description: Run temporal replay of rollout sessions and produce proactive retro
 
 # Dream
 
-Use `dream` when Andromeda needs to replay unresolved sessions end-to-end and persist what should be carried forward into the next active session.
+Use `dream` when Agentos needs to replay unresolved sessions end-to-end and persist what should be carried forward into the next active session.
 
 ## Workflow
 
