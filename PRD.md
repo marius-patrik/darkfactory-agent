@@ -31,13 +31,13 @@
 ## Core Concepts
 
 - Package: a git submodule or local package managed by `agents`.
-- Harness: a managed runtime package, such as Andromeda Harness, launched by `agents`.
+- Harness: a managed runtime package, such as Agents Harness, launched by `agents`.
 - Data repo: a git-backed managed data package with an optional managed root and exported env var.
 - CLI adapter: the shared rooting and credential contract for a vendor CLI.
 - Shared state: the root `.agents` directory.
 - Core package: shared contracts and generated clients under `os/agents-core`.
-- Gateway package: OpenAI-format model gateway and registry routing under `llm-gateway`.
-- Inferer package: agent loop, runtime services, engine work, and deploy assets under `inference-engine`.
+- Gateway package: OpenAI-format model gateway and registry routing under `os/llm-gateway`.
+- Inferer package: agent loop, runtime services, engine work, and deploy assets under `os/inference-engine`.
 - Manager package: the CLI implementation and tests under `os/agents-manager`.
 - Managed checkout: a git-backed package under `<category>/<name>`. Agents, apps, harnesses, templates, data repositories, and workspace repositories are organized under explicit category folders.
 - CLI metadata: per-CLI data under `.agents/clis/<name>`.
@@ -65,30 +65,27 @@
 ## Workspace Layout
 
 ```text
-
-  os/agents-core/
-  llm-gateway/
-  inference-engine/
-  os/os/agents-manager/
-    src/
-    test/
+  os/
+    agents-core/
+    agents-manager/
+    agents-harness/
+    llm-gateway/
+    inference-engine/
   data/
     data-agentos/
   agents/
     darkfactory-agent/
     life-support/
-    
     skyblock-agent/
   apps/
     fabrica/
     singularity/
-  harnesses/
-    andromeda-harness/
   templates/
     darkfactory-templates/
   workspaces/
     darkfactory-workspace/
   plugins/
+    plugin-rommie/
     dream/
   skills/
 ```
@@ -98,7 +95,7 @@
 ```text
 .agents/
   clis/
-  harnesses/
+  harness-runtimes/
   skills/
   plugins/
   hooks/
@@ -120,7 +117,7 @@ Harnesses declare an `agent.package.json` manifest:
 ```json
 {
   "schemaVersion": 1,
-  "id": "andromeda-harness",
+  "id": "agents-harness",
   "kind": "harness",
   "entry": "go run ./cmd/andromeda",
   "workingDirectory": "services/cli",
@@ -180,7 +177,9 @@ CI runs on pushes and pull requests to `main`:
 4. Credit store schema and update commands.
 5. Per-CLI adapter contracts for consuming shared state.
 6. Harness package install, doctor, and run commands.
-7. Andromeda Harness bridge through `AGENTS_HOME`.
+7. Agents Harness bridge through `AGENTS_HOME`.
+
+
 
 
 

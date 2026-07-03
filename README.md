@@ -13,8 +13,8 @@ agents list
 agents state init
 agents state env
 agents cli doctor
-agents packages register harnesses/andromeda-harness
-agents harness doctor andromeda-harness
+agents packages register os/agents-harness
+agents harness doctor agents-harness
 agents data repo list
 agents doctor
 ```
@@ -23,11 +23,11 @@ agents doctor
 
 - `os/agents-core` is a submodule containing shared proto contracts, generated clients, schemas, and contract docs.
 - `os/agents-manager` is a submodule containing the `agents` CLI source and tests.
-- `llm-gateway` is a submodule containing the OpenAI-format LLM gateway, model registry routing, fallback, switchers, quota, OAuth seams, and tests.
-- `inference-engine` is a submodule containing the Python agent loop, Go runtime services, engine work, deploy assets, and inference architecture.
-- `plugins/andromeda` is the Andromeda Codex plugin submodule.
+- `os/agents-harness` is a submodule containing the managed Agents runtime harness.
+- `os/llm-gateway` is a submodule containing the OpenAI-format LLM gateway, model registry routing, fallback, switchers, quota, OAuth seams, and tests.
+- `os/inference-engine` is a submodule containing the Python agent loop, Go runtime services, engine work, deploy assets, and inference architecture.
+- `plugins/plugin-rommie` is the Rommie Codex plugin submodule.
 - `plugins/dream` is the Dream plugin submodule.
-- `harnesses/andromeda-harness` contains the managed Andromeda runtime harness.
 - `agents/darkfactory-agent`, `agents/life-support`, and `agents/skyblock-agent` are managed agent submodules.
 - `apps/singularity` contains the managed Singularity app.
 - `apps/fabrica` contains the managed Fabrica app workspace.
@@ -45,8 +45,8 @@ agents doctor
 - `agents state init` initializes shared runtime state.
 - `agents cli list|doctor|env|exec|materialize-creds` manages Codex, Claude, Kimi, and Agy through one adapter layer.
 - `agents packages register <path>` registers a local package manifest.
-- `agents data repo list|set|path|env` manages git-backed data repository mappings.
-- `agents harness list|doctor|run` manages runtime harnesses such as Andromeda Harness.
+- `agents data repo list|set|path|env` manages git-backed data repositories.
+- `agents harness list|doctor|run` manages runtime harnesses such as Agents Harness.
 - `agents install <skill|plugin|hook|template|cli|harness> <name> <source-path-or-url>` installs shared capabilities.
 - `agents credits` shows the shared credit store.
 - `agents doctor` checks package registration and shared state.

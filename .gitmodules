@@ -1,6 +1,6 @@
-[submodule "harnesses/andromeda-harness"]
+[submodule "os/agents-harness"]
 	path = os/agents-harness
-	url = https://github.com/marius-patrik/andromeda-harness.git
+	url = https://github.com/marius-patrik/agents-harness.git
 	branch = main
 [submodule "agents/life-support"]
 	path = agents/life-support
@@ -43,11 +43,11 @@
 	path = os/agents-manager
 	url = https://github.com/marius-patrik/agents-manager.git
 	branch = main
-[submodule "llm-gateway"]
+[submodule "os/llm-gateway"]
 	path = os/llm-gateway
 	url = https://github.com/marius-patrik/llm-gateway.git
 	branch = main
-[submodule "inference-engine"]
+[submodule "os/inference-engine"]
 	path = os/inference-engine
 	url = https://github.com/marius-patrik/inference-engine.git
 	branch = main
@@ -55,8 +55,9 @@
 	path = plugins/dream
 	url = https://github.com/marius-patrik/dream.git
 	branch = main
-[submodule "plugins/andromeda"]
+[submodule "plugins/plugin-rommie"]
 	path = plugins/plugin-rommie
-	url = https://github.com/marius-patrik/andromeda-plugin.git
+	url = https://github.com/marius-patrik/plugin-rommie.git
 	branch = main
+
 
