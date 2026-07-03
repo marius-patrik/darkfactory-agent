@@ -1,7 +1,7 @@
 {
-  "name": "@marius-patrik/agentos",
+  "name": "@marius-patrik/agents-mono",
   "version": "0.1.0",
-  "description": "Agentos workspace with a Bun TypeScript agent manager and shared CLI state.",
+  "description": "agents-mono workspace with a Bun TypeScript agent manager and shared CLI state.",
   "type": "module",
   "bin": {
     "agents": "./os/agents-manager/src/cli.ts"
