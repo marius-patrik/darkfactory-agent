@@ -36,6 +36,12 @@ agents cli exec <codex|claude|kimi|agy> -- <args...>
 agents packages register <path>
 agents packages list [--json]
 agents packages run <name-or-path> -- <args...>
+agents packages distro <define|install|upgrade|remove> ...
+agents packages container <define|pull|pin|upgrade|remove> ...
+agents env list [--json]
+agents env create <id> [--kind host|container|agent-workspace]
+agents env switch <id>
+agents env sync <id>
 agents data repo list [--json]
 agents data repo set <id> <owner/name> [--path data/name] [--branch main] [--managed-path path] [--env NAME]
 agents data repo path <id>
@@ -74,10 +80,11 @@ agents doctor
   data-repos.json
   installs.json
   packages.json
+  environments.json
   env
 ```
 
-The CLI exports `AGENTS_HOME`, `AGENTS_ROOT`, `AGENTS_CLIS`, `AGENTS_HARNESSES`, `AGENTS_SKILLS`, `AGENTS_PLUGINS`, `AGENTS_HOOKS`, `AGENTS_TEMPLATES`, `AGENTS_SECRETS`, `AGENTS_CREDITS`, and `AGENTS_DATA_REPOS`. Package and harness execution also exports configured data repository variables such as `AGENTOS_DATA_ROOT`.
+The CLI exports `AGENTS_HOME`, `AGENTS_ROOT`, `AGENTS_CLIS`, `AGENTS_HARNESSES`, `AGENTS_SKILLS`, `AGENTS_PLUGINS`, `AGENTS_HOOKS`, `AGENTS_TEMPLATES`, `AGENTS_SECRETS`, `AGENTS_CREDITS`, `AGENTS_DATA_REPOS`, and `AGENTS_ENVIRONMENTS`. Package and harness execution also exports configured data repository variables such as `AGENTOS_DATA_ROOT`.
 
 ## Roadmap
 
@@ -92,3 +99,5 @@ Packages, environments, provider adapters, secrets, harnesses, credits, and laun
 ### OS/Container Packages and Environments (#10)
 
 The package manager must grow into real distro package, container image, and named environment management. Groundwork should define typed records, state-file layout, and explicit not-yet-implemented command skeletons. Real distro and image plumbing depends on agents-mono #8 and #9, so current docs must not claim those behaviors exist.
+
+The first groundwork slice is documented in `docs/packages-and-environments.md`.

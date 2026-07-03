@@ -77,6 +77,7 @@ export interface SharedState {
   creditsFile: string;
   installsFile: string;
   packagesFile: string;
+  environmentsFile: string;
   dataReposFile: string;
   envFile: string;
 }
@@ -95,6 +96,7 @@ export function sharedStateAt(root: string, stateDir: string): SharedState {
     creditsFile: path.join(stateDir, "credits.json"),
     installsFile: path.join(stateDir, "installs.json"),
     packagesFile: path.join(stateDir, "packages.json"),
+    environmentsFile: path.join(stateDir, "environments.json"),
     dataReposFile: path.join(stateDir, "data-repos.json"),
     envFile: path.join(stateDir, "env"),
   };
@@ -120,6 +122,7 @@ export function sharedStateFromEnv(cwd: string): SharedState {
     secretsDir: process.env.AGENTS_SECRETS?.trim() || path.join(stateDir, "secrets"),
     creditsFile: process.env.AGENTS_CREDITS?.trim() || path.join(stateDir, "credits.json"),
     dataReposFile: process.env.AGENTS_DATA_REPOS?.trim() || path.join(stateDir, "data-repos.json"),
+    environmentsFile: process.env.AGENTS_ENVIRONMENTS?.trim() || path.join(stateDir, "environments.json"),
   };
 }
 
@@ -151,6 +154,22 @@ export async function ensureSharedState(state: SharedState): Promise<void> {
 
   if (!(await Bun.file(state.packagesFile).exists())) {
     await Bun.write(state.packagesFile, "[]\n");
+  }
+
+  if (!(await Bun.file(state.environmentsFile).exists())) {
+    await Bun.write(
+      state.environmentsFile,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          distroPackages: [],
+          containerPackages: [],
+          environments: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
   }
 
   if (!(await Bun.file(state.dataReposFile).exists())) {
@@ -187,6 +206,7 @@ export async function ensureSharedState(state: SharedState): Promise<void> {
       `AGENTS_SECRETS=${state.secretsDir}`,
       `AGENTS_CREDITS=${state.creditsFile}`,
       `AGENTS_DATA_REPOS=${state.dataReposFile}`,
+      `AGENTS_ENVIRONMENTS=${state.environmentsFile}`,
       `AGENTOS_DATA_ROOT=${defaultDataRepoPath(state.root)}`,
       "",
     ].join("\n"),

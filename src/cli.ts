@@ -4,6 +4,7 @@ import { cp, mkdir, stat } from "node:fs/promises";
 import { adapter, adapterEnv, adapterIds, doctorAdapter, materializeCredentials, type CliId } from "./adapters";
 import { dataRepoManagedRoot, readDataRepos, upsertDataRepo } from "./data-repos";
 import { readGitmodules, writeGitmodules } from "./gitmodules";
+import { notImplementedPackagesAndEnvironments, readPackagesAndEnvironmentsState } from "./environments";
 import {
   ensureSharedState,
   readCreditStore,
@@ -61,6 +62,12 @@ Usage:
   agents packages register <path>
   agents packages list [--json]
   agents packages run <name-or-path> -- <args...>
+  agents packages distro <define|install|upgrade|remove> ...
+  agents packages container <define|pull|pin|upgrade|remove> ...
+  agents env list [--json]
+  agents env create <id> [--kind host|container|agent-workspace]
+  agents env switch <id>
+  agents env sync <id>
   agents data repo list [--json]
   agents data repo set <id> <owner/name> [--path data/name] [--branch main] [--managed-path path] [--env NAME]
   agents data repo path <id>
@@ -312,7 +319,29 @@ async function packageCommand(args: string[], flags: Record<string, string | boo
     await runPackage(state, runnable, execArgs);
     return;
   }
+  if (action === "distro" || action === "container") {
+    throw notImplementedPackagesAndEnvironments(`agents packages ${action}`);
+  }
   throw new Error(`unknown packages action: ${action}`);
+}
+
+async function envCommand(args: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const [action = "list"] = args;
+  const state = runtimeState();
+  await ensureSharedState(state);
+  const environmentState = await readPackagesAndEnvironmentsState(state);
+
+  if (action === "list") {
+    if (flags.json) console.log(JSON.stringify(environmentState.environments, null, 2));
+    else for (const item of environmentState.environments) console.log(`${item.kind.padEnd(16)} ${item.id}`);
+    return;
+  }
+
+  if (action === "create" || action === "switch" || action === "sync") {
+    throw notImplementedPackagesAndEnvironments(`agents env ${action}`);
+  }
+
+  throw new Error(`unknown env action: ${action}`);
 }
 
 async function findRunnablePackage(
@@ -454,6 +483,7 @@ function sharedHarnessEnv(state: SharedState, harness: { id: string }): Record<s
     AGENTS_SECRETS: state.secretsDir,
     AGENTS_CREDITS: state.creditsFile,
     AGENTS_DATA_REPOS: state.dataReposFile,
+    AGENTS_ENVIRONMENTS: state.environmentsFile,
     AGENTOS_DATA_ROOT: path.join(state.root, defaultDataPath),
     ROMMIE_HOME: path.join(state.harnessesDir, harness.id, "runtime"),
   };
@@ -474,6 +504,7 @@ function sharedPackageEnv(state: SharedState): Record<string, string> {
     AGENTS_SECRETS: state.secretsDir,
     AGENTS_CREDITS: state.creditsFile,
     AGENTS_DATA_REPOS: state.dataReposFile,
+    AGENTS_ENVIRONMENTS: state.environmentsFile,
     AGENTOS_DATA_ROOT: path.join(state.root, defaultDataPath),
   };
 }
@@ -743,7 +774,7 @@ async function doctor(): Promise<void> {
     if (!item.path) missing.push(`${item.name}: missing path`);
     else if (!(await exists(path.join(root, item.path)))) missing.push(`${item.name}: missing checkout at ${item.path}`);
   }
-  for (const file of [state.envFile, state.creditsFile, state.installsFile, state.dataReposFile]) {
+  for (const file of [state.envFile, state.creditsFile, state.installsFile, state.dataReposFile, state.environmentsFile]) {
     if (!(await exists(file))) missing.push(`missing shared state file: ${file}`);
   }
   if (missing.length > 0) {
@@ -764,6 +795,7 @@ async function main(): Promise<void> {
   if (command === "state") return stateCommand(values[0]);
   if (command === "cli") return cliCommand(rest);
   if (command === "packages") return packageCommand(values, flags);
+  if (command === "env") return envCommand(values, flags);
   if (command === "data") return dataCommand(values, flags);
   if (command === "harness") return harnessCommand(values, flags);
   if (command === "install") return install(values);

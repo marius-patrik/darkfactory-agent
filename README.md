@@ -57,6 +57,7 @@ Important paths:
 - `.agents/data-repos.json` records managed data repositories.
 - `.agents/installs.json` records installed skills, plugins, hooks, templates, CLIs, and harnesses.
 - `.agents/packages.json` records package registrations.
+- `.agents/environments.json` records future OS/container package and environment desired state.
 
 Harness runtime data lives under `.agents/harnesses/<id>/runtime`; this repo does not use a separate `.agents/harness-runtimes` directory.
 
@@ -77,6 +78,12 @@ agents cli exec <codex|claude|kimi|agy> -- <args...>
 agents packages register <path>
 agents packages list [--json]
 agents packages run <name-or-path> -- <args...>
+agents packages distro <define|install|upgrade|remove> ...
+agents packages container <define|pull|pin|upgrade|remove> ...
+agents env list [--json]
+agents env create <id> [--kind host|container|agent-workspace]
+agents env switch <id>
+agents env sync <id>
 agents data repo list [--json]
 agents data repo set <id> <owner/name> [--path data/name] [--branch main] [--managed-path path] [--env NAME]
 agents data repo path <id>
@@ -131,3 +138,5 @@ The current CLI surface is intentionally local and file-backed. The next roadmap
 - Real OS/container packages and environments from #10: add distro package, container image, and named environment management after the agents-mono architecture and base-image contracts land.
 
 Until the #10 implementation lands, `agents packages` remains the local package registration and runnable manifest surface. It does not yet install OS packages, pull container images, or switch environments.
+
+The #10 groundwork state and command skeletons are documented in `docs/packages-and-environments.md`.
