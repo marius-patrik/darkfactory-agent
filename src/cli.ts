@@ -31,7 +31,7 @@ const packageKinds = new Map([
   ["package", "os"],
   ["template", "templates"],
   ["workspace", "workspaces"],
-  ["harness", "harnesses"],
+  ["harness", "os"],
   ["cli", "os"],
   ["plugin", "plugins"],
 ]);
@@ -115,7 +115,7 @@ function inferKind(packagePath: string): string {
   if (first === "apps") return "app";
   if (first === "data") return "data";
   if (first === "harnesses") return "harness";
-  if (first === "os") return base.includes("manager") ? "cli" : "package";
+  if (first === "os") return base.includes("manager") ? "cli" : base.includes("harness") ? "harness" : "package";
   if (first === "plugins") return "plugin";
   if (first === "templates") return "template";
   if (first === "workspaces") return "workspace";
@@ -677,6 +677,7 @@ main().catch((error) => {
   console.error(`agents: ${error.message}`);
   process.exitCode = 1;
 });
+
 
 
 
