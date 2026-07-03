@@ -129,7 +129,7 @@ async function reconcileTargetRepository() {
     ledger.actions.push({ action: "close-stale-prd-issue", issue: issueRef(issue) });
   }
 
-  const driftFindings = await detectCodeDrift(TARGET_REPO, repo.default_branch, items, []);
+  const driftFindings = await detectCodeDrift(TARGET_REPO, repo.default_branch, items, staleMarkedIssues);
   if (driftFindings.length) {
     const driftIssue = await upsertDriftIssue(TARGET_REPO, driftFindings);
     ledger.actions.push({ action: "drift-report", issue: driftIssue, findings: driftFindings });

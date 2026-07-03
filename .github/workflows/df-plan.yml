@@ -16,7 +16,9 @@ on:
       - PRD.md
 
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  issues: write
 
 jobs:
   df-plan:
