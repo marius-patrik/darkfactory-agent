@@ -100,6 +100,18 @@ async function considerPullRequest(repository, pull) {
       };
     }
 
+    if (!canDirectMergeAfterAutomergeFailure(enabled.reason)) {
+      return {
+        repo: repoName(repository),
+        pr: ref,
+        url: pull.url,
+        action: "skip",
+        reason: "protected-branch-automerge-failed",
+        automerge_error: enabled.reason,
+        checks: checksSummary(pull.statusCheckRollup)
+      };
+    }
+
     const merged = await mergePullRequest(repository, pull);
     return {
       repo: repoName(repository),
@@ -123,6 +135,10 @@ async function considerPullRequest(repository, pull) {
     base: pull.baseRefName,
     checks: checksSummary(pull.statusCheckRollup)
   };
+}
+
+function canDirectMergeAfterAutomergeFailure(reason) {
+  return /pull request is in clean status/i.test(reason || "");
 }
 
 async function mergePullRequest(repository, pull) {
