@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 
-const defaultDataPath = path.join("packages", "data", "data-agentos");
+const defaultDataPath = path.join("data", "data-agentos");
 const defaultDataRepoPath = (root: string) => path.join(root, defaultDataPath);
 
 export type InstallKind =
@@ -190,3 +190,4 @@ export async function readInstalls(state: SharedState): Promise<InstallRecord[]>
 export async function writeInstalls(state: SharedState, installs: InstallRecord[]): Promise<void> {
   await Bun.write(state.installsFile, `${JSON.stringify(installs, null, 2)}\n`);
 }
+
