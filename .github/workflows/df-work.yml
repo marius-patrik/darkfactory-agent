@@ -1,0 +1,57 @@
+name: DarkFactory Work
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Target repository in owner/name form.
+        required: true
+        type: string
+      issue_number:
+        description: Target issue number.
+        required: true
+        type: string
+  issues:
+    types:
+      - labeled
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+
+jobs:
+  df-work:
+    name: Run DarkFactory worker
+    runs-on: ubuntu-latest
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'issues' && github.event.label.name == 'df:ready') ||
+        (github.event_name == 'issue_comment' &&
+          !github.event.issue.pull_request &&
+          startsWith(github.event.comment.body, '/df run'))
+      }}
+
+    steps:
+      - name: Checkout DarkFactory
+        uses: actions/checkout@v4
+
+      - name: Mint mp-agents installation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DARK_FACTORY_APP_ID }}
+          private-key: ${{ secrets.DARK_FACTORY_PRIVATE_KEY }}
+          owner: marius-patrik
+
+      - name: Run worker
+        env:
+          DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          DF_CONTROL_REPO: ${{ github.repository }}
+          DF_TARGET_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.repo || github.repository }}
+          DF_TARGET_ISSUE_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.issue_number || github.event.issue.number }}
+          DF_TRIGGER: ${{ github.event_name }}
+        run: node .github/scripts/df-work.mjs
