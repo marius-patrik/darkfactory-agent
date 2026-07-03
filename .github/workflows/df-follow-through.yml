@@ -20,6 +20,8 @@ on:
 permissions:
   actions: read
   contents: read
+  issues: write
+  pull-requests: read
 
 jobs:
   follow-through:
@@ -36,13 +38,13 @@ jobs:
 
     steps:
       - name: Checkout DarkFactory
-        if: ${{ github.event_name != 'pull_request_target' }}
         uses: actions/checkout@v4
         with:
           repository: marius-patrik/darkfactory-agent
           ref: dev
 
       - name: Mint mp-agents installation token
+        if: ${{ github.event_name != 'pull_request_target' }}
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
@@ -51,80 +53,15 @@ jobs:
           owner: marius-patrik
 
       - name: Run follow-through
-        if: ${{ github.event_name != 'pull_request_target' }}
         env:
-          DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
+          DARK_FACTORY_TOKEN: ${{ github.event_name == 'pull_request_target' && github.token || steps.app-token.outputs.token }}
           DF_CONTROL_REPO: ${{ github.repository }}
-          DF_FOLLOW_THROUGH_MODE: sweep
+          DF_FOLLOW_THROUGH_MODE: ${{ github.event_name == 'pull_request_target' && 'dev-merge' || 'sweep' }}
           DF_SWEEP_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.repos || '' }}
           DF_SWEEP_EXCLUDE_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.exclude_repos || 'marius-patrik/agents-harness' }}
           DF_TRIGGER: ${{ github.event_name }}
           DF_DATA_REPO: marius-patrik/darkfactory-data
-        run: node .github/scripts/df-sweep.mjs
-
-      - name: Close issues for dev merge
-        if: ${{ github.event_name == 'pull_request_target' }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const pull = context.payload.pull_request;
-            const provenance = `${pull.title || ""}\n${pull.body || ""}`;
-            const isDarkFactoryPr = pull.head.ref.startsWith("df/") && (
-              /DarkFactory Worker Summary/.test(provenance) ||
-              /<!--\s*dark-factory:/i.test(provenance) ||
-              /\bDarkFactory\b/i.test(provenance) ||
-              /\bDark Factory\b/i.test(provenance)
-            );
-            if (!isDarkFactoryPr) {
-              core.info("Skipping dev issue closure because the merged PR lacks DarkFactory provenance.");
-              return;
-            }
-
-            const issueNumbers = [...new Set(
-              Array.from(
-                (pull.body || "").matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi),
-                (match) => Number(match[1]),
-              ),
-            )].filter((number) => Number.isInteger(number) && number > 0);
-
-            for (const issue_number of issueNumbers) {
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-              });
-              const labels = new Set(issue.data.labels.map((label) => typeof label === "string" ? label : label.name));
-              if (!["df:done", "df:running", "df:ready"].some((label) => labels.has(label))) {
-                core.info(`Skipping #${issue_number}: missing DarkFactory work label.`);
-                continue;
-              }
-              const comments = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-                per_page: 100,
-              });
-              const workerOpened = comments.data.some((comment) => {
-                return comment.body?.includes("DarkFactory worker opened") && comment.body.includes(pull.html_url);
-              });
-              if (!workerOpened) {
-                core.info(`Skipping #${issue_number}: no DarkFactory worker comment links this PR.`);
-                continue;
-              }
-              const marker = `merged to dev in ${pull.html_url}`;
-              if (!comments.data.some((comment) => comment.body?.includes(marker))) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number,
-                  body: `${marker}; releases with the next dev→main PR`,
-                });
-              }
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-                state: "closed",
-              });
-            }
+        shell: bash
+        run: |
+          export GITHUB_EVENT_PAYLOAD="$(cat "$GITHUB_EVENT_PATH")"
+          node .github/scripts/df-sweep.mjs
