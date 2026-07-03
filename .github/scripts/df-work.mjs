@@ -62,7 +62,7 @@ async function main() {
     const codexHome = path.join(tempRoot, "codex-home");
 
     await cloneRepository(TARGET_REPO, worktree);
-    ensureNoRemoteBranch(TARGET_REPO, branch);
+    await ensureNoRemoteBranch(TARGET_REPO, branch);
     runGit(["checkout", "-b", branch], worktree);
 
     await writeCodexAuth(codexHome);
@@ -178,16 +178,12 @@ async function cloneRepository(repository, worktree) {
   runGitWithAuth(["clone", "--depth", "1", url, worktree], process.cwd());
 }
 
-function ensureNoRemoteBranch(repository, branch) {
-  const result = spawnSync(
-    "git",
-    ["-c", authHeader(), "ls-remote", "--heads", `https://github.com/${repoName(repository)}.git`, branch],
-    { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
+async function ensureNoRemoteBranch(repository, branch) {
+  const refs = await ghRequest(
+    "GET",
+    `/repos/${repoName(repository)}/git/matching-refs/heads/${encodeURIComponent(branch)}`
   );
-  if (result.status !== 0) {
-    throw new Error(`git ls-remote failed: ${sanitize(result.stderr || result.stdout)}`);
-  }
-  if (result.stdout.trim()) {
+  if (Array.isArray(refs) && refs.some((ref) => ref.ref === `refs/heads/${branch}`)) {
     throw new Error(`Remote branch already exists: ${branch}`);
   }
 }
