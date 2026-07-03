@@ -73,7 +73,7 @@ describe("harness CLI", () => {
       expect(env.AGENTS_CLIS).toBe(path.join(root, ".agents", "clis"));
       expect(env.AGENTS_CREDITS).toBe(path.join(root, ".agents", "credits.json"));
       expect(env.AGENTS_DATA_REPOS).toBe(path.join(root, ".agents", "data-repos.json"));
-      expect(env.AGENTOS_DATA_ROOT).toBe(path.join(root, "packages", "data", "data-agentos"));
+      expect(env.AGENTOS_DATA_ROOT).toBe(path.join(root, "data", "data-agentos"));
       expect(env.ROMMIE_HOME).toBe(path.join(root, ".agents", "harnesses", "probe", "runtime"));
       expect(JSON.stringify(env.passthrough)).toBe(JSON.stringify(["--probe"]));
     } finally {
@@ -136,8 +136,8 @@ describe("harness CLI", () => {
       expect(env.AGENTS_HOME).toBe(path.join(root, ".agents"));
       expect(env.AGENTS_SECRETS).toBe(path.join(root, ".agents", "secrets"));
       expect(env.AGENTS_DATA_REPOS).toBe(path.join(root, ".agents", "data-repos.json"));
-      expect(env.AGENTOS_DATA_ROOT).toBe(path.join(root, "packages", "data", "data-agentos"));
-      expect(env.DARK_FACTORY_WORKSPACE_ROOT).toBe(path.join(root, "packages", "data", "data-agentos", "managed-repository"));
+      expect(env.AGENTOS_DATA_ROOT).toBe(path.join(root, "data", "data-agentos"));
+      expect(env.DARK_FACTORY_WORKSPACE_ROOT).toBe(path.join(root, "data", "data-agentos", "managed-repository"));
       expect(JSON.stringify(env.args)).toBe(JSON.stringify(["--probe"]));
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -183,4 +183,5 @@ describe("harness CLI", () => {
     }
   });
 });
+
 

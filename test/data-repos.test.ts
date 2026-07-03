@@ -14,7 +14,7 @@ describe("data repos", () => {
       const initial = await readDataRepos(state);
       expect(initial[0].id).toBe("agentos-data");
       expect(initial[0].repo).toBe("marius-patrik/agentos-data");
-      expect(dataRepoManagedRoot(initial[0])).toBe(path.join(root, "packages", "data", "data-agentos"));
+      expect(dataRepoManagedRoot(initial[0])).toBe(path.join(root, "data", "data-agentos"));
 
       const repo = await upsertDataRepo(state, {
         id: "darkfactory-workspace",
@@ -25,8 +25,8 @@ describe("data repos", () => {
         env: "DARK_FACTORY_WORKSPACE_ROOT",
       });
 
-      expect(repo.path).toBe(path.join(root, "packages", "data", "data-agentos"));
-      expect(dataRepoManagedRoot(repo)).toBe(path.join(root, "packages", "data", "data-agentos", "managed-repository"));
+      expect(repo.path).toBe(path.join(root, "data", "data-agentos"));
+      expect(dataRepoManagedRoot(repo)).toBe(path.join(root, "data", "data-agentos", "managed-repository"));
 
       const repos = await readDataRepos(state);
       expect(repos).toHaveLength(2);
@@ -37,4 +37,5 @@ describe("data repos", () => {
     }
   });
 });
+
 

@@ -23,16 +23,17 @@ import { listSecrets, secretPath, syncGitHubSecret, writeSecret } from "./secret
 
 const root = process.cwd();
 const gitmodulesPath = path.join(root, ".gitmodules");
-const defaultDataPath = path.join("packages", "data", "data-agentos");
+const defaultDataPath = path.join("data", "data-agentos");
 const packageKinds = new Map([
-  ["agent", "packages"],
-  ["app", "packages"],
-  ["data", "packages"],
-  ["package", "packages"],
-  ["template", "packages"],
-  ["workspace", "packages"],
-  ["harness", "packages"],
-  ["cli", "clis"],
+  ["agent", "agents"],
+  ["app", "apps"],
+  ["data", "data"],
+  ["package", "os"],
+  ["template", "templates"],
+  ["workspace", "workspaces"],
+  ["harness", "harnesses"],
+  ["cli", "os"],
+  ["plugin", "plugins"],
 ]);
 
 function runtimeState(): SharedState {
@@ -45,7 +46,7 @@ function help(): void {
 Usage:
   agents list [--json]
   agents info <name-or-path> [--json]
-  agents add <name> <git-url> [--kind agent|app|data|package|template|workspace|harness|cli] [--branch main] [--path path]
+  agents add <name> <git-url> [--kind agent|app|data|package|template|workspace|harness|cli|plugin] [--branch main] [--path path]
   agents remove <name-or-path>
   agents sync
   agents state init
@@ -110,16 +111,14 @@ async function exists(file: string): Promise<boolean> {
 function inferKind(packagePath: string): string {
   const first = packagePath.split(/[\\/]/)[0];
   const base = path.basename(packagePath);
-  if (first === "packages") {
-    if (base === "data-agentos" || base.endsWith("-data")) return "data";
-    if (base === "fabrica" || base === "singularity") return "app";
-    if (base.includes("harness")) return "harness";
-    if (base.includes("workspace")) return "workspace";
-    if (base.includes("template")) return "template";
-    if (["darkfactory-agent", "life-support", "rommie-agent", "skyblock-agent"].includes(base)) return "agent";
-    return "package";
-  }
+  if (first === "agents") return "agent";
+  if (first === "apps") return "app";
+  if (first === "data") return "data";
   if (first === "harnesses") return "harness";
+  if (first === "os") return base.includes("manager") ? "cli" : "package";
+  if (first === "plugins") return "plugin";
+  if (first === "templates") return "template";
+  if (first === "workspaces") return "workspace";
   if (first === "clis") return "cli";
   return "package";
 }
@@ -678,4 +677,6 @@ main().catch((error) => {
   console.error(`agents: ${error.message}`);
   process.exitCode = 1;
 });
+
+
 
