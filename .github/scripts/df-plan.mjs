@@ -101,6 +101,10 @@ async function reconcileTargetRepository() {
     }
 
     if (existing.state === "closed") {
+      if (existing.title === item.title && (existing.body || "").trim() === body.trim()) {
+        ledger.actions.push({ action: "keep-closed", marker: item.marker, issue: issueRef(existing) });
+        continue;
+      }
       const reopened = await gh.request("PATCH", `/repos/${repoName(TARGET_REPO)}/issues/${existing.number}`, {
         title: item.title,
         body,

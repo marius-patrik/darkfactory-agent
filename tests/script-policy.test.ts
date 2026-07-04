@@ -114,7 +114,7 @@ test("df-work cleanup remains a warning path after successful PR handoff", async
 test("df-plan reopens PRD-tracked issues when the PRD item still exists", async () => {
   const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
 
-  assert.doesNotMatch(source, /keep-closed/);
+  assert.match(source, /action: "keep-closed"/);
   assert.match(source, /action: "reopen-prd-issue"/);
   assert.match(source, /state: "open"/);
 });

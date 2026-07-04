@@ -95,7 +95,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: marius-patrik/darkfactory-agent
-          ref: main
+          ref: ${{ vars.DARK_FACTORY_CONTROL_REF || 'main' }}
           path: darkfactory-control
           persist-credentials: false
 
