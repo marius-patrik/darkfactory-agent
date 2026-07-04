@@ -240,6 +240,8 @@ test("df-plan drift detection covers untracked open issues and PRs", async () =>
   const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
 
   assert.match(source, /not tracked by any PRD item/);
+  assert.match(source, /isDarkFactoryManagedIssue\(labels\)/);
+  assert.match(source, /\^df:\(ready\|running\|blocked\|done\|class:\)/);
   assert.match(source, /not linked to a PRD-tracked issue/);
   assert.match(source, /extractClosingIssueNumbers/);
   assert.match(source, /listOpenPullRequests/);
@@ -255,6 +257,7 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.match(workflow, /^\s+branches:\s*$/m);
   assert.match(workflow, /^\s+-\s+main\s*$/m);
   assert.match(workflow, /PRD\.md/);
+  assert.doesNotMatch(workflow, /method:\s*'HEAD'/);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /^\s+schedule:\s*$/m);
   assert.match(workflow, /actions:\s+write/);

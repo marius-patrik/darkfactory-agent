@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { execFile, spawn } from "node:child_process";
@@ -126,6 +126,7 @@ export class RunnerManager {
     if (!existsSync(archivePath)) {
       await this.downloader.download(release.downloadUrl, archivePath);
     }
+    assertExistingFile(archivePath, "runner archive", true);
 
     if (!existsSync(join(directory, "config.cmd"))) {
       await this.commands.exec("powershell.exe", [
@@ -138,6 +139,7 @@ export class RunnerManager {
         directory
       ]);
     }
+    assertExistingFile(join(directory, "config.cmd"), "runner config command");
 
     const token = await this.github.createRegistrationToken(repository);
     const runnerName = runnerNameFor(repository);
@@ -537,6 +539,15 @@ function assertWithinRoot(root: string, target: string): void {
 
   if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(`${resolvedRoot}${sep}`)) {
     throw new Error(`refusing to remove runner directory outside root: ${target}`);
+  }
+}
+
+function assertExistingFile(path: string, description: string, requireContent = false): void {
+  if (!existsSync(path) || !statSync(path).isFile()) {
+    throw new Error(`${description} was not created: ${path}`);
+  }
+  if (requireContent && statSync(path).size <= 0) {
+    throw new Error(`${description} is empty: ${path}`);
   }
 }
 

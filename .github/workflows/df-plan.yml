@@ -106,7 +106,7 @@ jobs:
             const files = ['.github/scripts/df-lib.mjs', '.github/scripts/df-plan.mjs'];
             const fs = await import('node:fs');
             for (const file of files) {
-              const res = await fetch(`${controlRoot}/${file}`, { method: 'HEAD' });
+              const res = await fetch(`${controlRoot}/${file}`);
               if (!res.ok) {
                 console.log(`Canonical ${file} is not available at ${sha}; skipping PRD-edit planning.`);
                 fs.appendFileSync(process.env.GITHUB_OUTPUT, 'available=false\n');

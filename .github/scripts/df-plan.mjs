@@ -344,6 +344,7 @@ async function detectCodeDrift(repository, ref, items, staleMarkedIssues) {
     if (findPrdMarker(issue.body || "")) continue;
     const labels = (issue.labels || []).map((label) => typeof label === "string" ? label : label.name);
     if (labels.includes("df:prd-drift") || labels.includes("df:ask-owner")) continue;
+    if (!isDarkFactoryManagedIssue(labels)) continue;
     findings.push(`Open issue #${issue.number} is not tracked by any PRD item.`);
   }
 
@@ -357,6 +358,10 @@ async function detectCodeDrift(repository, ref, items, staleMarkedIssues) {
   }
 
   return findings;
+}
+
+function isDarkFactoryManagedIssue(labels) {
+  return labels.includes("roadmap") || labels.some((label) => /^df:(ready|running|blocked|done|class:)/.test(label));
 }
 
 async function listOpenPullRequests(repository) {

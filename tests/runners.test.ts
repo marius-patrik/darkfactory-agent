@@ -121,6 +121,7 @@ test("RunnerManager setup writes state without tokens and start records a detach
   };
   const commands: CommandRunner = {
     async exec(file, args, options) {
+      await materializeRunnerOnExpand(file, args, options?.cwd);
       calls.push({ file, args, cwd: options?.cwd, redactions: options?.redactions });
       return { stdout: "{}", stderr: "" };
     },
@@ -130,8 +131,8 @@ test("RunnerManager setup writes state without tokens and start records a detach
     }
   };
   const downloader: Downloader = {
-    async download() {
-      return;
+    async download(_url, destination) {
+      await writeFile(destination, "zip");
     }
   };
   const manager = new RunnerManager({
@@ -173,6 +174,7 @@ test("RunnerManager setup redacts registration token from command failures", asy
     downloader: createNoopDownloader(),
     commands: {
       async exec(file, args) {
+        await materializeRunnerOnExpand(file, args, runnerDirectory(root, repository));
         if (args.some((arg) => arg.endsWith("config.cmd"))) {
           throw new Error(`config failed after echoing ${token}`);
         }
@@ -209,6 +211,7 @@ test("RunnerManager remove redacts removal token from command failures", async (
     downloader: createNoopDownloader(),
     commands: {
       async exec(file, args) {
+        await materializeRunnerOnExpand(file, args, runnerDirectory(root, repository));
         if (args.includes("remove")) {
           throw new Error(`remove failed after echoing ${token}`);
         }
@@ -249,6 +252,7 @@ test("runner command log formatting redacts token argv values", async () => {
     downloader: createNoopDownloader(),
     commands: {
       async exec(file, args, options) {
+        await materializeRunnerOnExpand(file, args, options?.cwd);
         logs.push(commandForLog(file, args, options?.redactions));
         return { stdout: "", stderr: "" };
       },
@@ -300,8 +304,16 @@ function createRunnerClient(repository: RepositoryRef, registrationToken: string
 
 function createNoopDownloader(): Downloader {
   return {
-    async download() {
-      return;
+    async download(_url, destination) {
+      await writeFile(destination, "zip");
     }
   };
+}
+
+async function materializeRunnerOnExpand(file: string, args: string[], cwd: string | undefined): Promise<void> {
+  if (file.toLowerCase() !== "powershell.exe") return;
+  const destination = cwd ?? args.at(-1);
+  if (!destination) return;
+  await writeFile(join(destination, "config.cmd"), "");
+  await writeFile(join(destination, "run.cmd"), "");
 }
