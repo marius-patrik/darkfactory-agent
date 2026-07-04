@@ -1,4 +1,4 @@
-const server = Bun.serve({
+export const server = Bun.serve({
   port: Number(process.env.PORT ?? 3000),
   async fetch(request) {
     const url = new URL(request.url);
