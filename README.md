@@ -19,6 +19,11 @@ After creating a bot from this template, replace:
 - placeholder webhook handlers in `src/bot.ts`
 - GitHub App permissions and subscribed events as your bot needs change
 
+## Managed files
+
+- `.agents/.global/` – reusable agent operating rules. Keep these files intact.
+- `.agents/.project/` – project-specific facts, commands, decisions, status, and handoff. Replace these after creating a new repository from this template.
+
 ## Requirements
 
 - Node.js 22 or newer.
@@ -75,6 +80,16 @@ npm run build
 npm start
 ```
 
+## Validation
+
+Run the type checker, tests, and build:
+
+```powershell
+npm run typecheck
+npm test
+npm run build
+```
+
 ## Deployment
 
 Build and run with Docker:
@@ -99,3 +114,8 @@ Use `GET /healthz` as the health check endpoint.
 - Keep HTTP routing and signature handoff behavior in `src/server.ts`.
 - Keep environment parsing in `src/config.ts`.
 - Add tests under `tests/` for any new route, config branch, or webhook behavior.
+
+## Release notes
+
+- Initial release – GitHub App bot scaffold with webhook handlers, signature verification, tests, Docker support, and CI.
+- This README refresh adds a managed-files note, validation section, and release-notes section after the template rename and merge.
