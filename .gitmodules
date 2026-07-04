@@ -1,7 +1,7 @@
 [submodule "os/agents-harness"]
 	path = os/agents-harness
 	url = https://github.com/marius-patrik/agents-harness.git
-	branch = main
+	branch = dev
 [submodule "agents/life-support"]
 	path = agents/life-support
 	url = https://github.com/marius-patrik/life-support.git
@@ -17,7 +17,7 @@
 [submodule "templates/darkfactory-templates"]
 	path = templates/darkfactory-templates
 	url = https://github.com/marius-patrik/darkfactory-templates.git
-	branch = main
+	branch = dev
 [submodule "apps/singularity"]
 	path = apps/singularity
 	url = https://github.com/marius-patrik/singularity.git
@@ -46,7 +46,7 @@
 [submodule "os/llm-gateway"]
 	path = os/llm-gateway
 	url = https://github.com/marius-patrik/llm-gateway.git
-	branch = main
+	branch = dev
 [submodule "os/inference-engine"]
 	path = os/inference-engine
 	url = https://github.com/marius-patrik/inference-engine.git
@@ -54,7 +54,7 @@
 [submodule "plugins/dream"]
 	path = plugins/dream
 	url = https://github.com/marius-patrik/dream.git
-	branch = main
+	branch = dev
 [submodule "plugins/plugin-rommie"]
 	path = plugins/plugin-rommie
 	url = https://github.com/marius-patrik/plugin-rommie.git

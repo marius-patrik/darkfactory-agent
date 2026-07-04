@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@marius-patrik/agentos",
+      "name": "@marius-patrik/agents-mono",
       "devDependencies": {
         "@types/bun": "latest",
         "typescript": "^5.5.0",
