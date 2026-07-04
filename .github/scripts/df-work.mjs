@@ -73,11 +73,37 @@ async function main() {
   let tempRoot = "";
   let pullRequest = null;
 
+  const repo = await getRepository(gh, TARGET_REPO);
+  const workBaseBranch = await resolveWorkBaseBranch(TARGET_REPO, repo.default_branch);
+  let mergePolicy;
+
   try {
-    const repo = await getRepository(gh, TARGET_REPO);
-    const workBaseBranch = await resolveWorkBaseBranch(TARGET_REPO, repo.default_branch);
-    const mergePolicy = await preflightMergePolicy(TARGET_REPO, workBaseBranch, repo);
+    mergePolicy = await preflightMergePolicy(TARGET_REPO, workBaseBranch, repo);
     ledger.actions.push({ action: "preflight-merge-policy", result: mergePolicy });
+  } catch (error) {
+    const message = sanitize(error.stack || error.message || String(error), TOKEN);
+    ledger.status = "blocked";
+    ledger.error = message;
+    await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:blocked"], ["df:ready", "df:running", "df:done"]);
+    await createIssueComment(
+      TARGET_REPO,
+      TARGET_ISSUE_NUMBER,
+      [
+        "DarkFactory worker blocked — repository prerequisite missing.",
+        "",
+        "Enable the required setting before re-labeling this issue `df:ready`:",
+        "",
+        "```text",
+        truncate(message, 6000),
+        "```"
+      ].join("\n")
+    );
+    await writeLedger(ledger);
+    console.warn(`DarkFactory worker blocked on prerequisite for ${target}: ${message}`);
+    return;
+  }
+
+  try {
     await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:running"], ["df:ready", "df:blocked", "df:done"]);
     await createIssueComment(
       TARGET_REPO,
@@ -171,12 +197,7 @@ async function main() {
   } finally {
     const cleanup = await cleanupTempRoot(tempRoot, (warning) => console.warn(sanitize(warning, TOKEN)));
     ledger.cleanup = cleanup;
-    try {
-      ledger.ledger = await writeRunLedger(gh, DATA_REPO, "df-work", repoName(TARGET_REPO), ledger);
-      console.log(`DarkFactory ledger written to ${ledger.ledger.repository}/${ledger.ledger.path}`);
-    } catch (error) {
-      console.warn(sanitize(`DarkFactory ledger warning: ${error.message || String(error)}`, TOKEN));
-    }
+    await writeLedger(ledger);
   }
 }
 
@@ -461,4 +482,13 @@ function extractAcceptanceCriteria(body) {
 function truncate(value, maxLength) {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength)}\n\n[truncated from ${value.length} characters]`;
+}
+
+async function writeLedger(ledger) {
+  try {
+    ledger.ledger = await writeRunLedger(gh, DATA_REPO, "df-work", repoName(TARGET_REPO), ledger);
+    console.log(`DarkFactory ledger written to ${ledger.ledger.repository}/${ledger.ledger.path}`);
+  } catch (error) {
+    console.warn(sanitize(`DarkFactory ledger warning: ${error.message || String(error)}`, TOKEN));
+  }
 }

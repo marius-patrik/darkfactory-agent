@@ -178,11 +178,13 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.ok(checkout < token);
   assert.match(workflow, /GITHUB_REPOSITORY_OWNER/);
   assert.match(workflow, /GITHUB_REF_NAME.*main/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
   assert.match(workflow, /repository:\s+marius-patrik\/darkfactory-agent/);
   assert.match(workflow, /path:\s+darkfactory-control/);
   assert.match(workflow, /steps\.control-ref\.outputs\.sha/);
   assert.match(workflow, /Resolve canonical control ref/);
-  assert.doesNotMatch(workflow, /\bdev\b|DARK_FACTORY_CONTROL_REF/);
+  assert.match(workflow, /Validate manual planning target ref/);
+  assert.doesNotMatch(workflow, /DARK_FACTORY_CONTROL_REF/);
 });
 
 test("df-follow-through workflow validates trusted refs before privileged tokens", async () => {
@@ -220,6 +222,7 @@ test("df-work workflow only runs issue_comment triggers from trusted actors", as
   assert.match(workflow, /OWNER/);
   assert.match(workflow, /COLLABORATOR/);
   assert.doesNotMatch(workflow, /"MEMBER"/);
+  assert.match(workflow, /github\.repository == 'marius-patrik\/darkfactory-agent'/);
 });
 
 test("df-sweep waits before treating empty check rollups as no-checks-configured", async () => {

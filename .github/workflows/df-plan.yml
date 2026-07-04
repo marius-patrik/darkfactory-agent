@@ -74,6 +74,18 @@ jobs:
           const fs = require('node:fs');
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `sha=${sha}\n`);
 
+      - name: Validate manual planning target ref
+        if: github.event_name == 'workflow_dispatch' && inputs.ref
+        shell: bash
+        run: |
+          # Manual planning can only target protected/default branch refs so a
+          # non-canonical tag or PRD snapshot cannot drive issue creation/closure.
+          ref="${{ inputs.ref }}"
+          if [[ "${ref}" != "main" && "${ref}" != "dev" ]]; then
+            echo "::error::DarkFactory manual planning can only target refs/heads/main or refs/heads/dev."
+            exit 1
+          fi
+
       - name: Checkout DarkFactory control scripts
         uses: actions/checkout@v4
         with:
