@@ -181,7 +181,11 @@ async function closeDevMergeIssuesFromEnv() {
     baseRefName: pull.base.ref
   });
   ledger.actions.push(action);
-  await writeLedger("df-sweep", repoName(repository), ledger);
+  try {
+    await writeLedger("df-sweep", repoName(repository), ledger);
+  } catch (error) {
+    console.warn(`DarkFactory ledger warning: ${error.message || String(error)}`);
+  }
 }
 
 async function closeIssuesIfDevMerge(repository, pull) {
