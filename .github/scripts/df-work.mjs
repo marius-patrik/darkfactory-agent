@@ -164,6 +164,7 @@ async function main() {
 
     runGit(["push", "origin", `HEAD:refs/heads/${branch}`], worktree);
     pullRequest = await createPullRequest(TARGET_REPO, workBaseBranch, branch, issue, summary);
+    ledger.pull_request = pullRequest.html_url;
     const automerge = mergePolicy.useAutomerge
       ? await enableAutoMerge(pullRequest.node_id)
       : { enabled: false, reason: "Direct green-PR sweep will merge after checks because branch protection is not configured." };
@@ -183,9 +184,16 @@ async function main() {
       ].join("\n")
     );
     ledger.status = "success";
-    ledger.pull_request = pullRequest.html_url;
     ledger.actions.push({ action: "open-pr", url: pullRequest.html_url, automerge });
   } catch (error) {
+    if (pullRequest) {
+      ledger.status = "success";
+      ledger.pull_request = pullRequest.html_url;
+      ledger.error = sanitize(error.stack || error.message || String(error), TOKEN);
+      ledger.actions.push({ action: "post-pr-warning", url: pullRequest.html_url, error: ledger.error });
+      console.warn(`DarkFactory post-PR warning for ${pullRequest.html_url}: ${ledger.error}`);
+      return;
+    }
     ledger.status = "blocked";
     ledger.error = sanitize(error.stack || error.message || String(error), TOKEN);
     await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:blocked"], ["df:ready", "df:running", "df:done"]);

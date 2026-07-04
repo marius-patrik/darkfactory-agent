@@ -98,7 +98,19 @@ async function reconcileTargetRepository() {
 
     if (item.completed) {
       if (!existing) {
-        ledger.actions.push({ action: "skip-completed", marker: item.marker });
+        const created = await gh.request("POST", `/repos/${repoName(TARGET_REPO)}/issues`, {
+          title: item.title,
+          body: prdIssueBody(item, previousIssueNumber ? [previousIssueNumber] : []),
+          labels
+        });
+        const closed = await gh.request("PATCH", `/repos/${repoName(TARGET_REPO)}/issues/${created.number}`, {
+          state: "closed"
+        });
+        await gh.request("POST", `/repos/${repoName(TARGET_REPO)}/issues/${created.number}/comments`, {
+          body: "DarkFactory L4 planning created and closed this issue because the PRD already marks this item as completed."
+        });
+        ledger.actions.push({ action: "create-closed-completed-prd-issue", marker: item.marker, issue: issueRef(closed) });
+        previousIssueNumber = closed.number;
         continue;
       }
       if (existing.state === "closed") {

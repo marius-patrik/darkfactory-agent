@@ -88,6 +88,24 @@ jobs:
             exit 1
           fi
 
+      - name: Validate manual planning target repository
+        if: github.event_name == 'workflow_dispatch' && inputs.repo
+        shell: bash
+        run: |
+          repo="${{ inputs.repo }}"
+          case "${repo}" in
+            marius-patrik/fabrica|marius-patrik/skyblock-agent|marius-patrik/singularity|marius-patrik/life-support)
+              echo "::error::DarkFactory manual planning target is parked: ${repo}."
+              exit 1
+              ;;
+            marius-patrik/*)
+              ;;
+            *)
+              echo "::error::DarkFactory manual planning target must be a marius-patrik repository."
+              exit 1
+              ;;
+          esac
+
       # Cross-repo planning sweeps check out the canonical control scripts from
       # darkfactory-agent. PRD-edit triggers download the same pinned scripts via
       # the public raw API so the repository token can reconcile issues without

@@ -221,6 +221,8 @@ test("df-work cleanup remains a warning path after successful PR handoff", async
   const finallyBlock = source.slice(source.indexOf("finally {"));
 
   assert.equal(successBeforeFinally, true);
+  assert.match(source, /if \(pullRequest\) \{/);
+  assert.match(source, /action: "post-pr-warning"/);
   assert.match(finallyBlock, /const cleanup = await cleanupTempRoot/);
   assert.match(finallyBlock, /ledger\.cleanup = cleanup/);
   assert.doesNotMatch(finallyBlock, /throw\s+cleanup|if\s*\(\s*!cleanup\.ok/);
@@ -274,6 +276,9 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.match(workflow, /steps\.control-ref\.outputs\.sha/);
   assert.match(workflow, /Resolve canonical control ref/);
   assert.match(workflow, /Validate manual planning target ref/);
+  assert.match(workflow, /Validate manual planning target repository/);
+  assert.match(workflow, /marius-patrik\/fabrica/);
+  assert.match(workflow, /must be a marius-patrik repository/);
   assert.doesNotMatch(workflow, /DARK_FACTORY_CONTROL_REF/);
 });
 
@@ -295,6 +300,7 @@ test("df-plan preserves PRD sequence references across completed predecessors", 
   assert.match(source, /if \(previousOpenIssueNumber === null\) labels\.push\("df:ready"\)/);
   assert.match(source, /previousIssueNumber = closed\.number/);
   assert.match(source, /previousIssueNumber = existing\.number/);
+  assert.match(source, /create-closed-completed-prd-issue/);
 });
 
 test("df-follow-through workflow validates trusted refs before privileged tokens", async () => {
