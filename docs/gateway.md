@@ -29,9 +29,18 @@ See also: `.plans/design/01-gateway.md` (the gateway contract) and
 4. **Switcher endpoints** `/host` `/fabric` `/provider` `/model` — REST over the
    registry. `GET` lists options (with liveness), `POST /{axis}/{value}` sets an
    axis, `GET /switcher/state` resolves the selection (global scope only in VS1).
-5. **Tests adapted + extended** (pytest, no live engines — httpx mocked, app via
+5. **Task-class route resolution** (`registry/routing.yaml`, `POST /route`,
+   `GET /route/{task_class}`, and `gateway route <class>`): DarkFactory workers,
+   harnesses, and agents-manager resolve `mechanical`, `standard-impl`,
+   `hard-impl`, `review`, and `judgment/orchestration` to ordered configured
+   provider/model/params candidates instead of hard-coding model names. Route
+   resolution and request usage can write per-class entries to `AGENTS_CREDITS`.
+6. **Tests adapted + extended** (pytest, no live engines — httpx mocked, app via
    TestClient): registry / router / health / fallback / switcher / app.
-6. **`pyproject.toml`** (uv, py>=3.12) so
+7. **Current service packaging** at the repo root: `Dockerfile`,
+   `docker-compose.yml`, and `scripts/packaging_smoke.py`. The container exposes
+   port 4000 and checks `/healthz`; it can start before live engines are up.
+8. **`pyproject.toml`** (uv, py>=3.12) so
    `cd llm-gateway && uv sync && uv run pytest` is green.
 
 ## Connect alignment is VS2

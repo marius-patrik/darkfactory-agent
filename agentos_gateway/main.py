@@ -37,10 +37,12 @@ from agentos_gateway.schemas import (
     SwitcherStateResponse,
     SwitcherOptionsResponse,
     SwitcherOption,
-    SwitcherSetRequest,
+    RouteResolveRequest,
+    RouteResolveResponse,
 )
 from agentos_gateway.registry import ModelRegistry, ActiveRoleManager
 from agentos_gateway.router import Router, RoutingError
+from agentos_gateway.task_routing import TaskRouter, TaskRoutingError
 from agentos_gateway.oauth import OAuthManager
 from agentos_gateway.health import HealthChecker
 from agentos_gateway.switchers import SwitcherService
@@ -51,16 +53,18 @@ registry: ModelRegistry
 active_roles: ActiveRoleManager
 tracer: TraceLogger
 router: Router
+task_router: TaskRouter
 health_checker: HealthChecker
 switchers: SwitcherService
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global registry, active_roles, tracer, router, health_checker, switchers
+    global registry, active_roles, tracer, router, task_router, health_checker, switchers
     tracer = TraceLogger()
     registry, active_roles = _load_registry(tracer)
     router = Router(registry, active_roles, tracer, oauth=OAuthManager())
+    task_router = TaskRouter(registry, quota=router.quota, tracer=tracer)
     health_checker = HealthChecker(registry, active_roles, started_at)
     switchers = SwitcherService(registry, active_roles)
     yield
@@ -124,6 +128,7 @@ async def chat_completions(body: ChatCompletionRequest):
             tools=body.tools,
             tool_choice=body.tool_choice,
             allow_cloud=body.allow_cloud,
+            task_class=body.task_class,
         )
     except RoutingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -151,6 +156,22 @@ async def list_models() -> ModelListResponse:
     return ModelListResponse(
         data=[ModelInfo(**m.to_openai_dict()) for m in models]
     )
+
+
+@app.post("/route", response_model=RouteResolveResponse)
+async def resolve_route(body: RouteResolveRequest) -> RouteResolveResponse:
+    try:
+        return RouteResolveResponse(**task_router.resolve(body.task_class, allow_cloud=body.allow_cloud).to_dict())
+    except TaskRoutingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/route/{task_class:path}", response_model=RouteResolveResponse)
+async def resolve_route_get(task_class: str, allow_cloud: bool = False) -> RouteResolveResponse:
+    try:
+        return RouteResolveResponse(**task_router.resolve(task_class, allow_cloud=allow_cloud).to_dict())
+    except TaskRoutingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/healthz")

@@ -28,6 +28,7 @@ class ChatCompletionRequest(BaseModel):
     # never-meter guard (router.resolve_model) rejects cloud models unless a
     # request opts in. In VS1 no cloud model is reachable (all disabled).
     allow_cloud: bool = Field(default=False, description="Allow routing to cloud models")
+    task_class: str | None = Field(default=None, description="Optional task class for route accounting")
 
 
 class ChatCompletionChoice(BaseModel):
@@ -145,3 +146,28 @@ class TraceEvent(BaseModel):
     fallback_to: str | None = None
     error: str | None = None
     request_id: str | None = None
+
+
+class RouteResolveRequest(BaseModel):
+    task_class: str = Field(description="Task class, for example mechanical or standard-impl")
+    allow_cloud: bool = Field(default=False, description="Allow enabled cloud candidates")
+
+
+class RouteCandidateInfo(BaseModel):
+    provider: str
+    model_id: str
+    available: bool
+    unavailable_reason: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class RouteResolveResponse(BaseModel):
+    task_class: str
+    provider: str
+    model_id: str
+    model: str
+    params: dict[str, Any]
+    fallback_model_ids: list[str]
+    budget_cap_tokens: int | None = None
+    budget_cap_cost_usd: float | None = None
+    candidates: list[RouteCandidateInfo]

@@ -20,14 +20,38 @@ class QuotaTracker:
         self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._tokens: dict[str, deque[tuple[float, int]]] = defaultdict(deque)
 
-    def record_usage(self, provider: str, tokens_in: int, tokens_out: int) -> None:
+    def record_usage(
+        self,
+        provider: str,
+        tokens_in: int,
+        tokens_out: int,
+        task_class: str | None = None,
+        model_id: str | None = None,
+    ) -> None:
         now = self._now()
         clean_in = max(0, int(tokens_in))
         clean_out = max(0, int(tokens_out))
         self._prune(provider, now)
         self._requests[provider].append(now)
         self._tokens[provider].append((now, clean_in + clean_out))
-        self._record_agents_credit(provider, clean_in, clean_out)
+        self._record_agents_credit(
+            provider,
+            clean_in,
+            clean_out,
+            action="usage",
+            task_class=task_class,
+            model_id=model_id,
+        )
+
+    def record_route_resolution(self, provider: str, task_class: str, model_id: str) -> None:
+        self._record_agents_credit(
+            provider,
+            0,
+            0,
+            action="route.resolve",
+            task_class=task_class,
+            model_id=model_id,
+        )
 
     def is_exhausted(self, provider: str) -> bool:
         now = self._now()
@@ -72,7 +96,15 @@ class QuotaTracker:
             return None
         return int(value)
 
-    def _record_agents_credit(self, provider: str, tokens_in: int, tokens_out: int) -> None:
+    def _record_agents_credit(
+        self,
+        provider: str,
+        tokens_in: int,
+        tokens_out: int,
+        action: str,
+        task_class: str | None = None,
+        model_id: str | None = None,
+    ) -> None:
         path = os.environ.get("AGENTS_CREDITS", "").strip()
         if not path:
             return
@@ -82,19 +114,31 @@ class QuotaTracker:
             store = _read_credit_store(credit_path)
             now = datetime.now(timezone.utc).isoformat()
             provider_state = store.setdefault("providers", {}).setdefault(provider, {})
-            provider_state["requests"] = int(provider_state.get("requests", 0)) + 1
+            if action == "usage":
+                provider_state["requests"] = int(provider_state.get("requests", 0)) + 1
             provider_state["tokensIn"] = int(provider_state.get("tokensIn", 0)) + tokens_in
             provider_state["tokensOut"] = int(provider_state.get("tokensOut", 0)) + tokens_out
-            store.setdefault("ledger", []).append(
-                {
-                    "provider": provider,
-                    "consumer": "agentos.gateway",
-                    "action": "usage",
-                    "tokensIn": tokens_in,
-                    "tokensOut": tokens_out,
-                    "at": now,
-                }
-            )
+            entry = {
+                "provider": provider,
+                "consumer": "agentos.gateway",
+                "action": action,
+                "tokensIn": tokens_in,
+                "tokensOut": tokens_out,
+                "at": now,
+            }
+            if task_class:
+                provider_classes = provider_state.setdefault("classes", {})
+                class_state = provider_classes.setdefault(task_class, {})
+                if action == "usage":
+                    class_state["requests"] = int(class_state.get("requests", 0)) + 1
+                else:
+                    class_state["resolutions"] = int(class_state.get("resolutions", 0)) + 1
+                class_state["tokensIn"] = int(class_state.get("tokensIn", 0)) + tokens_in
+                class_state["tokensOut"] = int(class_state.get("tokensOut", 0)) + tokens_out
+                entry["taskClass"] = task_class
+            if model_id:
+                entry["modelId"] = model_id
+            store.setdefault("ledger", []).append(entry)
             store["updatedAt"] = now
             tmp_path = credit_path.with_suffix(credit_path.suffix + ".tmp")
             tmp_path.write_text(json.dumps(store, indent=2) + "\n", encoding="utf-8")

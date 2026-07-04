@@ -106,7 +106,7 @@ class ModelRegistry:
             raise RegistryError(f"Invalid model entry: {exc}") from exc
 
     def save(self) -> None:
-        payload = {
+        payload: dict[str, Any] = {
             "schema_version": "gateway-registry-v1",
             "models": {},
         }

@@ -66,6 +66,22 @@ def test_models_lists_five_local_engines(client):
     assert ids == {"qwen3-8b", "coder-32b-awq", "qwen2.5-7b-q4", "conv-7b-1m", "conv-14b-1m"}
 
 
+def test_route_resolve_returns_task_class_model(client):
+    resp = client.post("/route", json={"task_class": "standard-impl"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["task_class"] == "standard-impl"
+    assert body["provider"] == "local"
+    assert body["model_id"] == "qwen3-8b"
+    assert body["params"]["model_reasoning_effort"] == "medium"
+
+
+def test_route_resolve_path_supports_slash_class(client):
+    resp = client.get("/route/judgment/orchestration")
+    assert resp.status_code == 200
+    assert resp.json()["task_class"] == "judgment/orchestration"
+
+
 def test_switcher_state_defaults_local(client):
     resp = client.get("/switcher/state")
     assert resp.status_code == 200

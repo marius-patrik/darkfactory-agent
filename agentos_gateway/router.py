@@ -211,6 +211,7 @@ class Router:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         allow_cloud: bool = False,
+        task_class: str | None = None,
     ) -> dict[str, Any] | AsyncIterator[dict[str, Any]]:
         """Route a chat-completion request to the resolved backend."""
         req_id = generate_request_id()
@@ -302,8 +303,14 @@ class Router:
             duration_ms = (time.perf_counter() - t0) * 1000
             backend_meta = self._pop_backend_metadata(result)
             tokens_out = self._tokens_out(result)
-            if original_entry.cloud:
-                self.quota.record_usage(self._quota_provider(original_entry), estimated, tokens_out)
+            if original_entry.cloud or task_class:
+                self.quota.record_usage(
+                    self._quota_provider(original_entry),
+                    estimated,
+                    tokens_out,
+                    task_class=task_class,
+                    model_id=original_entry.id,
+                )
             response_meta = self._response_metadata(
                 request_id=req_id,
                 requested_model=model_id,
@@ -315,6 +322,7 @@ class Router:
                 fallback_used=fallback_used,
                 fallback_to=entry.id if fallback_used else None,
                 backend_meta=backend_meta,
+                task_class=task_class,
             )
             success_trace_fields = {
                 key: response_meta[key]
@@ -335,6 +343,7 @@ class Router:
                     "http_status",
                 )
             }
+            success_extra = {"task_class": task_class} if task_class else None
             self.tracer.log(
                 trace_id=req_id,
                 event_type="request.success",
@@ -345,6 +354,7 @@ class Router:
                 tokens_out=tokens_out,
                 fallback_used=fallback_used,
                 fallback_to=entry.id if fallback_used else None,
+                extra=success_extra,
                 **success_trace_fields,
             )
             return self._normalize_response(result, response_meta if not stream else None)
@@ -412,6 +422,7 @@ class Router:
         fallback_used: bool,
         fallback_to: str | None,
         backend_meta: dict[str, Any] | None = None,
+        task_class: str | None = None,
     ) -> dict[str, Any]:
         backend_meta = backend_meta or {}
         backend_api_base = backend_meta.get("backend_api_base", entry.api_base)
@@ -437,6 +448,7 @@ class Router:
             "http_status": backend_meta.get("http_status", 200),
             "fallback_used": fallback_used,
             "fallback_to": fallback_to,
+            "task_class": task_class,
         }
 
     def _backend_node_id(self, entry: ModelEntry, api_base: str | None) -> str | None:
@@ -729,9 +741,8 @@ class Router:
         if content is None:
             return None
         cleaned = cls._THINK_RE.sub("", content)
-        cleaned, _ = cls._strip_reasoning_delta(cleaned, False)
-        cleaned = cleaned.strip() if cleaned is not None else None
-        return cleaned
+        stripped, _ = cls._strip_reasoning_delta(cleaned, False)
+        return stripped.strip() if stripped is not None else None
 
     def _normalize_response(
         self,

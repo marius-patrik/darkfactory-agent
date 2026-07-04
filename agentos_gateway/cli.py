@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from agentos_gateway.registry import ModelRegistry, ActiveRoleManager, ModelEntry, RegistryError
+from agentos_gateway.task_routing import TaskRouter, TaskRoutingError
 
 app = typer.Typer(name="gateway", help="Agentos Gateway CLI")
 console = Console()
@@ -22,6 +24,10 @@ def _registry() -> ModelRegistry:
 
 def _active() -> ActiveRoleManager:
     return ActiveRoleManager()
+
+
+def _task_router() -> TaskRouter:
+    return TaskRouter(_registry())
 
 
 @app.command("serve")
@@ -147,7 +153,7 @@ def model_update(
     if updated:
         console.print(f"[green]Updated '{field}' on '{model_id}'[/green]")
     else:
-        console.print(f"[red]Update failed[/red]")
+        console.print("[red]Update failed[/red]")
 
 
 @app.command("model-select")
@@ -192,6 +198,37 @@ def validate_registry() -> None:
     except RegistryError as exc:
         console.print(f"[red]Registry invalid: {exc}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("route")
+def route_task(
+    task_class: str = typer.Argument(..., help="Task class to resolve, such as mechanical or hard-impl"),
+    allow_cloud: bool = typer.Option(False, "--allow-cloud", help="Allow enabled cloud candidates"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON for automation"),
+) -> None:
+    """Resolve a task class to provider, model, and params."""
+    try:
+        resolution = _task_router().resolve(task_class, allow_cloud=allow_cloud).to_dict()
+    except TaskRoutingError as exc:
+        console.print(f"[red]Route failed: {exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        console.print(json.dumps(resolution, indent=2))
+        return
+
+    table = Table(title=f"Route: {task_class}")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Model ID")
+    table.add_column("Model")
+    table.add_column("Params")
+    table.add_row(
+        resolution["provider"],
+        resolution["model_id"],
+        resolution["model"],
+        json.dumps(resolution["params"], sort_keys=True),
+    )
+    console.print(table)
 
 
 if __name__ == "__main__":
