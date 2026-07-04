@@ -46,47 +46,12 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve canonical control ref
-        id: control-ref
-        shell: node {0}
-        run: |
-          // Pin to an immutable SHA on marius-patrik/darkfactory-agent main so
-          // managed repositories cannot execute repo-local worker scripts.
-          (async () => {
-            const res = await fetch('https://api.github.com/repos/marius-patrik/darkfactory-agent/commits/main');
-            if (!res.ok) throw new Error(`Failed to resolve canonical control ref: ${res.status}`);
-            const sha = (await res.json()).sha;
-            if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/i.test(sha)) {
-              throw new Error('Could not resolve canonical DarkFactory control ref.');
-            }
-            const fs = await import('node:fs');
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `sha=${sha}\n`);
-          })();
-
-      - name: Download canonical DarkFactory worker scripts
-        shell: node {0}
-        run: |
-          // Managed repository tokens cannot check out the control repository, so
-          // worker scripts are fetched through the public raw API at the pinned SHA.
-          (async () => {
-            const sha = '${{ steps.control-ref.outputs.sha }}';
-            const controlRoot = `https://raw.githubusercontent.com/marius-patrik/darkfactory-agent/${sha}`;
-            const files = [
-              '.github/scripts/df-lib.mjs',
-              '.github/scripts/df-work.mjs',
-              '.github/codex-review.Dockerfile',
-              '.github/scripts/run-codex-review.sh',
-              '.github/codex-review.schema.json'
-            ];
-            const fs = await import('node:fs');
-            for (const file of files) {
-              const res = await fetch(`${controlRoot}/${file}`);
-              if (!res.ok) throw new Error(`Could not fetch canonical ${file}: ${res.status}`);
-              const dest = `darkfactory-control/${file}`;
-              await fs.promises.mkdir(dest.slice(0, dest.lastIndexOf('/')), { recursive: true });
-              await fs.promises.writeFile(dest, await res.text());
-            }
-          })();
+      - name: Checkout installed DarkFactory worker
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: darkfactory-control
+          persist-credentials: false
 
       - name: Mint mp-agents installation token
         id: app-token

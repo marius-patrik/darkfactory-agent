@@ -232,8 +232,7 @@ test("df-plan reopens PRD-tracked issues when the PRD item still exists", async 
   const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
 
   assert.match(source, /action: "keep-closed"/);
-  assert.match(source, /action: "reopen-prd-issue"/);
-  assert.match(source, /state: "open"/);
+  assert.doesNotMatch(source, /action: "reopen-prd-issue"/);
   assert.match(source, /listPrdPaths/);
   assert.match(source, /getRecursiveTree/);
   assert.match(source, /git\/commits\/\$\{encodeURIComponent\(ref\)\}/);
@@ -262,22 +261,21 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.match(workflow, /^\s+branches:\s*$/m);
   assert.match(workflow, /^\s+-\s+main\s*$/m);
   assert.match(workflow, /PRD\.md/);
-  assert.doesNotMatch(workflow, /method:\s*'HEAD'/);
+  assert.doesNotMatch(workflow, /raw\.githubusercontent\.com|commits\/main|method:\s*'HEAD'/);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /^\s+schedule:\s*$/m);
   assert.doesNotMatch(workflow, /actions:\s+write/);
   assert.notEqual(gate, -1);
-  assert.notEqual(checkout, -1);
+  assert.equal(checkout, -1);
   assert.notEqual(token, -1);
   assert.ok(gate < token);
-  assert.ok(checkout < token);
+  assert.match(workflow, /Checkout installed DarkFactory planner/);
   assert.match(workflow, /GITHUB_REPOSITORY_OWNER/);
   assert.match(workflow, /GITHUB_REF_NAME.*main/);
   assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
-  assert.match(workflow, /repository:\s+marius-patrik\/darkfactory-agent/);
   assert.match(workflow, /path:\s+darkfactory-control/);
-  assert.match(workflow, /steps\.control-ref\.outputs\.sha/);
-  assert.match(workflow, /Resolve canonical control ref/);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(workflow, /steps\.control-ref\.outputs\.sha|Resolve canonical control ref/);
   assert.match(workflow, /Validate manual planning target ref/);
   assert.match(workflow, /Validate manual planning target repository/);
   assert.match(workflow, /marius-patrik\/fabrica/);
@@ -353,12 +351,13 @@ test("df-work workflow restricts privileged workers to the control repository", 
   assert.match(workflow, /if:\s*github\.event_name == 'workflow_dispatch'/);
 });
 
-test("df-work workflow downloads canonical scripts for managed-repo triggers", async () => {
+test("df-work workflow uses the installed control worker payload", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
 
-  assert.match(workflow, /raw\.githubusercontent\.com/);
+  assert.match(workflow, /Checkout installed DarkFactory worker/);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /darkfactory-control\/\.github\/scripts\/df-work\.mjs/);
-  assert.doesNotMatch(workflow, /actions\/checkout/);
+  assert.doesNotMatch(workflow, /raw\.githubusercontent\.com|commits\/main/);
 });
 
 test("df-work workflow uses the app token for control-dispatched workers", async () => {
