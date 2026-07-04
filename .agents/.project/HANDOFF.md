@@ -2,22 +2,23 @@
 
 ## Current Work
 
-The active branch is `codex/bun-project-ci` for PR #2.
+There is no active branch or pull request. The repository is on `main`.
 
-## Completed In This Branch
+## Completed Work
 
+- PR #2 (`[codex] Bootstrap Bun project and CI`) merged into `main`.
 - Added Bun and TypeScript project scaffold.
 - Added GitHub Actions CI.
 - Added reusable `.agents/.global/` content.
 - Added project-specific `.agents/.project/` content.
 
-## Validation To Run Before Final Merge
+## Validation
+
+Run before any future release:
 
 ```powershell
 bun run ci
 ```
-
-Confirm GitHub Actions `validate` passes on PR #2.
 
 ## Template Follow-Up
 

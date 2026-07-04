@@ -5,8 +5,8 @@
 | Area | State |
 | --- | --- |
 | Repository | `marius-patrik/template-repo` |
-| Branch | `codex/bun-project-ci` |
-| Pull request | `#2` draft, targets `main` |
+| Branch | `main` |
+| Pull request | No active pull request |
 | Scaffold | Bun and TypeScript project template |
 | Agent files | `.agents/.global/` reusable, `.agents/.project/` project-specific |
 | CI | GitHub Actions `validate` job |
@@ -21,8 +21,7 @@ Latest local validation for the scaffold:
 - `bun run build`
 - `bun run ci`
 
-## Next Actions
+## Notes
 
-- Keep PR #2 updated until merged.
-- After merge, update this file if branch or PR status changes.
-- When creating a new repo from this template, replace this file with that repo's current state.
+- PR #2 (`[codex] Bootstrap Bun project and CI`) has been merged into `main`.
+- There is no active handoff. When creating a new repository from this template, replace this file with that repository's current state.
