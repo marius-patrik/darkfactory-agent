@@ -28,6 +28,18 @@ export const PLANNING_LABELS = [
 ];
 
 export const WORKER_PULL_REQUEST_AUTHORS = new Set(["github-actions[bot]", "mp-agents[bot]"]);
+export const WORKER_STATE_LABELS = ["df:running", "df:blocked", "df:done"];
+export const PLANNER_RECONCILED_LABELS = [
+  "df:ready",
+  "df:class:mechanical",
+  "df:class:standard",
+  "df:class:hard",
+  "df:prd-drift",
+  "roadmap",
+  "P0",
+  "P1",
+  "P2"
+];
 
 export function requiredEnv(name) {
   const value = process.env[name]?.trim();
@@ -84,6 +96,20 @@ export function reconcileLabelDiff(currentLabels, desiredLabels, reconciledLabel
     add: [...desired].filter((label) => !current.has(label)),
     remove: [...reconciled].filter((label) => current.has(label) && !desired.has(label))
   };
+}
+
+export function plannedIssueLabelDiff(currentLabels, desiredLabels, options = {}) {
+  const preserveWorkerState = options.preserveWorkerState !== false;
+  const current = new Set((currentLabels || []).filter(Boolean));
+  const hasWorkerState = WORKER_STATE_LABELS.some((label) => current.has(label));
+  const desired = preserveWorkerState && hasWorkerState
+    ? (desiredLabels || []).filter((label) => label !== "df:ready")
+    : desiredLabels;
+  const reconciled = preserveWorkerState
+    ? PLANNER_RECONCILED_LABELS
+    : [...PLANNER_RECONCILED_LABELS, ...WORKER_STATE_LABELS];
+
+  return reconcileLabelDiff(currentLabels, desired, reconciled);
 }
 
 export function isDarkFactoryWorkerPullRequest(pull, repository) {

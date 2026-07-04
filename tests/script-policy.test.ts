@@ -15,6 +15,7 @@ const {
   isDarkFactoryWorkerPullRequest,
   isParkedRepo,
   parsePrdItems,
+  plannedIssueLabelDiff,
   prdIssueBody,
   reconcileLabelDiff,
   taskClassFromLabels
@@ -100,6 +101,33 @@ test("label reconciliation removes stale df:ready when PRD sequencing blocks an 
   );
 
   assert.deepEqual(diff, { add: [], remove: ["df:ready"] });
+});
+
+test("planner label reconciliation preserves worker state labels on open issues", () => {
+  assert.deepEqual(
+    plannedIssueLabelDiff(
+      ["P1", "roadmap", "df:class:standard", "df:blocked", "df:ready"],
+      ["P1", "roadmap", "df:class:standard", "df:ready"]
+    ),
+    { add: [], remove: ["df:ready"] }
+  );
+
+  assert.deepEqual(
+    plannedIssueLabelDiff(
+      ["P1", "roadmap", "df:class:standard", "df:done"],
+      ["P1", "roadmap", "df:class:standard", "df:ready"]
+    ),
+    { add: [], remove: [] }
+  );
+
+  assert.deepEqual(
+    plannedIssueLabelDiff(
+      ["P1", "roadmap", "df:class:standard", "df:done"],
+      ["P1", "roadmap", "df:class:standard", "df:ready"],
+      { preserveWorkerState: false }
+    ),
+    { add: ["df:ready"], remove: ["df:done"] }
+  );
 });
 
 test("cleanupTempRoot reports cleanup failures without throwing", async () => {

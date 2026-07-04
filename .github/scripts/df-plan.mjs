@@ -15,8 +15,8 @@ import {
   listIssues,
   parsePrdItems,
   parseRepo,
+  plannedIssueLabelDiff,
   prdIssueBody,
-  reconcileLabelDiff,
   repoName,
   requiredEnv,
   slug,
@@ -142,7 +142,7 @@ async function reconcileTargetRepository() {
         body,
         state: "open"
       });
-      const labelUpdate = await setIssueLabels(TARGET_REPO, existing.number, labels);
+      const labelUpdate = await setIssueLabels(TARGET_REPO, existing.number, labels, { preserveWorkerState: false });
       const dispatch = await dispatchIfNewlyReady(TARGET_REPO, existing.number, labelUpdate, repo.default_branch);
       ledger.actions.push({ action: "reopen-prd-issue", marker: item.marker, issue: issueRef(reopened), labels });
       if (dispatch) ledger.actions.push(dispatch);
@@ -253,26 +253,12 @@ async function targetRepositories() {
     .filter((repo) => repo.owner === CONTROL_REPO.owner && !isParkedRepo(repo));
 }
 
-async function setIssueLabels(repository, issueNumber, labels) {
+async function setIssueLabels(repository, issueNumber, labels, options = {}) {
   const current = await gh.request("GET", `/repos/${repoName(repository)}/issues/${issueNumber}`);
   const currentNames = new Set(
     (current.labels || []).map((label) => typeof label === "string" ? label : label.name).filter(Boolean)
   );
-  const reconciledLabels = [
-    "df:ready",
-    "df:running",
-    "df:blocked",
-    "df:done",
-    "df:class:mechanical",
-    "df:class:standard",
-    "df:class:hard",
-    "df:prd-drift",
-    "roadmap",
-    "P0",
-    "P1",
-    "P2"
-  ];
-  const { add, remove } = reconcileLabelDiff([...currentNames], labels, reconciledLabels);
+  const { add, remove } = plannedIssueLabelDiff([...currentNames], labels, options);
 
   if (add.length) {
     await gh.request("POST", `/repos/${repoName(repository)}/issues/${issueNumber}/labels`, { labels: add });
