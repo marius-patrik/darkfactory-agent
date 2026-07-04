@@ -92,15 +92,25 @@ jobs:
               ;;
           esac
 
-      # Always run the pinned control copy of the planner, never the target
-      # repository's mutable workflow payload. Push events in managed repos use
-      # the trusted main ref; scheduled/manual runs in the control repo use the
-      # exact SHA that triggered the workflow.
+      # PRD-edit triggers in managed repos run from that repository's installed,
+      # version-enforced payload. Scheduled and manual cross-repo sweeps run from
+      # the control repository at the exact SHA that triggered the workflow.
+      - name: Resolve DarkFactory script path
+        id: script-path
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            echo "path=.github/scripts/df-plan.mjs" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=darkfactory-control/.github/scripts/df-plan.mjs" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout DarkFactory control scripts
+        if: github.event_name != 'push'
         uses: actions/checkout@v4
         with:
           repository: marius-patrik/darkfactory-agent
-          ref: ${{ github.repository == 'marius-patrik/darkfactory-agent' && github.event_name != 'push' && github.sha || 'main' }}
+          ref: ${{ github.sha }}
           path: darkfactory-control
           persist-credentials: false
 
@@ -128,4 +138,4 @@ jobs:
           DF_PLAN_ALL: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
           DF_TRIGGER: ${{ github.event_name }}
           DF_DATA_REPO: marius-patrik/darkfactory-data
-        run: node darkfactory-control/.github/scripts/df-plan.mjs
+        run: node ${{ steps.script-path.outputs.path }}
