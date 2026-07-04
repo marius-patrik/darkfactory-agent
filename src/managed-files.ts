@@ -97,11 +97,11 @@ export function readManagedFiles(repository?: ManagedRepositoryRef, root = resol
   return [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export function requiredManagedFilePaths(root = resolveManagedWorkspaceRoot()): string[] {
-  const packageManagedFiles = PACKAGE_MANAGED_FILES.filter((filePath) => {
-    return readManagedFile(root, filePath) ?? readManagedFile(resolveProjectRoot(), filePath);
-  });
-
+export function requiredManagedFilePaths(_root = resolveManagedWorkspaceRoot()): string[] {
+  // Package-managed workflow/script payloads are required unconditionally.
+  // readManagedFiles() falls back to the package root when a workspace overlay
+  // does not provide them, and throws if neither source exists. This keeps CI
+  // from silently omitting generated payloads when a source generator is missing.
   return [
     AGENTS_ENTRYPOINT_PATH,
     AGENTS_GLOBAL_VERSION_PATH,
@@ -109,7 +109,7 @@ export function requiredManagedFilePaths(root = resolveManagedWorkspaceRoot()): 
     GITHUB_BOOTSTRAP_WORKFLOW_PATH,
     DARK_FACTORY_AUTOUPDATE_WORKFLOW_PATH,
     DARK_FACTORY_RELEASE_WORKFLOW_PATH,
-    ...packageManagedFiles,
+    ...PACKAGE_MANAGED_FILES,
     CODEX_REVIEW_WORKFLOW_PATH,
     CODEX_REVIEW_DOCKERFILE_PATH,
     CODEX_REVIEW_SCHEMA_PATH,
