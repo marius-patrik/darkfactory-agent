@@ -286,20 +286,14 @@ async function targetRepositories() {
   const configured = repoList(process.env.DF_SWEEP_REPOS || "");
   if (configured.length) return configured;
 
-  try {
-    const repositories = [];
-    for (let page = 1; page <= 20; page += 1) {
-      const data = await gh.request("GET", `/installation/repositories?per_page=100&page=${page}`);
-      if (!Array.isArray(data.repositories) || data.repositories.length === 0) break;
-      repositories.push(...data.repositories);
-      if (data.repositories.length < 100) break;
-    }
-    return repositories.map((repo) => parseRepo(repo.full_name)).filter((repo) => repo.owner === CONTROL_REPO.owner);
-  } catch {
-    return [CONTROL_REPO];
+  const repositories = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const data = await gh.request("GET", `/installation/repositories?per_page=100&page=${page}`);
+    if (!Array.isArray(data.repositories) || data.repositories.length === 0) break;
+    repositories.push(...data.repositories);
+    if (data.repositories.length < 100) break;
   }
-
-  return [CONTROL_REPO];
+  return repositories.map((repo) => parseRepo(repo.full_name)).filter((repo) => repo.owner === CONTROL_REPO.owner);
 }
 
 function repoList(value) {

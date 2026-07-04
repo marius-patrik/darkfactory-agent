@@ -45,10 +45,6 @@ async function main() {
   }
 
   assertAllowedRepo(TARGET_REPO);
-  await ensureLabels(gh, CONTROL_REPO, WORK_LABELS);
-  if (repoName(CONTROL_REPO) !== repoName(TARGET_REPO)) {
-    await ensureLabels(gh, TARGET_REPO, WORK_LABELS);
-  }
 
   const issue = await getIssue(TARGET_REPO, TARGET_ISSUE_NUMBER);
   const taskRouting = taskClassFromLabels(issue.labels);
@@ -101,6 +97,11 @@ async function main() {
     await writeLedger(ledger);
     console.warn(`DarkFactory worker blocked on prerequisite for ${target}: ${message}`);
     return;
+  }
+
+  await ensureLabels(gh, CONTROL_REPO, WORK_LABELS);
+  if (repoName(CONTROL_REPO) !== repoName(TARGET_REPO)) {
+    await ensureLabels(gh, TARGET_REPO, WORK_LABELS);
   }
 
   try {

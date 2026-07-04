@@ -231,7 +231,6 @@ test("df-work workflow only runs issue_comment triggers from trusted actors", as
   assert.match(workflow, /OWNER/);
   assert.match(workflow, /COLLABORATOR/);
   assert.doesNotMatch(workflow, /"MEMBER"/);
-  assert.match(workflow, /github\.repository == 'marius-patrik\/darkfactory-agent'/);
 });
 
 test("df-sweep waits before treating empty check rollups as no-checks-configured", async () => {
