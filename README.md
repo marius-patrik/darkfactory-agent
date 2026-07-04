@@ -115,7 +115,7 @@ Do not run the manager from an elevated prompt and do not add `--runasservice`; 
 Build and run with Docker:
 
 ```powershell
-git clone https://github.com/marius-patrik/data-agentos.git agentos-data
+git clone https://github.com/marius-patrik/data-agentos.git data-agentos
 docker build -t agent-darkfactory .
 docker run --rm -p 3000:3000 --env-file .env agent-darkfactory
 ```
