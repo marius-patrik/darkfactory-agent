@@ -1,15 +1,26 @@
-# Agentos / Agents Manager PRD
+# agents-mono / Agents Manager PRD
 
 ## Overview
 
 `agents-mono` is a workspace for managing agent packages. Its `agents` CLI is a Bun TypeScript package manager that installs and tracks agent repos, app repos, templates, private workspace state, CLI adapters, skills, plugins, and shared runtime state so every managed CLI sees the same installed capabilities and credit store.
+
+## Naming contract
+
+Root docs and metadata use the following names. Legacy names are retained only
+where they identify an existing repo, env var, or historical concept.
+
+- `agents-mono` — the root aggregator repository and workspace.
+- `agents` — the unified management CLI implemented in `os/agents-manager`.
+- `os/agents-*` — OS/platform packages (`agents-core`, `agents-manager`, `agents-harness`).
+- `agentos-data` — retained compatibility name for the default git-backed data repository and its env var (`AGENTOS_DATA_ROOT`).
+- `Agentos`, `Andromeda`, `Rommie`, and similar legacy names are intentionally scoped; new docs and metadata use the current names above.
 
 ## Goals
 
 - Manage git-backed agent packages from one workspace.
 - Keep CLI-specific metadata under `.agents/clis`.
 - Keep user-installed skills and plugins under `.agents/skills` and `.agents/plugins`.
-- Keep harness packages under `` and launch them with shared state.
+- Keep harness packages under `os/agents-harness` and launch them with shared state.
 - Configure git-backed data repositories such as `agentos-data`; workspace packages such as `darkfactory-workspace` can point at those data repos.
 - Expose one shared state root to every CLI through `.agents/env`.
 - Maintain a shared credit store at `.agents/credits.json`.
@@ -112,15 +123,17 @@ Every managed CLI must read `AGENTS_HOME`, `AGENTS_CLIS`, `AGENTS_SKILLS`, `AGEN
 
 ## Harness Contract
 
-Harnesses declare an `agent.package.json` manifest:
+Harnesses declare an `agent.package.json` manifest. The exact `entry` and
+`workingDirectory` are package-defined; the example below shows a current
+agents-harness shape rather than the legacy Andromeda command path:
 
 ```json
 {
   "schemaVersion": 1,
   "id": "agents-harness",
   "kind": "harness",
-  "entry": "go run ./cmd/andromeda",
-  "workingDirectory": "services/cli",
+  "entry": "go run ./cmd/agents-harness",
+  "workingDirectory": ".",
   "requires": {
     "clis": ["codex", "claude", "kimi", "agy"],
     "state": ["skills", "plugins", "hooks", "credits"]

@@ -1,7 +1,7 @@
 {
   "name": "@marius-patrik/agents-mono",
   "version": "0.1.0",
-  "description": "agents-mono workspace with a Bun TypeScript agent manager and shared CLI state.",
+  "description": "Root aggregator workspace for the agents-mono topology. Exposes the `agents` CLI and validates the `os/agents-manager` TypeScript test surface.",
   "type": "module",
   "bin": {
     "agents": "./os/agents-manager/src/cli.ts"

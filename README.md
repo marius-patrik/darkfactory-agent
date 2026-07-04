@@ -1,8 +1,8 @@
 # agents-mono
 
-Agentos workspace with the `agents` CLI for managing agent packages, apps,
-templates, private workspace state, shared skills/plugins, CLI data, and a
-common credit store.
+agents-mono is the root aggregator workspace for the agents-mono topology. It
+exposes the `agents` CLI for managing agent packages, apps, templates, private
+workspace state, shared skills/plugins, CLI data, and a common credit store.
 
 ## Usage
 
@@ -34,6 +34,17 @@ agents doctor
 - `templates/darkfactory-templates` contains the Bun templates monorepo and nested template submodules.
 - `data/data-agentos` contains the private AgentOS managed data repository and migrated non-code material.
 - `workspaces/darkfactory-workspace` contains the lightweight DarkFactory workspace package that points at `agentos-data`.
+
+## Naming contract
+
+This repository uses the following names consistently. Legacy names are retained
+only where they identify an existing repo, env var, or historical concept.
+
+- `agents-mono` — the root aggregator repository and workspace (this repo).
+- `agents` — the unified management CLI implemented in `os/agents-manager`.
+- `os/agents-*` — OS/platform packages (`agents-core`, `agents-manager`, `agents-harness`).
+- `agentos-data` — retained compatibility name for the default git-backed data repository and its env var (`AGENTOS_DATA_ROOT`).
+- `Agentos`, `Andromeda`, `Rommie`, and similar legacy names are intentionally scoped; new docs and metadata use the current names above.
 
 ## Commands
 
