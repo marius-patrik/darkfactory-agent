@@ -114,6 +114,7 @@ async function reconcileTargetRepository() {
     }
 
     const blockedBy = previousOpenIssueNumber ? [previousOpenIssueNumber] : [];
+    if (blockedBy.length === 0) labels.push("df:ready");
     const body = prdIssueBody(item, blockedBy);
 
     if (!existing) {

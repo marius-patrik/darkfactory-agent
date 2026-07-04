@@ -11,6 +11,9 @@ on:
         description: Target issue number.
         required: true
         type: string
+  issues:
+    types:
+      - labeled
   issue_comment:
     types:
       - created
@@ -25,7 +28,11 @@ jobs:
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'issues' &&
+          github.event.label.name == 'df:ready' &&
+          (github.event.sender.type == 'Bot' || github.event.sender.login == 'github-actions[bot]')) ||
         (github.event_name == 'issue_comment' &&
+          github.repository == 'marius-patrik/darkfactory-agent' &&
           !github.event.issue.pull_request &&
           startsWith(github.event.comment.body, '/df run') &&
           contains(fromJSON('["OWNER", "COLLABORATOR"]'), github.event.comment.author_association))

@@ -223,15 +223,19 @@ test("df-work records auto-merge support during merge-policy preflight", async (
   assert.match(source, /green-PR sweep will squash-merge directly after checks/);
 });
 
-test("df-work workflow only runs issue_comment triggers from trusted actors", async () => {
+test("df-work workflow only runs issue triggers from trusted actors", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
 
   assert.match(workflow, /issue_comment/);
-  assert.doesNotMatch(workflow, /^\s+issues:\s*$/m);
+  assert.match(workflow, /issues:/);
   assert.match(workflow, /author_association/);
   assert.match(workflow, /OWNER/);
   assert.match(workflow, /COLLABORATOR/);
   assert.doesNotMatch(workflow, /"MEMBER"/);
+  assert.match(workflow, /github\.event\.label\.name == 'df:ready'/);
+  assert.match(workflow, /github\.event\.sender\.type == 'Bot'/);
+  assert.match(workflow, /github\.event\.sender\.login == 'github-actions\[bot\]'/);
+  assert.match(workflow, /github\.repository == 'marius-patrik\/darkfactory-agent'/);
 });
 
 test("df-sweep waits before treating empty check rollups as no-checks-configured", async () => {
