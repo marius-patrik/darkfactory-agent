@@ -11,6 +11,7 @@ const {
   cleanupTempRoot,
   extractClosingIssueNumbers,
   getRequiredStatusCheckContexts,
+  isDarkFactoryWorkerPullRequest,
   isParkedRepo,
   parsePrdItems,
   prdIssueBody,
@@ -154,11 +155,24 @@ test("df-sweep dev-merge closure uses worker PR provenance instead of issue labe
   assert.match(source, /reason: "parked"/);
   assert.match(source, /if \(!isWorkerPullRequest\(pull, repository\)\)/);
   assert.doesNotMatch(source, /issueWasOpenedByDarkFactoryWorker/);
-  assert.match(source, /dark-factory:worker-pr\\s\+issue=/);
-  assert.match(source, /botAuthor/);
-  assert.match(source, /branchMatchesIssue/);
-  assert.match(source, /bodyClosesIssue/);
   assert.match(source, /extractClosingIssueNumbers\(pull\.body \|\| "", repoName\(repository\)\)/);
+});
+
+test("df-sweep recognizes worker PRs from managed and app-token paths", () => {
+  const repository = { owner: "marius-patrik", repo: "example" };
+  const workerPull = {
+    title: "Implement issue #23",
+    body: "<!-- dark-factory:worker-pr issue=23 -->\n\nCloses #23",
+    author: { login: "github-actions[bot]" },
+    headRefName: "df/23-add-worker",
+    headRepository: { owner: { login: "marius-patrik" }, name: "example" }
+  };
+
+  assert.equal(isDarkFactoryWorkerPullRequest(workerPull, repository), true);
+  assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, author: { login: "mp-agents[bot]" } }, repository), true);
+  assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, author: { login: "marius-patrik" } }, repository), false);
+  assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, headRefName: "feature/23-add-worker" }, repository), false);
+  assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, body: "<!-- dark-factory:worker-pr issue=23 -->" }, repository), false);
 });
 
 test("df-work cleanup remains a warning path after successful PR handoff", async () => {

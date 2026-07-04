@@ -6,6 +6,7 @@ import {
   createGithubClient,
   extractClosingIssueNumbers,
   getRequiredStatusCheckContexts,
+  isDarkFactoryWorkerPullRequest as isWorkerPullRequest,
   isParkedRepo,
   parseRepo,
   repoName,
@@ -351,24 +352,6 @@ async function listOpenPullRequests(repository) {
     ...pull,
     statusCheckRollup: pull.statusCheckRollup?.contexts?.nodes || []
   }));
-}
-
-function isWorkerPullRequest(pull, repository) {
-  const provenance = `${pull.title || ""}\n${pull.body || ""}`;
-  const sameRepositoryHead = pull.headRepository?.owner?.login === repository.owner && pull.headRepository?.name === repository.repo;
-  const marker = provenance.match(/<!--\s*dark-factory:worker-pr\s+issue=(\d+)\s*-->/i);
-  const markerIssue = marker ? Number(marker[1]) : 0;
-  const branchMatchesIssue = Number.isInteger(markerIssue) && markerIssue > 0 && pull.headRefName?.startsWith(`df/${markerIssue}-`);
-  const bodyClosesIssue = extractClosingIssueNumbers(pull.body || "", repoName(repository)).includes(markerIssue);
-  const botAuthor = /\[bot\]$/i.test(pull.author?.login || "");
-
-  return (
-    sameRepositoryHead &&
-    botAuthor &&
-    Boolean(marker) &&
-    branchMatchesIssue &&
-    bodyClosesIssue
-  );
 }
 
 function normalizeRestPullRequest(pull) {

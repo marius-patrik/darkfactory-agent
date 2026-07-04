@@ -27,6 +27,8 @@ export const PLANNING_LABELS = [
   { name: "df:prd-drift", color: "B60205", description: "DarkFactory PRD drift report" }
 ];
 
+export const WORKER_PULL_REQUEST_AUTHORS = new Set(["github-actions[bot]", "mp-agents[bot]"]);
+
 export function requiredEnv(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing required environment variable ${name}`);
@@ -82,6 +84,24 @@ export function reconcileLabelDiff(currentLabels, desiredLabels, reconciledLabel
     add: [...desired].filter((label) => !current.has(label)),
     remove: [...reconciled].filter((label) => current.has(label) && !desired.has(label))
   };
+}
+
+export function isDarkFactoryWorkerPullRequest(pull, repository) {
+  const provenance = `${pull.title || ""}\n${pull.body || ""}`;
+  const sameRepositoryHead = pull.headRepository?.owner?.login === repository.owner && pull.headRepository?.name === repository.repo;
+  const marker = provenance.match(/<!--\s*dark-factory:worker-pr\s+issue=(\d+)\s*-->/i);
+  const markerIssue = marker ? Number(marker[1]) : 0;
+  const branchMatchesIssue = Number.isInteger(markerIssue) && markerIssue > 0 && pull.headRefName?.startsWith(`df/${markerIssue}-`);
+  const bodyClosesIssue = extractClosingIssueNumbers(pull.body || "", repoName(repository)).includes(markerIssue);
+  const allowedAuthor = WORKER_PULL_REQUEST_AUTHORS.has(pull.author?.login || "");
+
+  return (
+    sameRepositoryHead &&
+    allowedAuthor &&
+    Boolean(marker) &&
+    branchMatchesIssue &&
+    bodyClosesIssue
+  );
 }
 
 export async function cleanupTempRoot(tempRoot, warn = console.warn) {
