@@ -1,6 +1,6 @@
 # Project Agent Rules
 
-These rules are specific to `darkfactory-agent`.
+These rules are specific to `agent-darkfactory`.
 
 ## Scope
 

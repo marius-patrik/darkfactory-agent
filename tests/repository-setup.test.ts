@@ -9,15 +9,15 @@ import {
   type GitHubRequester
 } from "../src/repository-setup.js";
 
-test("expectedManagedFolderVersion uses the darkfactory-agent prefix", () => {
-  assert.equal(expectedManagedFolderVersion("1.2.3"), "darkfactory-agent@1.2.3");
+test("expectedManagedFolderVersion uses the agent-darkfactory prefix", () => {
+  assert.equal(expectedManagedFolderVersion("1.2.3"), "agent-darkfactory@1.2.3");
 });
 
 test("checkRepositorySetup returns no comment when managed setup is current", async () => {
   const report = await checkRepositorySetup(
     createRequester({
       "AGENTS.md": "# Agent Entry Point\n",
-      ".agents/.global/VERSION": "darkfactory-agent@1.2.3\n",
+      ".agents/.global/VERSION": "agent-darkfactory@1.2.3\n",
       ".github/workflows/ci.yml": "name: CI\n",
       ".github/workflows/dark-factory-bootstrap.yml": "name: Dark Factory Bootstrap\n",
       ".github/workflows/dark-factory-autoupdate.yml": "name: DarkFactory Auto Update\n",
@@ -44,7 +44,7 @@ test("checkRepositorySetup returns no comment when managed setup is current", as
       ".darkfactory/release-policy.json": "{}\n"
     }),
     { owner: "marius-patrik", repo: "example", ref: "abc123" },
-    "darkfactory-agent@1.2.3"
+    "agent-darkfactory@1.2.3"
   );
 
   assert.equal(report.versionedFolders[0]?.status, "current");
@@ -55,17 +55,17 @@ test("checkRepositorySetup returns no comment when managed setup is current", as
 test("checkRepositorySetup reports stale agents and missing github bootstrap", async () => {
   const report = await checkRepositorySetup(
     createRequester({
-      ".agents/.global/VERSION": "darkfactory-agent@0.1.0\n"
+      ".agents/.global/VERSION": "agent-darkfactory@0.1.0\n"
     }),
     { owner: "marius-patrik", repo: "example", ref: "abc123" },
-    "darkfactory-agent@1.2.3"
+    "agent-darkfactory@1.2.3"
   );
   const comment = formatRepositorySetupComment(report);
 
   assert.equal(report.versionedFolders[0]?.status, "stale");
   assert.equal(report.bootstrapPaths[0]?.status, "missing");
   assert.ok(comment?.includes(REPOSITORY_SETUP_COMMENT_MARKER));
-  assert.ok(comment?.includes("darkfactory-agent@1.2.3"));
+  assert.ok(comment?.includes("agent-darkfactory@1.2.3"));
   assert.ok(comment?.includes("AGENTS.md"));
   assert.ok(comment?.includes(".agents/.global/VERSION"));
   assert.ok(comment?.includes(".github/workflows/ci.yml"));

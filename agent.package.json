@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "darkfactory-agent",
+  "id": "agent-darkfactory",
   "name": "darkfactory",
   "kind": "agent",
   "description": "DarkFactory GitHub App automation agent CLI.",

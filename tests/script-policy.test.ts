@@ -276,8 +276,8 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.doesNotMatch(workflow, /raw\.githubusercontent\.com|commits\/main|method:\s*'HEAD'/);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /^\s+schedule:\s*$/m);
-  assert.match(workflow, /github\.event_name == 'schedule'.*github\.repository == 'marius-patrik\/darkfactory-agent'/);
-  assert.match(workflow, /github\.event_name == 'workflow_dispatch'.*github\.repository == 'marius-patrik\/darkfactory-agent'/);
+  assert.match(workflow, /github\.event_name == 'schedule'.*github\.repository == 'marius-patrik\/agent-darkfactory'/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch'.*github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.doesNotMatch(workflow, /actions:\s+write/);
   assert.notEqual(gate, -1);
   assert.notEqual(checkout, -1);
@@ -286,7 +286,7 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.ok(checkout < token);
   assert.match(workflow, /Resolve DarkFactory script path/);
   assert.match(workflow, /Checkout DarkFactory control scripts/);
-  assert.match(workflow, /repository:\s+marius-patrik\/darkfactory-agent/);
+  assert.match(workflow, /repository:\s+marius-patrik\/agent-darkfactory/);
   assert.match(workflow, /GITHUB_REPOSITORY_OWNER/);
   assert.match(workflow, /GITHUB_REF_NAME.*main/);
   assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
@@ -337,7 +337,7 @@ test("df-follow-through workflow validates trusted refs before privileged tokens
   assert.notEqual(token, -1);
   assert.ok(gate < token);
   assert.ok(checkout < token);
-  assert.match(workflow, /github\.repository == 'marius-patrik\/darkfactory-agent'/);
+  assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.match(workflow, /GITHUB_REPOSITORY/);
   assert.match(workflow, /GITHUB_REF_NAME.*main/);
   assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
@@ -363,7 +363,7 @@ test("df-work workflow does not expose privileged worker triggers in managed rep
   assert.doesNotMatch(workflow, /^  issues:/m);
   assert.doesNotMatch(workflow, /^  issue_comment:/m);
   assert.doesNotMatch(workflow, /author_association/);
-  assert.match(workflow, /github\.repository == 'marius-patrik\/darkfactory-agent'/);
+  assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.match(workflow, /github\.event_name == 'workflow_dispatch'/);
 });
 
@@ -371,7 +371,7 @@ test("df-work workflow restricts privileged workers to the control repository", 
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
 
   assert.match(workflow, /workflow_dispatch/);
-  assert.match(workflow, /github\.repository == 'marius-patrik\/darkfactory-agent'/);
+  assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.doesNotMatch(workflow, /inputs\.repo == github\.repository/);
   assert.match(workflow, /if:\s*github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /concurrency:\s*$/m);

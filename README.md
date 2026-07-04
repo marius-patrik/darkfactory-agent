@@ -1,4 +1,4 @@
-# darkfactory-agent
+# agent-darkfactory
 
 TypeScript GitHub App bot that receives GitHub webhooks, verifies signatures, and responds to basic repository activity.
 
@@ -52,7 +52,7 @@ To install the app on every repository, use the GitHub App installation UI and c
 npm ci
 npm run build
 agents packages register workspaces/darkfactory-workspace
-agents packages register agents/darkfactory-agent
+agents packages register agents/agent-darkfactory
 agents data repo path darkfactory-workspace
 ```
 
@@ -68,7 +68,7 @@ agents secrets set CODEX_AUTH_JSON --from-file "$env:USERPROFILE\.codex\auth.jso
 Run DarkFactory through Agentos so it receives `AGENTS_SECRETS` and the other shared state paths:
 
 ```powershell
-agents packages run darkfactory-agent -- serve
+agents packages run agent-darkfactory -- serve
 ```
 
 The bot listens on `http://localhost:3000/webhook`. Point the GitHub App webhook URL at your tunnel URL, for example `https://example.ngrok.app/webhook`.
@@ -98,7 +98,7 @@ C:/Users/patrik/.darkfactory/runners
 Override it per command with `--root <path>` or by setting `DF_RUNNER_ROOT`. Runtime state is stored in `state.json` under that root. Registration and removal tokens are fetched from GitHub when needed and are not written to state.
 
 ```powershell
-df runners setup marius-patrik/darkfactory-agent
+df runners setup marius-patrik/agent-darkfactory
 df runners setup marius-patrik/dream
 df runners status
 df runners stop marius-patrik/dream
@@ -116,8 +116,8 @@ Build and run with Docker:
 
 ```powershell
 git clone https://github.com/marius-patrik/agentos-data.git agentos-data
-docker build -t darkfactory-agent .
-docker run --rm -p 3000:3000 --env-file .env darkfactory-agent
+docker build -t agent-darkfactory .
+docker run --rm -p 3000:3000 --env-file .env agent-darkfactory
 ```
 
 Production hosts must provide these environment variables:
@@ -164,12 +164,12 @@ Managed sync can also be run manually from the `Sync Managed Repositories` workf
 GitHub Actions still consumes repository secrets, but those secrets should be written by Agentos Manager:
 
 ```powershell
-agents secrets github sync GITHUB_APP_ID --repo marius-patrik/darkfactory-agent --as DARK_FACTORY_APP_ID
-agents secrets github sync GITHUB_PRIVATE_KEY --repo marius-patrik/darkfactory-agent --as DARK_FACTORY_PRIVATE_KEY
+agents secrets github sync GITHUB_APP_ID --repo marius-patrik/agent-darkfactory --as DARK_FACTORY_APP_ID
+agents secrets github sync GITHUB_PRIVATE_KEY --repo marius-patrik/agent-darkfactory --as DARK_FACTORY_PRIVATE_KEY
 agents secrets github sync CODEX_AUTH_JSON --owner marius-patrik
 ```
 
-The workflow requires these repository secrets in `marius-patrik/darkfactory-agent`:
+The workflow requires these repository secrets in `marius-patrik/agent-darkfactory`:
 
 - `DARK_FACTORY_APP_ID`
 - `DARK_FACTORY_PRIVATE_KEY`
@@ -181,7 +181,7 @@ Every managed repository that should enforce Codex Review also needs this reposi
 The local equivalent is:
 
 ```powershell
-agents packages run darkfactory-agent -- sync-managed
+agents packages run agent-darkfactory -- sync-managed
 ```
 
 To print the GitHub App installation URL from local credentials:
@@ -204,7 +204,7 @@ Pushing a `v*.*.*` tag runs the release workflow. It validates the repo, builds 
 Image tags are published under:
 
 ```text
-ghcr.io/marius-patrik/darkfactory-agent
+ghcr.io/marius-patrik/agent-darkfactory
 ```
 
 ## Development notes

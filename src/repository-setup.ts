@@ -63,7 +63,7 @@ export interface BootstrapPathResult {
 }
 
 export function expectedManagedFolderVersion(packageVersion = readPackageVersion()): string {
-  return `darkfactory-agent@${packageVersion}`;
+  return `agent-darkfactory@${packageVersion}`;
 }
 
 export async function checkRepositorySetup(

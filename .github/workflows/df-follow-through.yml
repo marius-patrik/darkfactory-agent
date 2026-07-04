@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       ${{
-        github.repository == 'marius-patrik/darkfactory-agent' &&
+        github.repository == 'marius-patrik/agent-darkfactory' &&
         (
           github.event_name == 'schedule' ||
           github.event_name == 'workflow_dispatch'
@@ -42,8 +42,8 @@ jobs:
         run: |
           # Privileged follow-through mints an installation token, so it only
           # runs from the canonical control repository's protected default branch.
-          if [[ "${GITHUB_REPOSITORY}" != "marius-patrik/darkfactory-agent" ]]; then
-            echo "::error::DarkFactory privileged follow-through can only run from marius-patrik/darkfactory-agent."
+          if [[ "${GITHUB_REPOSITORY}" != "marius-patrik/agent-darkfactory" ]]; then
+            echo "::error::DarkFactory privileged follow-through can only run from marius-patrik/agent-darkfactory."
             exit 1
           fi
 

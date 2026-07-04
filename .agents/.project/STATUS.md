@@ -4,7 +4,7 @@
 
 | Area | State |
 | --- | --- |
-| Repository | `marius-patrik/darkfactory-agent` |
+| Repository | `marius-patrik/agent-darkfactory` |
 | Branch | `main` |
 | Issue | n/a |
 | Purpose | GitHub App bot for repository automation |

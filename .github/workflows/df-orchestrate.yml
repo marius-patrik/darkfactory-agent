@@ -12,7 +12,7 @@ jobs:
   orchestrate:
     name: Dispatch ready work
     runs-on: ubuntu-latest
-    if: github.repository == 'marius-patrik/darkfactory-agent'
+    if: github.repository == 'marius-patrik/agent-darkfactory'
     permissions:
       actions: write
       contents: read
@@ -52,7 +52,7 @@ jobs:
       - name: Run orchestrator
         env:
           DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
-          DF_CONTROL_REPO: marius-patrik/darkfactory-agent
+          DF_CONTROL_REPO: marius-patrik/agent-darkfactory
           DF_TRIGGER: ${{ github.event_name }}
           DF_DATA_REPO: marius-patrik/darkfactory-data
         run: node darkfactory-control/.github/scripts/df-orchestrate.mjs

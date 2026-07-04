@@ -94,7 +94,7 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
   };
   const files: ManagedFile[] = [
     { path: "AGENTS.md", content: "# Agent Entry Point\n" },
-    { path: ".agents/.global/VERSION", content: "darkfactory-agent@1.0.0\n" },
+    { path: ".agents/.global/VERSION", content: "agent-darkfactory@1.0.0\n" },
     { path: ".github/workflows/ci.yml", content: "name: CI\n" },
     { path: ".github/workflows/dark-factory-bootstrap.yml", content: "name: Dark Factory Bootstrap\n" }
   ];
