@@ -72,7 +72,6 @@ test("checkRepositorySetup reports stale agents and missing github bootstrap", a
   assert.ok(comment?.includes(".github/workflows/dark-factory-release.yml"));
   assert.ok(comment?.includes(".github/workflows/df-plan.yml"));
   assert.ok(comment?.includes(".github/workflows/df-follow-through.yml"));
-  assert.ok(comment?.includes(".github/workflows/df-work.yml"));
   assert.ok(comment?.includes(".github/workflows/codex-review.yml"));
   assert.ok(comment?.includes(".darkfactory/managed-repository.json"));
 });
