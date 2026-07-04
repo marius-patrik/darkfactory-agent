@@ -40,6 +40,8 @@
 - Inferer package: agent loop, runtime services, engine work, and deploy assets under `os/inference-engine`.
 - Manager package: the CLI implementation and tests under `os/agents-manager`.
 - Managed checkout: a git-backed package under `<category>/<name>`. Agents, apps, harnesses, templates, data repositories, and workspace repositories are organized under explicit category folders.
+- Global workspace: the system-wide writable working set at `os/agents-workspace`, paired with `agentos-data` as its durable data companion.
+- Per-agent workspace pattern: every agent gets a data repo (`data/<agent-name>-data`) and a workspace repo (`workspaces/<agent-name>-workspace`), mirroring the reference pair `darkfactory-data` + `darkfactory-workspace`.
 - CLI metadata: per-CLI data under `.agents/clis/<name>`.
 - Skill install: files installed under `.agents/skills/<name>`.
 - Plugin install: files installed under `.agents/plugins/<name>`.
@@ -69,6 +71,7 @@
     agents-core/
     agents-manager/
     agents-harness/
+    agents-workspace/
     llm-gateway/
     inference-engine/
   data/
@@ -84,6 +87,7 @@
     darkfactory-templates/
   workspaces/
     darkfactory-workspace/
+    # future per-agent workspaces follow workspaces/<agent-name>-workspace
   plugins/
     plugin-rommie/
     dream/
@@ -108,7 +112,7 @@
   env
 ```
 
-Every managed CLI must read `AGENTS_HOME`, `AGENTS_CLIS`, `AGENTS_SKILLS`, `AGENTS_PLUGINS`, `AGENTS_HOOKS`, `AGENTS_TEMPLATES`, `AGENTS_SECRETS`, `AGENTS_CREDITS`, and `AGENTS_DATA_REPOS` from `.agents/env` or equivalent environment exports. Package and harness execution also exports configured data repo env vars such as `AGENTOS_DATA_ROOT` and `DARK_FACTORY_WORKSPACE_ROOT`.
+Every managed CLI must read `AGENTS_HOME`, `AGENTS_ROOT`, `AGENTS_DATA`, `AGENTS_WORKSPACE`, `AGENTS_CLIS`, `AGENTS_SKILLS`, `AGENTS_PLUGINS`, `AGENTS_HOOKS`, `AGENTS_TEMPLATES`, `AGENTS_SECRETS`, `AGENTS_CREDITS`, and `AGENTS_DATA_REPOS` from `.agents/env` or equivalent environment exports. Package and harness execution also exports configured data repo env vars such as `AGENTOS_DATA_ROOT` and `DARK_FACTORY_WORKSPACE_ROOT`.
 
 ## Harness Contract
 

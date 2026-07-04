@@ -24,6 +24,7 @@ agents doctor
 - `os/agents-core` is a submodule containing shared proto contracts, generated clients, schemas, and contract docs.
 - `os/agents-manager` is a submodule containing the `agents` CLI source and tests.
 - `os/agents-harness` is a submodule containing the managed Agents runtime harness.
+- `os/agents-workspace` is the global system workspace submodule, paired with `agentos-data`.
 - `os/llm-gateway` is a submodule containing the OpenAI-format LLM gateway, model registry routing, fallback, switchers, quota, OAuth seams, and tests.
 - `os/inference-engine` is a submodule containing the Python agent loop, Go runtime services, engine work, deploy assets, and inference architecture.
 - `plugins/plugin-rommie` is the Rommie Codex plugin submodule.
@@ -33,7 +34,9 @@ agents doctor
 - `apps/fabrica` contains the managed Fabrica app workspace.
 - `templates/darkfactory-templates` contains the Bun templates monorepo and nested template submodules.
 - `data/data-agentos` contains the private AgentOS managed data repository and migrated non-code material.
-- `workspaces/darkfactory-workspace` contains the lightweight DarkFactory workspace package that points at `agentos-data`.
+- `workspaces/darkfactory-workspace` contains the DarkFactory workspace package, paired with `darkfactory-data`.
+- `os/agents-workspace` contains the global system workspace package, paired with `agentos-data`.
+- Future agents follow the per-agent pattern: `data/<agent-name>-data` + `workspaces/<agent-name>-workspace`.
 
 ## Commands
 
@@ -54,7 +57,9 @@ agents doctor
 ## Shared State
 
 All managed CLIs must use the root `.agents` directory as the single source of
-runtime state:
+runtime state. The `.agents/env` export also surfaces `AGENTS_ROOT`,
+`AGENTS_DATA`, and `AGENTS_WORKSPACE` so every CLI sees the same package root,
+data parent, and global workspace paths:
 
 - `.agents/clis/` stores CLI-specific data and adapter metadata.
 - `.agents/harnesses/` stores harness runtime roots.
