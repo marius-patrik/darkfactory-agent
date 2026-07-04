@@ -53,20 +53,4 @@ jobs:
             exit 0
           fi
 
-          if [ -f bun.lock ] || [ -f bun.lockb ]; then
-            runner="bun"
-          else
-            runner="npm"
-          fi
-
-          if node -e "const p=require('./package.json'); process.exit(p.scripts?.ci ? 0 : 1)"; then
-            $runner run ci
-          elif node -e "const p=require('./package.json'); process.exit(p.scripts?.check && p.scripts?.test ? 0 : 1)"; then
-            $runner run check && $runner run test
-          elif node -e "const p=require('./package.json'); process.exit(p.scripts?.check ? 0 : 1)"; then
-            $runner run check
-          elif node -e "const p=require('./package.json'); process.exit(p.scripts?.test ? 0 : 1)"; then
-            $runner run test
-          else
-            npm test
-          fi
+          bun run ci
