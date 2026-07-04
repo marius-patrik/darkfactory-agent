@@ -1,5 +1,16 @@
 # Agents Manager Repo Instructions
 
+Load these managed context files before non-trivial work:
+
+1. `.agents/.global/AGENT_PROTOCOL.md`
+2. `.agents/.global/WORKFLOW.md`
+3. `.agents/.global/VALIDATION.md`
+4. `.agents/.global/DOCS_AND_MEMORY.md`
+5. `.agents/.project/AGENTS.md`
+6. `.agents/.project/PROJECT.md`
+7. `.agents/.project/COMMANDS.md`
+8. `.agents/.project/STATUS.md`
+
 This repository owns the `agents` local management CLI. Keep changes scoped to the CLI source in `src/`, tests in `test/`, and package-level documentation or metadata.
 
 ## Validation

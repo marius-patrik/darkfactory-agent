@@ -1,2 +1,6 @@
 node_modules/
-.agents/
+.agents/*
+!.agents/.global/
+!.agents/.global/**
+!.agents/.project/
+!.agents/.project/**
