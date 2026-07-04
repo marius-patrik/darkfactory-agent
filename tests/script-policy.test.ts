@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
@@ -85,4 +86,23 @@ test("extractClosingIssueNumbers deduplicates close references", () => {
 test("parked repositories include the current owner exclusions", () => {
   assert.throws(() => assertAllowedRepo({ owner: "marius-patrik", repo: "singularity" }), /parked/);
   assert.throws(() => assertAllowedRepo({ owner: "marius-patrik", repo: "life-support" }), /parked/);
+});
+
+test("df-sweep dev-merge closure uses worker PR provenance instead of issue labels or comments", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /if \(!isWorkerPullRequest\(pull, repository\)\)/);
+  assert.doesNotMatch(source, /issueWasOpenedByDarkFactoryWorker/);
+  assert.match(source, /extractClosingIssueNumbers\(pull\.body \|\| "", repoName\(repository\)\)/);
+});
+
+test("df-work cleanup remains a warning path after successful PR handoff", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const successBeforeFinally = /ledger\.status = "success";[\s\S]+finally \{/.test(source);
+  const finallyBlock = source.slice(source.indexOf("finally {"));
+
+  assert.equal(successBeforeFinally, true);
+  assert.match(finallyBlock, /const cleanup = await cleanupTempRoot/);
+  assert.match(finallyBlock, /ledger\.cleanup = cleanup/);
+  assert.doesNotMatch(finallyBlock, /throw\s+cleanup|if\s*\(\s*!cleanup\.ok/);
 });
