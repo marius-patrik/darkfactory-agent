@@ -49,6 +49,19 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve canonical control ref
+        id: control-ref
+        shell: bash
+        run: |
+          # Pin to an immutable SHA on marius-patrik/darkfactory-agent main so
+          # PRD edits in managed repositories cannot execute arbitrary code.
+          sha="$(curl -fsSL https://api.github.com/repos/marius-patrik/darkfactory-agent/commits/main | jq -r '.sha')"
+          if [[ -z "${sha}" || "${sha}" == "null" ]]; then
+            echo "::error::Could not resolve canonical DarkFactory control ref."
+            exit 1
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout DarkFactory control scripts
         uses: actions/checkout@v4
         with:
@@ -56,7 +69,7 @@ jobs:
           # never from a managed repository's own checkout, so a compromised managed
           # repo cannot execute privileged planning code with the app token.
           repository: marius-patrik/darkfactory-agent
-          ref: ${{ github.event_name == 'push' && 'main' || github.sha }}
+          ref: ${{ steps.control-ref.outputs.sha }}
           path: darkfactory-control
           persist-credentials: false
 

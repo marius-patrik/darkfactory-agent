@@ -138,14 +138,22 @@ async function reconcileTargetRepository() {
       continue;
     }
 
-    // For open issues, preserve existing Blocked-by sequencing while still
-    // updating title/body when the PRD item itself changes.
+    // For open issues, apply the deterministic current-PRD sequence. Patch only
+    // the Blocked-by section when sequencing changes; rewrite the whole body
+    // when the PRD item content itself changes.
+    const expectedBlockedBy = blockedBy;
     const existingBlockedBy = extractBlockedBy(existing.body || "");
-    const bodyWithPreservedBlockedBy = prdIssueBody(item, existingBlockedBy);
+    const contentBody = prdIssueBody(item, []);
+    const contentChanged = removeBlockedBySection(existing.body || "").trim() !== contentBody.trim();
+    const sequencingChanged = existingBlockedBy.join(",") !== expectedBlockedBy.join(",");
 
     const update = {};
     if (existing.title !== item.title) update.title = item.title;
-    if ((existing.body || "").trim() !== bodyWithPreservedBlockedBy.trim()) update.body = bodyWithPreservedBlockedBy;
+    if (contentChanged) {
+      update.body = prdIssueBody(item, expectedBlockedBy);
+    } else if (sequencingChanged) {
+      update.body = applyBlockedBy(existing.body || "", expectedBlockedBy);
+    }
     if (Object.keys(update).length) {
       const updated = await gh.request("PATCH", `/repos/${repoName(TARGET_REPO)}/issues/${existing.number}`, update);
       ledger.actions.push({ action: "update-issue", marker: item.marker, issue: issueRef(updated), fields: Object.keys(update) });
@@ -324,6 +332,22 @@ function extractBlockedBy(body) {
     if (match) numbers.push(Number(match[1]));
   }
   return numbers;
+}
+
+function removeBlockedBySection(body) {
+  const parts = body.split("\n## Planning Notes\n");
+  let prefix = parts[0];
+  prefix = prefix.replace(/\n## Sequencing\n[\s\S]*$/, "");
+  return parts.length > 1 ? `${prefix}\n## Planning Notes\n${parts.slice(1).join("\n## Planning Notes\n")}` : prefix;
+}
+
+function applyBlockedBy(body, blockedBy) {
+  const parts = body.split("\n## Planning Notes\n");
+  let prefix = parts[0].replace(/\n## Sequencing\n[\s\S]*$/, "");
+  if (blockedBy.length) {
+    prefix += `\n## Sequencing\n\n${blockedBy.map((number) => `Blocked-by: #${number}`).join("\n")}`;
+  }
+  return parts.length > 1 ? `${prefix}\n## Planning Notes\n${parts.slice(1).join("\n## Planning Notes\n")}` : prefix;
 }
 
 function issueRef(issue) {
