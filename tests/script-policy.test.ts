@@ -229,6 +229,7 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.match(workflow, /PRD\.md/);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /^\s+schedule:\s*$/m);
+  assert.match(workflow, /actions:\s+write/);
   assert.notEqual(gate, -1);
   assert.notEqual(checkout, -1);
   assert.notEqual(token, -1);
@@ -243,6 +244,15 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.match(workflow, /Resolve canonical control ref/);
   assert.match(workflow, /Validate manual planning target ref/);
   assert.doesNotMatch(workflow, /DARK_FACTORY_CONTROL_REF/);
+});
+
+test("df-plan explicitly dispatches workers for newly ready PRD issues", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /dispatchIfNewlyReady/);
+  assert.match(source, /labelUpdate\.add\.includes\("df:ready"\)/);
+  assert.match(source, /actions\/workflows\/df-work\.yml\/dispatches/);
+  assert.match(source, /TRIGGER === "push" \? repository : CONTROL_REPO/);
 });
 
 test("df-follow-through workflow validates trusted refs before privileged tokens", async () => {
@@ -284,15 +294,18 @@ test("df-work workflow only runs issue triggers from trusted actors", async () =
   assert.doesNotMatch(workflow, /"MEMBER"/);
   assert.match(workflow, /github\.repository_owner == 'marius-patrik'/);
   assert.match(workflow, /github\.event\.label\.name == 'df:ready'/);
-  assert.match(workflow, /github\.event\.sender\.login == 'github-actions\[bot\]'/);
+  assert.match(workflow, /github-actions\[bot\]/);
+  assert.match(workflow, /mp-agents\[bot\]/);
   assert.match(workflow, /df-prd:/);
 });
 
-test("df-work workflow restricts workflow_dispatch to the control repository", async () => {
+test("df-work workflow allows control and managed self-dispatch", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
 
   assert.match(workflow, /workflow_dispatch/);
   assert.match(workflow, /github\.repository == 'marius-patrik\/darkfactory-agent'/);
+  assert.match(workflow, /inputs\.repo == github\.repository/);
+  assert.match(workflow, /if:\s*github\.event_name == 'workflow_dispatch' && github\.repository == 'marius-patrik\/darkfactory-agent'/);
 });
 
 test("df-work workflow downloads canonical scripts for managed-repo triggers", async () => {

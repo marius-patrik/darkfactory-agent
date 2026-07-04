@@ -128,8 +128,10 @@ async function reconcileTargetRepository() {
         body,
         labels: createLabels
       });
-      await setIssueLabels(TARGET_REPO, created.number, labels);
+      const labelUpdate = await setIssueLabels(TARGET_REPO, created.number, labels);
+      const dispatch = await dispatchIfNewlyReady(TARGET_REPO, created.number, labelUpdate, repo.default_branch);
       ledger.actions.push({ action: "create-issue", marker: item.marker, issue: issueRef(created), labels });
+      if (dispatch) ledger.actions.push(dispatch);
       previousOpenIssueNumber = created.number;
       continue;
     }
@@ -140,8 +142,10 @@ async function reconcileTargetRepository() {
         body,
         state: "open"
       });
-      await setIssueLabels(TARGET_REPO, existing.number, labels);
+      const labelUpdate = await setIssueLabels(TARGET_REPO, existing.number, labels);
+      const dispatch = await dispatchIfNewlyReady(TARGET_REPO, existing.number, labelUpdate, repo.default_branch);
       ledger.actions.push({ action: "reopen-prd-issue", marker: item.marker, issue: issueRef(reopened), labels });
+      if (dispatch) ledger.actions.push(dispatch);
       previousOpenIssueNumber = reopened.number;
       continue;
     }
@@ -166,8 +170,10 @@ async function reconcileTargetRepository() {
       const updated = await gh.request("PATCH", `/repos/${repoName(TARGET_REPO)}/issues/${existing.number}`, update);
       ledger.actions.push({ action: "update-issue", marker: item.marker, issue: issueRef(updated), fields: Object.keys(update) });
     }
-    await setIssueLabels(TARGET_REPO, existing.number, labels);
+    const labelUpdate = await setIssueLabels(TARGET_REPO, existing.number, labels);
     ledger.actions.push({ action: "sequence-labels", marker: item.marker, issue: issueRef(existing), labels });
+    const dispatch = await dispatchIfNewlyReady(TARGET_REPO, existing.number, labelUpdate, repo.default_branch);
+    if (dispatch) ledger.actions.push(dispatch);
     previousOpenIssueNumber = existing.number;
   }
 
@@ -274,6 +280,37 @@ async function setIssueLabels(repository, issueNumber, labels) {
   for (const label of remove) {
     await gh.request("DELETE", `/repos/${repoName(repository)}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`);
   }
+  return { add, remove };
+}
+
+async function dispatchIfNewlyReady(repository, issueNumber, labelUpdate, defaultBranch) {
+  if (!labelUpdate.add.includes("df:ready")) return null;
+  return await dispatchReadyWorker(repository, issueNumber, defaultBranch);
+}
+
+async function dispatchReadyWorker(repository, issueNumber, defaultBranch) {
+  // GitHub suppresses workflow runs caused by GITHUB_TOKEN label events, so the
+  // planner explicitly dispatches the worker. PRD push runs can dispatch the
+  // managed repository's own workflow; control sweeps dispatch the control
+  // workflow with target inputs.
+  const dispatchRepository = TRIGGER === "push" ? repository : CONTROL_REPO;
+  const dispatchRef = repoName(dispatchRepository) === repoName(CONTROL_REPO) ? "main" : defaultBranch || "main";
+
+  await gh.request("POST", `/repos/${repoName(dispatchRepository)}/actions/workflows/df-work.yml/dispatches`, {
+    ref: dispatchRef,
+    inputs: {
+      repo: repoName(repository),
+      issue_number: String(issueNumber)
+    }
+  });
+
+  return {
+    action: "dispatch-worker",
+    repo: repoName(repository),
+    issue: `#${issueNumber}`,
+    workflow_repository: repoName(dispatchRepository),
+    ref: dispatchRef
+  };
 }
 
 async function detectCodeDrift(repository, ref, items, staleMarkedIssues) {

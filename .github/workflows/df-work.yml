@@ -28,11 +28,12 @@ jobs:
     if: >-
       ${{
         github.repository_owner == 'marius-patrik' &&
-        ((github.event_name == 'workflow_dispatch' && github.repository == 'marius-patrik/darkfactory-agent') ||
+        ((github.event_name == 'workflow_dispatch' &&
+           (github.repository == 'marius-patrik/darkfactory-agent' || inputs.repo == github.repository)) ||
          (github.event_name == 'issues' &&
            github.event.label.name == 'df:ready' &&
            contains(github.event.issue.body || '', 'df-prd:') &&
-           github.event.sender.login == 'github-actions[bot]') ||
+           contains(fromJSON('["github-actions[bot]", "mp-agents[bot]"]'), github.event.sender.login)) ||
          (github.event_name == 'issue_comment' &&
            !github.event.issue.pull_request &&
            contains(github.event.issue.body || '', 'df-prd:') &&
@@ -105,7 +106,7 @@ jobs:
 
       - name: Mint mp-agents installation token
         id: app-token
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && github.repository == 'marius-patrik/darkfactory-agent'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.DARK_FACTORY_APP_ID }}
