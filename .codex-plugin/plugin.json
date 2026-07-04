@@ -1,6 +1,6 @@
 {
   "name": "dream",
-  "version": "0.1.0+codex.20260703050125",
+  "version": "0.1.1+codex.20260704133300",
   "description": "Run temporal replay over rollout sessions and compile unresolved work into continuity memory.",
   "author": {
     "name": "marius-patrik"
