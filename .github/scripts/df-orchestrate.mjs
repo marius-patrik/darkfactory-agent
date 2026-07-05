@@ -5,9 +5,11 @@ import {
   assertAllowedRepo,
   createGithubClient,
   listActiveManagedRepos,
+  parseWorkerProviders,
   parseRepo,
   repoName,
   requiredEnv,
+  selectWorkerProviderSlot,
   warnReadOnlyRepository,
   writeRunLedger
 } from "./df-lib.mjs";
@@ -17,6 +19,9 @@ const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
 const CONTROL_REPO = parseRepo(requiredEnv("DF_CONTROL_REPO"));
 const DATA_REPO = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
+const WORKER_PROVIDERS = parseWorkerProviders(process.env.DF_WORKER_PROVIDERS, {
+  defaultModel: process.env.DF_CODEX_MODEL ?? "gpt-5.5"
+});
 const gh = createGithubClient(TOKEN, "darkfactory-orchestrate");
 
 main().catch((error) => {
@@ -34,8 +39,14 @@ async function main() {
       const ready = await listReadyIssues(target);
       for (const issue of ready) {
         try {
-          await dispatchWorker(target, issue.number);
-          dispatched.push({ repo: repoName(target), issue: issue.number });
+          const providerSlot = selectWorkerProviderSlot(dispatched.length, WORKER_PROVIDERS);
+          await dispatchWorker(target, issue.number, providerSlot);
+          dispatched.push({
+            repo: repoName(target),
+            issue: issue.number,
+            provider: providerSlot.provider.name,
+            provider_slot: providerSlot.slot
+          });
         } catch (error) {
           if (warnReadOnlyRepository(target, error, "worker dispatch")) continue;
           console.warn(`Failed to dispatch worker for ${repoName(target)}#${issue.number}: ${error.message || String(error)}`);
@@ -50,6 +61,12 @@ async function main() {
   const ledger = {
     trigger: TRIGGER,
     control_repo: repoName(CONTROL_REPO),
+    provider_order: WORKER_PROVIDERS.map((provider) => ({
+      name: provider.name,
+      model: provider.model,
+      auth_env: provider.authEnv,
+      concurrency: provider.concurrency
+    })),
     dispatched,
     token_usage: {
       codex_calls: 0,
@@ -90,7 +107,7 @@ async function listReadyIssues(repository) {
   });
 }
 
-async function dispatchWorker(repository, issueNumber) {
+async function dispatchWorker(repository, issueNumber, providerSlot) {
   // Claim the issue before dispatch so a subsequent orchestrator tick cannot
   // re-dispatch the same ready issue while the worker workflow is starting.
   await replaceIssueLabels(repository, issueNumber, ["df:running"], ["df:ready"]);
@@ -99,7 +116,9 @@ async function dispatchWorker(repository, issueNumber) {
       ref: "main",
       inputs: {
         repo: repoName(repository),
-        issue_number: String(issueNumber)
+        issue_number: String(issueNumber),
+        worker_provider: providerSlot.provider.name,
+        worker_provider_slot: String(providerSlot.slot)
       }
     });
   } catch (error) {

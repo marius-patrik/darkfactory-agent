@@ -11,12 +11,20 @@ on:
         description: Target issue number.
         required: true
         type: string
+      worker_provider:
+        description: Initial worker provider name from DF_WORKER_PROVIDERS.
+        required: false
+        type: string
+      worker_provider_slot:
+        description: Deterministic per-provider concurrency slot.
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: df-work-${{ inputs.repo }}-${{ inputs.issue_number }}
+  group: df-work-${{ inputs.worker_provider || 'auto' }}-${{ inputs.worker_provider_slot || '0' }}
   cancel-in-progress: false
 
 jobs:
@@ -75,9 +83,16 @@ jobs:
         env:
           DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          KIMI_CODEX_AUTH_JSON: ${{ secrets.KIMI_CODEX_AUTH_JSON }}
+          AGY_CODEX_AUTH_JSON: ${{ secrets.AGY_CODEX_AUTH_JSON }}
+          KIMI_AUTH_JSON: ${{ secrets.KIMI_AUTH_JSON }}
+          AGY_AUTH_JSON: ${{ secrets.AGY_AUTH_JSON }}
           DF_CONTROL_REPO: marius-patrik/agent-darkfactory
           DF_TARGET_REPO: ${{ inputs.repo }}
           DF_TARGET_ISSUE_NUMBER: ${{ inputs.issue_number }}
+          DF_WORKER_PROVIDER: ${{ inputs.worker_provider }}
+          DF_WORKER_PROVIDER_SLOT: ${{ inputs.worker_provider_slot }}
+          DF_WORKER_PROVIDERS: ${{ vars.DF_WORKER_PROVIDERS }}
           DF_TRIGGER: ${{ github.event_name }}
           DF_DATA_REPO: marius-patrik/darkfactory-data
         run: node darkfactory-control/.github/scripts/df-work.mjs

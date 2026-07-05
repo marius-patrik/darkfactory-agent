@@ -12,7 +12,10 @@ import {
   createGithubClient,
   ensureLabels,
   getRepository,
+  isProviderQuotaError,
+  orderedWorkerProviders,
   preflightMergePolicy,
+  parseWorkerProviders,
   parseRepo,
   repoName,
   requiredEnv,
@@ -24,13 +27,15 @@ import {
 
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
-const CODEX_AUTH_JSON = process.env.CODEX_AUTH_JSON ?? "";
 const CONTROL_REPO = parseRepo(requiredEnv("DF_CONTROL_REPO"));
 const TARGET_REPO = parseRepo(requiredEnv("DF_TARGET_REPO"));
 const TARGET_ISSUE_NUMBER = Number(requiredEnv("DF_TARGET_ISSUE_NUMBER"));
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
 const WORKER_IMAGE = process.env.DF_WORKER_IMAGE ?? "darkfactory-codex-worker";
 const CODEX_MODEL = process.env.DF_CODEX_MODEL ?? "gpt-5.5";
+const WORKER_PROVIDERS = parseWorkerProviders(process.env.DF_WORKER_PROVIDERS, { defaultModel: CODEX_MODEL });
+const REQUESTED_PROVIDER = process.env.DF_WORKER_PROVIDER ?? "";
+const REQUESTED_PROVIDER_SLOT = process.env.DF_WORKER_PROVIDER_SLOT ?? "";
 const DATA_REPO = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
 const GIT_BASIC_AUTH = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
 const gh = createGithubClient(TOKEN, "darkfactory-worker");
@@ -57,10 +62,19 @@ async function main() {
     issue: target,
     branch,
     status: "started",
+    provider_order: WORKER_PROVIDERS.map((provider) => ({
+      name: provider.name,
+      model: provider.model,
+      auth_env: provider.authEnv,
+      concurrency: provider.concurrency
+    })),
+    requested_provider: REQUESTED_PROVIDER || null,
+    requested_provider_slot: REQUESTED_PROVIDER_SLOT || null,
+    provider_attempts: [],
     actions: [],
     token_usage: {
       codex_calls: 0,
-      model: CODEX_MODEL,
+      model: null,
       model_reasoning_effort: codeEffort,
       input_tokens: null,
       output_tokens: null,
@@ -99,13 +113,10 @@ async function main() {
         `Branch: \`${branch}\``,
         `Task class: \`${taskRouting.taskClass}\``,
         `Codex reasoning effort: \`${codeEffort}\``,
+        `Worker providers: ${WORKER_PROVIDERS.map((provider) => `\`${provider.name}\` x${provider.concurrency}`).join(", ")}`,
         `Merge policy: ${mergePolicy.summary}`
       ].join("\n")
     );
-
-    if (!CODEX_AUTH_JSON.trim()) {
-      throw new Error("CODEX_AUTH_JSON is not configured for the worker.");
-    }
 
     tempRoot = await mkdtemp(path.join(tmpdir(), "df-work-"));
     const worktree = path.join(tempRoot, "repo");
@@ -115,12 +126,12 @@ async function main() {
     await ensureNoRemoteBranch(TARGET_REPO, branch);
     runGit(["checkout", "-b", branch], worktree);
 
-    await writeCodexAuth(codexHome);
     const briefInfo = await writeTaskBrief(worktree, issue, workBaseBranch, taskRouting);
     ledger.token_usage.input_brief_characters = briefInfo.characters;
     buildWorkerImage();
-    ledger.token_usage.codex_calls += 1;
-    runCodexWorker(worktree, codexHome, codeEffort);
+    const selectedProvider = await runWorkerWithProviderFailover(worktree, codexHome, codeEffort, ledger);
+    ledger.provider = selectedProvider.name;
+    ledger.token_usage.model = selectedProvider.model;
 
     const summary = await readWorkerSummary(worktree);
     await removeWorkerScratch(worktree);
@@ -255,9 +266,9 @@ async function ensureNoRemoteBranch(repository, branch) {
   }
 }
 
-async function writeCodexAuth(codexHome) {
+async function writeCodexAuth(codexHome, authJson) {
   await mkdir(codexHome, { recursive: true });
-  await writeFile(path.join(codexHome, "auth.json"), CODEX_AUTH_JSON, { mode: 0o600 });
+  await writeFile(path.join(codexHome, "auth.json"), authJson, { mode: 0o600 });
 }
 
 async function writeTaskBrief(worktree, issue, defaultBranch, taskRouting) {
@@ -314,7 +325,53 @@ function buildWorkerImage() {
   runCommand("docker", ["build", "-f", dockerfile, "-t", WORKER_IMAGE, CONTROL_ROOT], process.cwd());
 }
 
-function runCodexWorker(worktree, codexHome, codeEffort) {
+async function runWorkerWithProviderFailover(worktree, codexHome, codeEffort, ledger) {
+  const providers = orderedWorkerProviders(WORKER_PROVIDERS, REQUESTED_PROVIDER);
+  const missingAuth = [];
+  let lastQuotaError = null;
+
+  for (const provider of providers) {
+    const authJson = process.env[provider.authEnv] ?? "";
+    const attempt = {
+      provider: provider.name,
+      model: provider.model,
+      auth_env: provider.authEnv,
+      status: "started"
+    };
+    ledger.provider_attempts.push(attempt);
+
+    if (!authJson.trim()) {
+      attempt.status = "skipped";
+      attempt.reason = "missing-auth";
+      missingAuth.push(provider.authEnv);
+      continue;
+    }
+
+    await writeCodexAuth(codexHome, authJson);
+    ledger.token_usage.codex_calls += 1;
+    try {
+      runCodexWorker(worktree, codexHome, codeEffort, provider);
+      attempt.status = "success";
+      return provider;
+    } catch (error) {
+      const quota = isProviderQuotaError(error);
+      attempt.status = "failed";
+      attempt.error_class = quota ? "quota" : "worker";
+      attempt.error = sanitize(error.message || String(error), TOKEN);
+      if (!quota) throw error;
+      lastQuotaError = error;
+      ledger.actions.push({ action: "provider-failover", from: provider.name, reason: "quota" });
+      console.warn(`Worker provider ${provider.name} hit quota/rate limits; trying the next configured provider.`);
+    }
+  }
+
+  if (lastQuotaError) {
+    throw new Error(`All configured worker providers exhausted quota/rate limits. Last error: ${lastQuotaError.message || String(lastQuotaError)}`);
+  }
+  throw new Error(`No configured worker provider has auth available. Missing env: ${[...new Set(missingAuth)].join(", ")}`);
+}
+
+function runCodexWorker(worktree, codexHome, codeEffort, provider) {
   const script = [
     "set -euo pipefail",
     "git config --global --add safe.directory /workspace",
@@ -334,7 +391,7 @@ function runCodexWorker(worktree, codexHome, codeEffort) {
       "-e",
       "HOME=/codex-home",
       "-e",
-      `CODEX_MODEL=${CODEX_MODEL}`,
+      `CODEX_MODEL=${provider.model}`,
       "-e",
       `CODEX_EFFORT=${codeEffort}`,
       "-v",

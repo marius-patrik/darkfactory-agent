@@ -13,15 +13,19 @@ const {
   getBranchProtection,
   getRequiredStatusCheckContexts,
   darkFactoryWorkerIssueNumber,
+  isProviderQuotaError,
   isIgnorableCleanupError,
   isDarkFactoryWorkerPullRequest,
   isParkedRepo,
   listActiveManagedRepos,
+  orderedWorkerProviders,
+  parseWorkerProviders,
   parsePrdItems,
   plannedIssueLabelDiff,
   preflightMergePolicy,
   prdIssueBody,
   reconcileLabelDiff,
+  selectWorkerProviderSlot,
   taskClassFromLabels
 } = dfLib;
 
@@ -75,6 +79,34 @@ test("task class labels map to Codex reasoning effort", () => {
     taskClass: "standard",
     effort: "medium"
   });
+});
+
+test("worker provider config expands deterministic provider slots", () => {
+  const providers = parseWorkerProviders(JSON.stringify([
+    { name: "kimi", model: "kimi-k2", authEnv: "KIMI_CODEX_AUTH_JSON", concurrency: 1 },
+    { name: "codex", model: "gpt-5.5", authEnv: "CODEX_AUTH_JSON", concurrency: 2 },
+    { name: "agy", model: "agy", authEnv: "AGY_CODEX_AUTH_JSON", concurrency: 1 }
+  ]));
+
+  assert.deepEqual(providers.map((provider: { name: string }) => provider.name), ["kimi", "codex", "agy"]);
+  assert.deepEqual(
+    [0, 1, 2, 3, 4].map((index) => {
+      const slot = selectWorkerProviderSlot(index, providers);
+      return `${slot.provider.name}:${slot.slot}`;
+    }),
+    ["kimi:0", "codex:0", "codex:1", "agy:0", "kimi:0"]
+  );
+  assert.deepEqual(
+    orderedWorkerProviders(providers, "codex").map((provider: { name: string }) => provider.name),
+    ["codex", "agy", "kimi"]
+  );
+});
+
+test("provider quota classification covers worker limit messages without hiding ordinary failures", () => {
+  assert.equal(isProviderQuotaError(new Error("403 billing-cycle quota exhausted")), true);
+  assert.equal(isProviderQuotaError(new Error("429 rate limit exceeded")), true);
+  assert.equal(isProviderQuotaError(new Error("usage limit reached for agy")), true);
+  assert.equal(isProviderQuotaError(new Error("TypeScript validation failed")), false);
 });
 
 test("prdIssueBody records deterministic Blocked-by sequencing", () => {
@@ -356,6 +388,20 @@ test("df-work cleanup remains a warning path after successful PR handoff", async
   assert.doesNotMatch(finallyBlock, /throw\s+cleanup|if\s*\(\s*!cleanup\.ok/);
 });
 
+test("df-work fails over between configured providers on quota errors and records attempts", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /parseWorkerProviders\(process\.env\.DF_WORKER_PROVIDERS/);
+  assert.match(source, /orderedWorkerProviders\(WORKER_PROVIDERS, REQUESTED_PROVIDER\)/);
+  assert.match(source, /provider_attempts: \[\]/);
+  assert.match(source, /ledger\.provider = selectedProvider\.name/);
+  assert.match(source, /process\.env\[provider\.authEnv\]/);
+  assert.match(source, /isProviderQuotaError\(error\)/);
+  assert.match(source, /action: "provider-failover"/);
+  assert.match(source, /attempt\.status = "skipped"/);
+  assert.match(source, /attempt\.status = "success"/);
+});
+
 test("df-plan reopens PRD-tracked issues when the PRD item still exists", async () => {
   const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
 
@@ -517,7 +563,7 @@ test("df-work workflow restricts privileged workers to the control repository", 
   assert.doesNotMatch(workflow, /inputs\.repo == github\.repository/);
   assert.match(workflow, /if:\s*github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /concurrency:\s*$/m);
-  assert.match(workflow, /group:\s+df-work-\$\{\{ inputs\.repo \}\}-\$\{\{ inputs\.issue_number \}\}/);
+  assert.match(workflow, /group:\s+df-work-\$\{\{ inputs\.worker_provider \|\| 'auto' \}\}-\$\{\{ inputs\.worker_provider_slot \|\| '0' \}\}/);
   assert.match(workflow, /cancel-in-progress:\s+false/);
 });
 
@@ -543,6 +589,11 @@ test("df-work workflow uses the app token for control-dispatched workers", async
   assert.doesNotMatch(workflow, /steps\.app-token\.outputs\.token \|\| github\.token/);
   assert.match(workflow, /DF_TARGET_REPO: \$\{\{ inputs\.repo \}\}/);
   assert.match(workflow, /DF_TARGET_ISSUE_NUMBER: \$\{\{ inputs\.issue_number \}\}/);
+  assert.match(workflow, /DF_WORKER_PROVIDER: \$\{\{ inputs\.worker_provider \}\}/);
+  assert.match(workflow, /DF_WORKER_PROVIDER_SLOT: \$\{\{ inputs\.worker_provider_slot \}\}/);
+  assert.match(workflow, /DF_WORKER_PROVIDERS: \$\{\{ vars\.DF_WORKER_PROVIDERS \}\}/);
+  assert.match(workflow, /KIMI_CODEX_AUTH_JSON: \$\{\{ secrets\.KIMI_CODEX_AUTH_JSON \}\}/);
+  assert.match(workflow, /AGY_CODEX_AUTH_JSON: \$\{\{ secrets\.AGY_CODEX_AUTH_JSON \}\}/);
   assert.match(source, /const TOKEN = requiredEnv\("DARK_FACTORY_TOKEN"\)/);
   assert.match(source, /runGit\(\["push", "origin", `HEAD:refs\/heads\/\$\{branch\}`\], worktree\)/);
   assert.match(source, /function runGit\(args, cwd\) \{\s+return runGitWithAuth\(args, cwd\);/);
@@ -637,6 +688,10 @@ test("df-orchestrate script uses the active managed registry and dispatches via 
   assert.match(source, /const CONTROL_ROOT = path\.resolve/);
   assert.match(source, /listActiveManagedRepos\(gh, CONTROL_REPO, \{ root: CONTROL_ROOT \}\)/);
   assert.match(source, /\/repos\/\$\{repoName\(CONTROL_REPO\)\}\/actions\/workflows\/df-work\.yml\/dispatches/);
+  assert.match(source, /parseWorkerProviders\(process\.env\.DF_WORKER_PROVIDERS/);
+  assert.match(source, /selectWorkerProviderSlot\(dispatched\.length, WORKER_PROVIDERS\)/);
+  assert.match(source, /worker_provider: providerSlot\.provider\.name/);
+  assert.match(source, /worker_provider_slot: String\(providerSlot\.slot\)/);
   assert.match(source, /\/df-prd:/);
   assert.match(source, /df:running/);
   assert.match(source, /df:blocked/);

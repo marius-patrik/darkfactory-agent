@@ -62,6 +62,7 @@ jobs:
         env:
           DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
           DF_CONTROL_REPO: marius-patrik/agent-darkfactory
+          DF_WORKER_PROVIDERS: ${{ vars.DF_WORKER_PROVIDERS }}
           DF_TRIGGER: ${{ github.event_name }}
           DF_DATA_REPO: marius-patrik/darkfactory-data
         run: node ${{ steps.script-path.outputs.path }}

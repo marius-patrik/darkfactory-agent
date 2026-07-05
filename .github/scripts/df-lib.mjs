@@ -11,6 +11,7 @@ export const PARKED_REPOS = new Set([
 ]);
 export const MANAGED_REPOS_PATH = ".darkfactory/managed-repos.json";
 export const MANAGED_REPO_STATES = new Set(["active", "parked", "archived", "completed", "removed"]);
+export const DEFAULT_WORKER_MODEL = "gpt-5.5";
 
 export const WORK_LABELS = [
   { name: "df:ready", color: "0E8A16", description: "DarkFactory work loop may pick up this issue" },
@@ -187,6 +188,97 @@ export function taskClassFromLabels(labels) {
   if (names.has("df:class:mechanical")) return { taskClass: "mechanical", effort: "low" };
   if (names.has("df:class:hard")) return { taskClass: "hard", effort: "high" };
   return { taskClass: "standard", effort: "medium" };
+}
+
+export function parseWorkerProviders(value, options = {}) {
+  const defaultModel = options.defaultModel ?? DEFAULT_WORKER_MODEL;
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return [normalizeWorkerProvider({ name: "codex", model: defaultModel, authEnv: "CODEX_AUTH_JSON" }, defaultModel)];
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Invalid DF_WORKER_PROVIDERS JSON: ${error.message || String(error)}`);
+  }
+
+  const providers = Array.isArray(parsed) ? parsed : parsed?.providers;
+  if (!Array.isArray(providers) || providers.length === 0) {
+    throw new Error("DF_WORKER_PROVIDERS must be a non-empty JSON array or an object with a non-empty providers array.");
+  }
+
+  const normalized = providers.map((provider) => normalizeWorkerProvider(provider, defaultModel));
+  const seen = new Set();
+  for (const provider of normalized) {
+    if (seen.has(provider.name)) {
+      throw new Error(`Duplicate worker provider name: ${provider.name}`);
+    }
+    seen.add(provider.name);
+  }
+  return normalized;
+}
+
+function normalizeWorkerProvider(provider, defaultModel) {
+  if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
+    throw new Error("Worker provider entries must be JSON objects.");
+  }
+
+  const name = String(provider.name || "").trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_-]*$/.test(name)) {
+    throw new Error(`Invalid worker provider name: ${provider.name || ""}`);
+  }
+
+  const authEnv = String(provider.authEnv || provider.auth_env || "").trim();
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(authEnv)) {
+    throw new Error(`Invalid authEnv for worker provider ${name}.`);
+  }
+
+  const model = String(provider.model || defaultModel).trim();
+  if (!model) {
+    throw new Error(`Missing model for worker provider ${name}.`);
+  }
+
+  const concurrency = provider.concurrency === undefined ? 1 : Number(provider.concurrency);
+  if (!Number.isInteger(concurrency) || concurrency <= 0 || concurrency > 20) {
+    throw new Error(`Worker provider ${name} concurrency must be an integer from 1 to 20.`);
+  }
+
+  return { name, model, authEnv, concurrency };
+}
+
+export function workerProviderSlots(providers) {
+  const slots = [];
+  for (const provider of providers) {
+    for (let slot = 0; slot < provider.concurrency; slot += 1) {
+      slots.push({ provider, slot });
+    }
+  }
+  return slots;
+}
+
+export function selectWorkerProviderSlot(index, providers) {
+  const slots = workerProviderSlots(providers);
+  if (!slots.length) throw new Error("No worker provider slots are configured.");
+  const normalizedIndex = Number.isInteger(index) && index >= 0 ? index : 0;
+  return slots[normalizedIndex % slots.length];
+}
+
+export function orderedWorkerProviders(providers, preferredName = "") {
+  const preferred = String(preferredName || "").trim().toLowerCase();
+  if (!preferred) return [...providers];
+  const index = providers.findIndex((provider) => provider.name === preferred);
+  if (index === -1) {
+    throw new Error(`Requested worker provider '${preferred}' is not configured.`);
+  }
+  return [...providers.slice(index), ...providers.slice(0, index)];
+}
+
+export function isProviderQuotaError(error) {
+  const message = String(error?.stack || error?.message || error || "");
+  return /\b(429|rate[-\s]?limit(?:ed)?|quota|billing[-\s]?cycle|usage[-\s]?limit|limit(?:s)?\s+(?:reached|exceeded)|too many requests|insufficient[_\s-]?quota|exhausted)\b/i.test(message) ||
+    /\b403\b[\s\S]{0,200}\b(billing|quota|limit)\b/i.test(message);
 }
 
 export function reconcileLabelDiff(currentLabels, desiredLabels, reconciledLabels) {

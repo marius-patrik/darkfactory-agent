@@ -173,6 +173,19 @@ The workflow requires these repository secrets in `marius-patrik/agent-darkfacto
 
 - `DARK_FACTORY_APP_ID`
 - `DARK_FACTORY_PRIVATE_KEY`
+- `CODEX_AUTH_JSON`
+
+DarkFactory work providers are configured by the repository variable `DF_WORKER_PROVIDERS`. When unset, workers use one Codex provider with `CODEX_AUTH_JSON` and model `gpt-5.5`. To set deterministic provider order and per-provider concurrency, use JSON:
+
+```json
+[
+  { "name": "kimi", "model": "kimi-k2", "authEnv": "KIMI_CODEX_AUTH_JSON", "concurrency": 1 },
+  { "name": "codex", "model": "gpt-5.5", "authEnv": "CODEX_AUTH_JSON", "concurrency": 2 },
+  { "name": "agy", "model": "agy", "authEnv": "AGY_CODEX_AUTH_JSON", "concurrency": 1 }
+]
+```
+
+Each `authEnv` must be exposed by the `df-work` workflow as a repository secret. The managed workflow currently exposes `CODEX_AUTH_JSON`, `KIMI_CODEX_AUTH_JSON`, `AGY_CODEX_AUTH_JSON`, `KIMI_AUTH_JSON`, and `AGY_AUTH_JSON`.
 
 Every managed repository that should enforce Codex Review also needs this repository secret:
 
