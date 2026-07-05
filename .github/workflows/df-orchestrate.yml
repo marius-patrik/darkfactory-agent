@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: df-orchestrate
+  cancel-in-progress: false
+
 jobs:
   orchestrate:
     name: Dispatch ready work
@@ -35,6 +39,7 @@ jobs:
     permissions:
       actions: write
       contents: read
+      issues: write
 
     steps:
       - name: Validate trusted control ref
@@ -84,4 +89,7 @@ jobs:
           DF_CONTROL_REPO: marius-patrik/agent-darkfactory
           DF_TRIGGER: ${{ github.event_name }}
           DF_DATA_REPO: marius-patrik/darkfactory-data
+          DF_L0_GLOBAL_WORKER_CAP: ${{ vars.DF_L0_GLOBAL_WORKER_CAP }}
+          DF_L0_REPO_WORKER_CAP: ${{ vars.DF_L0_REPO_WORKER_CAP }}
+          DF_L0_STREAM_WORKER_CAP: ${{ vars.DF_L0_STREAM_WORKER_CAP }}
         run: node ${{ steps.script-path.outputs.path }}
