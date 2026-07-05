@@ -951,6 +951,37 @@ test("df-work no-ops instead of blocking when an open worker PR already exists",
   assert.match(source, /No new worker run is needed; follow-through will evaluate the existing PR/);
 });
 
+test("df-work uses a deterministic provider failover matrix", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+
+  assert.match(workflow, /DF_PROVIDER_ORDER: \$\{\{ vars\.DF_PROVIDER_ORDER \|\| 'codex' \}\}/);
+  assert.match(workflow, /DF_PROVIDER_CONCURRENCY: \$\{\{ vars\.DF_PROVIDER_CONCURRENCY \|\| 'codex=1' \}\}/);
+  assert.match(workflow, /KIMI_AUTH_JSON: \$\{\{ secrets\.KIMI_AUTH_JSON \}\}/);
+  assert.match(workflow, /AGY_AUTH_JSON: \$\{\{ secrets\.AGY_AUTH_JSON \}\}/);
+
+  assert.match(source, /const PROVIDERS = parseProviderMatrix\(\)/);
+  assert.match(source, /parseProviderOrder\(process\.env\.DF_PROVIDER_ORDER \|\| "codex"\)/);
+  assert.match(source, /parseProviderConcurrency\(process\.env\.DF_PROVIDER_CONCURRENCY \|\| ""\)/);
+  assert.match(source, /providerAttemptOrder\(PROVIDERS, TARGET_ISSUE_NUMBER\)/);
+  assert.match(source, /\(issueNumber - 1\) % slots\.length/);
+  assert.match(source, /for \(let index = 0; index < provider\.concurrency; index \+= 1\)/);
+});
+
+test("df-work only fails over on provider quota failures and records provider attempts", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /provider_attempts: \[\]/);
+  assert.match(source, /ledger\.provider = providerResult\.provider\.name/);
+  assert.match(source, /attempt\.status = isProviderQuotaError\(error\) \? "quota-exhausted" : "failed"/);
+  assert.match(source, /if \(attempt\.status !== "quota-exhausted"\) \{\s+throw error;/);
+  assert.match(source, /resetWorktreeAfterProviderFailure\(worktree, issue, workBaseBranch, taskRouting\)/);
+  assert.match(source, /runGit\(\["reset", "--hard", "HEAD"\], worktree\)/);
+  assert.match(source, /runGit\(\["clean", "-fd"\], worktree\)/);
+  assert.match(source, /billing\[- \]cycle/);
+  assert.match(source, /rate limit\|rate-limit\|quota/);
+});
+
 test("df-sweep does not skip green worker PRs solely because the issue is blocked", async () => {
   const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
 

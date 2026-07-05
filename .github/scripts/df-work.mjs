@@ -25,7 +25,6 @@ import {
 
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
-const CODEX_AUTH_JSON = process.env.CODEX_AUTH_JSON ?? "";
 const CONTROL_REPO = parseRepo(requiredEnv("DF_CONTROL_REPO"));
 const TARGET_REPO = parseRepo(requiredEnv("DF_TARGET_REPO"));
 const TARGET_ISSUE_NUMBER = Number(requiredEnv("DF_TARGET_ISSUE_NUMBER"));
@@ -33,6 +32,7 @@ const TARGET_BASE_REF = process.env.DF_TARGET_BASE_REF?.trim() || "";
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
 const WORKER_IMAGE = process.env.DF_WORKER_IMAGE ?? "darkfactory-codex-worker";
 const CODEX_MODEL = process.env.DF_CODEX_MODEL ?? "gpt-5.5";
+const PROVIDERS = parseProviderMatrix();
 const DATA_REPO = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
 const GIT_BASIC_AUTH = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
 const gh = createGithubClient(TOKEN, "darkfactory-worker");
@@ -41,6 +41,80 @@ main().catch((error) => {
   console.error(sanitize(error.stack || error.message || String(error), TOKEN));
   process.exitCode = 1;
 });
+
+function parseProviderMatrix() {
+  const order = parseProviderOrder(process.env.DF_PROVIDER_ORDER || "codex");
+  const concurrency = parseProviderConcurrency(process.env.DF_PROVIDER_CONCURRENCY || "");
+  const providers = [];
+
+  for (const name of order) {
+    const envPrefix = providerEnvPrefix(name);
+    const authEnv = envPrefix === "CODEX" ? "CODEX_AUTH_JSON" : `${envPrefix}_AUTH_JSON`;
+    const modelEnv = envPrefix === "CODEX" ? "DF_CODEX_MODEL" : `${envPrefix}_CODEX_MODEL`;
+    const imageEnv = envPrefix === "CODEX" ? "DF_WORKER_IMAGE" : `${envPrefix}_WORKER_IMAGE`;
+    providers.push({
+      name,
+      authEnv,
+      authJson: process.env[authEnv] ?? "",
+      model: process.env[modelEnv] || CODEX_MODEL,
+      image: process.env[imageEnv] || WORKER_IMAGE,
+      concurrency: concurrency.get(name) ?? 1
+    });
+  }
+
+  return providers;
+}
+
+function parseProviderOrder(value) {
+  const providers = String(value || "")
+    .split(/[, \n]+/)
+    .map((provider) => provider.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set(providers.length ? providers : ["codex"])];
+}
+
+function parseProviderConcurrency(value) {
+  const concurrency = new Map();
+  for (const item of String(value || "").split(/[, \n]+/).filter(Boolean)) {
+    const [rawName, rawLimit] = item.split(/[:=]/);
+    const name = rawName?.trim().toLowerCase();
+    const limit = Number(rawLimit);
+    if (!name || !Number.isInteger(limit) || limit <= 0) {
+      throw new Error(`Invalid DF_PROVIDER_CONCURRENCY item '${item}'. Use provider=positive-integer.`);
+    }
+    concurrency.set(name, limit);
+  }
+  return concurrency;
+}
+
+function providerEnvPrefix(name) {
+  return name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "CODEX";
+}
+
+function providerAttemptOrder(providers, issueNumber) {
+  const slots = [];
+  for (const provider of providers) {
+    for (let index = 0; index < provider.concurrency; index += 1) {
+      slots.push(provider);
+    }
+  }
+  const deterministicStart = slots.length ? (issueNumber - 1) % slots.length : 0;
+  const ordered = [...slots.slice(deterministicStart), ...slots.slice(0, deterministicStart)];
+  const seen = new Set();
+  return ordered.filter((provider) => {
+    if (seen.has(provider.name)) return false;
+    seen.add(provider.name);
+    return true;
+  });
+}
+
+function isProviderQuotaError(error) {
+  const message = `${error?.message || ""}\n${error?.stack || ""}`;
+  return (
+    error?.status === 403 ||
+    /\b(429|rate limit|rate-limit|quota|billing[- ]cycle|usage limit|limit exceeded|insufficient quota|temporarily unavailable)\b/i.test(message)
+  );
+}
 
 async function main() {
   if (!Number.isInteger(TARGET_ISSUE_NUMBER) || TARGET_ISSUE_NUMBER <= 0) {
@@ -67,7 +141,9 @@ async function main() {
       input_tokens: null,
       output_tokens: null,
       note: "codex exec token counters are not exposed to this script yet"
-    }
+    },
+    providers: PROVIDERS.map(({ name, model, concurrency }) => ({ name, model, concurrency })),
+    provider_attempts: []
   };
   let tempRoot = "";
   let pullRequest = null;
@@ -142,10 +218,6 @@ async function main() {
       ].join("\n")
     );
 
-    if (!CODEX_AUTH_JSON.trim()) {
-      throw new Error("CODEX_AUTH_JSON is not configured for the worker.");
-    }
-
     tempRoot = await mkdtemp(path.join(tmpdir(), "df-work-"));
     const worktree = path.join(tempRoot, "repo");
     const codexHome = path.join(tempRoot, "codex-home");
@@ -154,12 +226,12 @@ async function main() {
     await ensureNoRemoteBranch(TARGET_REPO, branch);
     runGit(["checkout", "-b", branch], worktree);
 
-    await writeCodexAuth(codexHome);
     const briefInfo = await writeTaskBrief(worktree, issue, workBaseBranch, taskRouting);
     ledger.token_usage.input_brief_characters = briefInfo.characters;
-    buildWorkerImage();
-    ledger.token_usage.codex_calls += 1;
-    runCodexWorker(worktree, codexHome, codeEffort);
+    buildWorkerImages(PROVIDERS);
+    const providerResult = await runWorkerWithProviderFailover(worktree, codexHome, codeEffort, issue, workBaseBranch, taskRouting, ledger);
+    ledger.provider = providerResult.provider.name;
+    ledger.token_usage.model = providerResult.provider.model;
 
     const summary = await readWorkerSummary(worktree);
     await removeWorkerScratch(worktree);
@@ -320,9 +392,9 @@ async function ensureNoRemoteBranch(repository, branch) {
   }
 }
 
-async function writeCodexAuth(codexHome) {
+async function writeProviderAuth(codexHome, provider) {
   await mkdir(codexHome, { recursive: true });
-  await writeFile(path.join(codexHome, "auth.json"), CODEX_AUTH_JSON, { mode: 0o600 });
+  await writeFile(path.join(codexHome, "auth.json"), provider.authJson, { mode: 0o600 });
 }
 
 async function writeTaskBrief(worktree, issue, defaultBranch, taskRouting) {
@@ -374,12 +446,59 @@ async function writeTaskBrief(worktree, issue, defaultBranch, taskRouting) {
   return { characters: brief.length };
 }
 
-function buildWorkerImage() {
+function buildWorkerImages(providers) {
   const dockerfile = path.join(CONTROL_ROOT, ".github", "codex-review.Dockerfile");
-  runCommand("docker", ["build", "-f", dockerfile, "-t", WORKER_IMAGE, CONTROL_ROOT], process.cwd());
+  const images = [...new Set(providers.map((provider) => provider.image))];
+  for (const image of images) {
+    runCommand("docker", ["build", "-f", dockerfile, "-t", image, CONTROL_ROOT], process.cwd());
+  }
 }
 
-function runCodexWorker(worktree, codexHome, codeEffort) {
+async function runWorkerWithProviderFailover(worktree, codexHome, codeEffort, issue, workBaseBranch, taskRouting, ledger) {
+  const providers = providerAttemptOrder(PROVIDERS, TARGET_ISSUE_NUMBER);
+  let lastError = null;
+
+  for (const provider of providers) {
+    const attempt = {
+      provider: provider.name,
+      model: provider.model,
+      status: "started",
+      started_at: new Date().toISOString()
+    };
+    ledger.provider_attempts.push(attempt);
+
+    try {
+      if (!provider.authJson.trim()) {
+        throw new Error(`${provider.authEnv} is not configured for provider '${provider.name}'.`);
+      }
+
+      await writeProviderAuth(codexHome, provider);
+      ledger.token_usage.codex_calls += 1;
+      runCodexWorker(worktree, codexHome, codeEffort, provider);
+      attempt.status = "success";
+      attempt.completed_at = new Date().toISOString();
+      console.log(`DarkFactory worker provider '${provider.name}' completed ${repoName(TARGET_REPO)}#${TARGET_ISSUE_NUMBER}.`);
+      return { provider };
+    } catch (error) {
+      const sanitized = sanitize(error.stack || error.message || String(error), TOKEN);
+      attempt.status = isProviderQuotaError(error) ? "quota-exhausted" : "failed";
+      attempt.error = truncate(sanitized, 4000);
+      attempt.completed_at = new Date().toISOString();
+      lastError = error;
+
+      if (attempt.status !== "quota-exhausted") {
+        throw error;
+      }
+
+      console.warn(`DarkFactory worker provider '${provider.name}' hit quota; failing over to the next configured provider.`);
+      await resetWorktreeAfterProviderFailure(worktree, issue, workBaseBranch, taskRouting);
+    }
+  }
+
+  throw new Error(`All configured worker providers are unavailable or quota-exhausted. Last error: ${sanitize(lastError?.message || String(lastError), TOKEN)}`);
+}
+
+function runCodexWorker(worktree, codexHome, codeEffort, provider) {
   const script = [
     "set -euo pipefail",
     "git config --global --add safe.directory /workspace",
@@ -399,19 +518,26 @@ function runCodexWorker(worktree, codexHome, codeEffort) {
       "-e",
       "HOME=/codex-home",
       "-e",
-      `CODEX_MODEL=${CODEX_MODEL}`,
+      `CODEX_MODEL=${provider.model}`,
       "-e",
       `CODEX_EFFORT=${codeEffort}`,
       "-v",
       `${worktree}:/workspace`,
       "-v",
       `${codexHome}:/codex-home`,
-      WORKER_IMAGE,
+      provider.image,
       "-lc",
       script
     ],
     process.cwd()
   );
+}
+
+async function resetWorktreeAfterProviderFailure(worktree, issue, workBaseBranch, taskRouting) {
+  runGit(["reset", "--hard", "HEAD"], worktree);
+  runGit(["clean", "-fd"], worktree);
+  await removeWorkerScratch(worktree);
+  await writeTaskBrief(worktree, issue, workBaseBranch, taskRouting);
 }
 
 async function readWorkerSummary(worktree) {
