@@ -12,8 +12,11 @@ import {
   createGithubClient,
   ensureLabels,
   getRepository,
+  isParkedRepo,
+  managedRepoLifecycleState,
   preflightMergePolicy,
   parseRepo,
+  readManagedRepoRegistry,
   repoName,
   requiredEnv,
   sanitize,
@@ -21,6 +24,10 @@ import {
   taskClassFromLabels,
   writeRunLedger
 } from "./df-lib.mjs";
+import {
+  assertEnforcement,
+  loadEnforcementRules
+} from "./df-enforcement.mjs";
 
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
@@ -72,6 +79,8 @@ async function main() {
 
   const repo = await getRepository(gh, TARGET_REPO);
   const workBaseBranch = await resolveWorkBaseBranch(TARGET_REPO, repo.default_branch);
+  const rules = await loadEnforcementRules({ localRoot: CONTROL_ROOT, gh, repository: TARGET_REPO, ref: workBaseBranch });
+  const registry = await readManagedRepoRegistry(CONTROL_ROOT);
 
   // Ensure work labels exist before any preflight failure path tries to apply
   // `df:blocked` to the issue, so the blocker comment is always left reliably.
@@ -89,6 +98,21 @@ async function main() {
   ledger.actions.push({ action: "preflight-merge-policy", result: mergePolicy });
 
   try {
+    const enforcement = assertEnforcement(rules, "worker-preflight", {
+      action: { type: "worker-preflight", issueNumber: TARGET_ISSUE_NUMBER },
+      repository: {
+        name: repoName(TARGET_REPO),
+        parked: isParkedRepo(TARGET_REPO),
+        lifecycleState: managedRepoLifecycleState(TARGET_REPO, registry),
+        defaultBranch: repo.default_branch,
+        expectedWorkBaseBranch: workBaseBranch
+      },
+      pullRequest: { baseRefName: workBaseBranch },
+      git: { forcePush: false },
+      logging: { secretsRedacted: true }
+    });
+    ledger.actions.push({ action: "enforcement", event: enforcement.event, rules: enforcement.evaluated });
+
     await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:running"], ["df:ready", "df:blocked", "df:done"]);
     await createIssueComment(
       TARGET_REPO,

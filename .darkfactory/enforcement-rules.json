@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "rules": [
+    {
+      "id": "never-merge-red",
+      "description": "Merge gates require all reported checks and required checks to be successful.",
+      "enabled": true,
+      "events": ["merge"],
+      "assertions": [
+        {
+          "fact": "checks.allReportedChecksGreen",
+          "op": "equals",
+          "value": true,
+          "message": "All reported checks must be successful before merge."
+        },
+        {
+          "fact": "checks.requiredChecksGreen",
+          "op": "equals",
+          "value": true,
+          "message": "All required checks must be present and successful before merge."
+        }
+      ]
+    },
+    {
+      "id": "no-force-push",
+      "description": "DarkFactory must not force-push worker branches.",
+      "enabled": true,
+      "events": ["dispatch", "worker-preflight"],
+      "assertions": [
+        {
+          "fact": "git.forcePush",
+          "op": "equals",
+          "value": false,
+          "message": "Force-push is not allowed."
+        }
+      ]
+    },
+    {
+      "id": "no-admin-bypass",
+      "description": "DarkFactory must not use admin bypass merge paths.",
+      "enabled": true,
+      "events": ["merge"],
+      "assertions": [
+        {
+          "fact": "merge.adminBypass",
+          "op": "equals",
+          "value": false,
+          "message": "Admin bypass merge is not allowed."
+        }
+      ]
+    },
+    {
+      "id": "secrets-never-logged",
+      "description": "DarkFactory action logs and errors must redact configured secrets.",
+      "enabled": true,
+      "events": ["dispatch", "worker-preflight", "merge"],
+      "assertions": [
+        {
+          "fact": "logging.secretsRedacted",
+          "op": "equals",
+          "value": true,
+          "message": "Secrets must be redacted from logs and ledger errors."
+        }
+      ]
+    },
+    {
+      "id": "parked-repos-untouched",
+      "description": "DarkFactory must not dispatch workers or merge PRs in parked repositories.",
+      "enabled": true,
+      "events": ["dispatch", "worker-preflight", "merge"],
+      "assertions": [
+        {
+          "fact": "repository.parked",
+          "op": "equals",
+          "value": false,
+          "message": "Parked repositories are not eligible for DarkFactory actions."
+        },
+        {
+          "fact": "repository.lifecycleState",
+          "op": "notIn",
+          "value": ["parked", "archived", "completed", "removed"],
+          "message": "Only active repositories are eligible for DarkFactory actions."
+        }
+      ]
+    },
+    {
+      "id": "work-prs-target-dev",
+      "description": "Worker PRs target dev when the repository has a dev branch.",
+      "enabled": true,
+      "events": ["worker-preflight", "merge"],
+      "assertions": [
+        {
+          "fact": "pullRequest.baseRefName",
+          "op": "equalsFact",
+          "value": "repository.expectedWorkBaseBranch",
+          "message": "DarkFactory worker PRs must target the expected work base branch."
+        }
+      ]
+    }
+  ]
+}

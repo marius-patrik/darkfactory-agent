@@ -4,13 +4,20 @@ import {
   DEFAULT_DATA_REPO,
   assertAllowedRepo,
   createGithubClient,
+  isParkedRepo,
   listActiveManagedRepos,
+  managedRepoLifecycleState,
   parseRepo,
+  readManagedRepoRegistry,
   repoName,
   requiredEnv,
   warnReadOnlyRepository,
   writeRunLedger
 } from "./df-lib.mjs";
+import {
+  assertEnforcement,
+  loadEnforcementRules
+} from "./df-enforcement.mjs";
 
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
@@ -91,6 +98,19 @@ async function listReadyIssues(repository) {
 }
 
 async function dispatchWorker(repository, issueNumber) {
+  const rules = await loadEnforcementRules({ localRoot: CONTROL_ROOT, gh, repository });
+  const registry = await readManagedRepoRegistry(CONTROL_ROOT);
+  assertEnforcement(rules, "dispatch", {
+    action: { type: "workflow_dispatch", issueNumber },
+    repository: {
+      name: repoName(repository),
+      parked: isParkedRepo(repository),
+      lifecycleState: managedRepoLifecycleState(repository, registry)
+    },
+    git: { forcePush: false },
+    logging: { secretsRedacted: true }
+  });
+
   // Claim the issue before dispatch so a subsequent orchestrator tick cannot
   // re-dispatch the same ready issue while the worker workflow is starting.
   await replaceIssueLabels(repository, issueNumber, ["df:running"], ["df:ready"]);

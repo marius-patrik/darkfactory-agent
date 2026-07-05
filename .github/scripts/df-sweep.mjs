@@ -20,6 +20,10 @@ import {
   warnReadOnlyRepository,
   writeRunLedger
 } from "./df-lib.mjs";
+import {
+  enforceRules,
+  loadEnforcementRules
+} from "./df-enforcement.mjs";
 
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
 const CONTROL_REPO = parseRepo(requiredEnv("DF_CONTROL_REPO"));
@@ -174,6 +178,19 @@ async function considerPullRequest(repository, pull) {
     return { repo: repoName(repository), pr: ref, action: "skip", reason, issue_update: issueUpdate };
   }
 
+  const enforcementFailure = await mergeEnforcementFailure(repository, mergeGate, requiredContexts);
+  if (enforcementFailure) {
+    const issueUpdate = await markWorkerIssueBlocked(repository, pull, enforcementFailure.reason, enforcementFailure.details);
+    return {
+      repo: repoName(repository),
+      pr: ref,
+      action: "skip",
+      reason: enforcementFailure.reason,
+      issue_update: issueUpdate,
+      enforcement: enforcementFailure.failures
+    };
+  }
+
   const protectedBranch = await branchIsProtected(repository, pull.baseRefName);
   if (protectedBranch) {
     const enabled = await enableAutoMerge(pull.id);
@@ -238,6 +255,52 @@ function emptyCheckRollupHasSettled(pull) {
 
 function canDirectMergeAfterAutomergeFailure(reason) {
   return /pull request is in clean status/i.test(reason || "");
+}
+
+async function mergeEnforcementFailure(repository, pull, requiredContexts) {
+  const rules = await loadEnforcementRules({ gh, repository, ref: pull.baseRefName });
+  const registry = await readManagedRepoRegistry();
+  const expectedWorkBaseBranch = await resolveExpectedWorkBaseBranch(repository);
+  const result = enforceRules(rules, "merge", {
+    action: { type: "merge" },
+    repository: {
+      name: repoName(repository),
+      parked: isParkedRepo(repository),
+      lifecycleState: managedRepoLifecycleState(repository, registry),
+      expectedWorkBaseBranch
+    },
+    pullRequest: {
+      number: pull.number,
+      baseRefName: pull.baseRefName,
+      mergeable: pull.mergeable
+    },
+    checks: {
+      required: requiredContexts,
+      summary: checksSummary(pull.statusCheckRollup),
+      allReportedChecksGreen: checksAreGreen(pull.statusCheckRollup),
+      requiredChecksGreen: checksAreGreen(pull.statusCheckRollup, requiredContexts)
+    },
+    merge: { adminBypass: false },
+    logging: { secretsRedacted: true }
+  });
+
+  if (result.ok) return null;
+  return {
+    reason: `enforcement-${result.failures[0]?.rule || "blocked"}`,
+    failures: result.failures,
+    details: result.failures.map((failure) => `${failure.rule}: ${failure.message}`)
+  };
+}
+
+async function resolveExpectedWorkBaseBranch(repository) {
+  try {
+    await gh.request("GET", `/repos/${repoName(repository)}/git/ref/heads/${encodeURIComponent("dev")}`);
+    return "dev";
+  } catch (error) {
+    if (error.status !== 404) throw error;
+  }
+  const repo = await getRepository(gh, repository);
+  return repo.default_branch;
 }
 
 async function mergePullRequest(repository, pull) {

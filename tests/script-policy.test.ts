@@ -4,6 +4,8 @@ import test from "node:test";
 
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
 const dfLib: any = await import("../.github/scripts/df-lib.mjs");
+// @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+const dfEnforcement: any = await import("../.github/scripts/df-enforcement.mjs");
 
 const {
   assertAllowedRepo,
@@ -24,6 +26,12 @@ const {
   reconcileLabelDiff,
   taskClassFromLabels
 } = dfLib;
+const {
+  DEFAULT_ENFORCEMENT_RULES,
+  enforceRules,
+  mergeRuleConfigs,
+  normalizeEnforcementRules
+} = dfEnforcement;
 
 test("parsePrdItems creates stable df-prd markers from PRD milestones and loops", () => {
   const items = parsePrdItems([
@@ -254,6 +262,72 @@ test("parked repositories include the current owner exclusions", () => {
   assert.equal(isParkedRepo({ owner: "marius-patrik", repo: "fabrica" }), true);
   assert.throws(() => assertAllowedRepo({ owner: "marius-patrik", repo: "singularity" }), /parked/);
   assert.throws(() => assertAllowedRepo({ owner: "marius-patrik", repo: "life-support" }), /parked/);
+});
+
+test("enforcement rules provide declarative built-in gates and custom assertions", () => {
+  const ruleIds = DEFAULT_ENFORCEMENT_RULES.rules.map((rule: { id: string }) => rule.id);
+  assert.deepEqual(ruleIds, [
+    "never-merge-red",
+    "no-force-push",
+    "no-admin-bypass",
+    "secrets-never-logged",
+    "parked-repos-untouched",
+    "work-prs-target-dev"
+  ]);
+
+  const config = normalizeEnforcementRules(mergeRuleConfigs(DEFAULT_ENFORCEMENT_RULES, {
+    schemaVersion: 1,
+    rules: [
+      {
+        id: "custom-dev-only",
+        events: ["merge"],
+        assertions: [
+          {
+            fact: "pullRequest.baseRefName",
+            op: "equals",
+            value: "dev",
+            message: "PR must target dev."
+          }
+        ]
+      }
+    ]
+  }));
+
+  const failed = enforceRules(config, "merge", {
+    repository: {
+      parked: false,
+      lifecycleState: "active",
+      expectedWorkBaseBranch: "dev"
+    },
+    pullRequest: { baseRefName: "main" },
+    checks: {
+      allReportedChecksGreen: true,
+      requiredChecksGreen: true
+    },
+    merge: { adminBypass: false },
+    logging: { secretsRedacted: true }
+  });
+
+  assert.equal(failed.ok, false);
+  assert.ok(failed.failures.some((failure: { rule: string }) => failure.rule === "custom-dev-only"));
+  assert.ok(failed.failures.some((failure: { rule: string }) => failure.rule === "work-prs-target-dev"));
+});
+
+test("enforcement rule overrides can disable or replace default rules by id", () => {
+  const config = mergeRuleConfigs(DEFAULT_ENFORCEMENT_RULES, {
+    rules: [
+      { id: "no-force-push", enabled: false }
+    ]
+  });
+
+  const result = enforceRules(config, "dispatch", {
+    repository: { parked: false, lifecycleState: "active" },
+    git: { forcePush: true },
+    logging: { secretsRedacted: true }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.evaluated.includes("no-force-push"), false);
 });
 
 test("listActiveManagedRepos excludes archived, disabled, and non-active lifecycle repos", async () => {
@@ -582,6 +656,26 @@ test("df-sweep re-fetches checks immediately before direct merge and blocks red 
   assert.match(source, /Fresh merge gate check failed immediately before merge/);
   assert.match(source, /checksAreGreen\(mergeGate\.statusCheckRollup\)/);
   assert.doesNotMatch(source, /--admin/);
+});
+
+test("df-work and df-sweep load enforcement rules before privileged actions", async () => {
+  const worker = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const sweep = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const orchestrator = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+
+  assert.match(worker, /loadEnforcementRules\(\{ localRoot: CONTROL_ROOT, gh, repository: TARGET_REPO, ref: workBaseBranch \}\)/);
+  assert.match(worker, /assertEnforcement\(rules, "worker-preflight"/);
+  assert.match(worker, /git: \{ forcePush: false \}/);
+  assert.match(worker, /pullRequest: \{ baseRefName: workBaseBranch \}/);
+
+  assert.match(sweep, /mergeEnforcementFailure\(repository, mergeGate, requiredContexts\)/);
+  assert.match(sweep, /enforceRules\(rules, "merge"/);
+  assert.match(sweep, /merge: \{ adminBypass: false \}/);
+  assert.match(sweep, /allReportedChecksGreen: checksAreGreen\(pull\.statusCheckRollup\)/);
+  assert.match(sweep, /requiredChecksGreen: checksAreGreen\(pull\.statusCheckRollup, requiredContexts\)/);
+
+  assert.match(orchestrator, /loadEnforcementRules\(\{ localRoot: CONTROL_ROOT, gh, repository \}\)/);
+  assert.match(orchestrator, /assertEnforcement\(rules, "dispatch"/);
 });
 
 test("df-sweep requires explicit allowlist before merging PRs with no checks", async () => {
