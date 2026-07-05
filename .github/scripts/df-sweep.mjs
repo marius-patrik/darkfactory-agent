@@ -148,11 +148,6 @@ export async function considerPullRequest(repository, pull) {
   if (pull.isDraft) return { repo: repoName(repository), pr: ref, action: "skip", reason: "draft" };
   if (!isWorkerPullRequest(pull, repository)) return { repo: repoName(repository), pr: ref, action: "skip", reason: "not-worker-pr" };
 
-  const issueNumber = darkFactoryWorkerIssueNumber(pull);
-  if (issueNumber && (await isWorkerIssueBlocked(repository, issueNumber))) {
-    return { repo: repoName(repository), pr: ref, action: "skip", reason: "worker-issue-blocked" };
-  }
-
   if (!emptyCheckRollupHasSettled(pull)) {
     return { repo: repoName(repository), pr: ref, action: "skip", reason: "checks-not-reported-yet" };
   }
@@ -336,17 +331,6 @@ async function markWorkerIssueBlocked(repository, pull, reason, details = []) {
 async function hasSweepBlockedComment(repository, issueNumber, marker) {
   const comments = await gh.request("GET", `/repos/${repoName(repository)}/issues/${issueNumber}/comments?per_page=100`);
   return Array.isArray(comments) && comments.some((comment) => String(comment.body || "").includes(marker));
-}
-
-async function isWorkerIssueBlocked(repository, issueNumber) {
-  try {
-    const issue = await gh.request("GET", `/repos/${repoName(repository)}/issues/${issueNumber}`);
-    const labels = (issue.labels || []).map((label) => typeof label === "string" ? label : label?.name);
-    return labels.includes("df:blocked");
-  } catch (error) {
-    console.warn(`DarkFactory sweep could not read issue state for ${repoName(repository)}#${issueNumber}: ${error.message || String(error)}`);
-    return false;
-  }
 }
 
 async function replaceIssueLabels(repository, issueNumber, add, remove) {

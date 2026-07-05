@@ -11,6 +11,7 @@ import {
   cleanupTempRoot,
   createGithubClient,
   ensureLabels,
+  findOpenWorkerPullRequestForIssue,
   getRepository,
   preflightMergePolicy,
   parseRepo,
@@ -85,6 +86,32 @@ async function main() {
     console.warn(`Could not ensure labels in ${repoName(CONTROL_REPO)}: ${sanitize(error.message || String(error), TOKEN)}`);
   }
   await ensureLabels(gh, TARGET_REPO, WORK_LABELS);
+
+  const existingPullRequest = await findOpenWorkerPullRequestForIssue(gh, TARGET_REPO, TARGET_ISSUE_NUMBER);
+  if (existingPullRequest) {
+    ledger.status = "success";
+    ledger.pull_request = existingPullRequest.url;
+    ledger.actions.push({
+      action: "existing-worker-pr",
+      result: "noop",
+      url: existingPullRequest.url,
+      branch: existingPullRequest.headRefName
+    });
+    await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:running"], ["df:ready", "df:blocked", "df:done"]);
+    await createIssueComment(
+      TARGET_REPO,
+      TARGET_ISSUE_NUMBER,
+      [
+        `DarkFactory worker skipped \`${target}\` because an open worker PR already exists.`,
+        "",
+        `PR: ${existingPullRequest.url || `#${existingPullRequest.number}`}`,
+        `Branch: \`${existingPullRequest.headRefName || branch}\``,
+        "",
+        "No new worker run is needed; follow-through will evaluate the existing PR."
+      ].join("\n")
+    );
+    return;
+  }
 
   const mergePolicy = await preflightMergePolicy(gh, TARGET_REPO, workBaseBranch, repo);
   ledger.actions.push({ action: "preflight-merge-policy", result: mergePolicy });

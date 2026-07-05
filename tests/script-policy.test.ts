@@ -931,12 +931,21 @@ test("df-sweep filters explicit sweep repositories through lifecycle and GitHub 
   assert.match(source, /repo\.archived === true \|\| repo\.disabled === true/);
 });
 
-test("df-sweep skips open worker PRs whose linked issue is already blocked", async () => {
+test("df-work no-ops instead of blocking when an open worker PR already exists", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+
+  assert.match(source, /findOpenWorkerPullRequestForIssue\(gh, TARGET_REPO, TARGET_ISSUE_NUMBER\)/);
+  assert.match(source, /action: "existing-worker-pr"/);
+  assert.match(source, /result: "noop"/);
+  assert.match(source, /replaceIssueLabels\(TARGET_REPO, TARGET_ISSUE_NUMBER, \["df:running"\], \["df:ready", "df:blocked", "df:done"\]\)/);
+  assert.match(source, /No new worker run is needed; follow-through will evaluate the existing PR/);
+});
+
+test("df-sweep does not skip green worker PRs solely because the issue is blocked", async () => {
   const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /isWorkerIssueBlocked\(repository, issueNumber\)/);
-  assert.match(source, /worker-issue-blocked/);
-  assert.match(source, /labels\.includes\("df:blocked"\)/);
+  assert.doesNotMatch(source, /isWorkerIssueBlocked\(repository, issueNumber\)/);
+  assert.doesNotMatch(source, /worker-issue-blocked/);
 });
 
 test("df-sweep merges green app-authored dev worker PRs and blocks red ones", async () => {
@@ -1055,6 +1064,61 @@ test("df-sweep merges green app-authored dev worker PRs even when the worker iss
   assert.equal(calls.some((call) => call.method === "POST" && call.pathName === "/repos/marius-patrik/active/issues/1349/labels"), false);
 });
 
+test("df-sweep merges green app-authored worker PRs even when the worker issue is blocked", async () => {
+  const repository = { owner: "marius-patrik", repo: "active" };
+  const pull = workerPull({ number: 8, checkConclusion: "SUCCESS", author: "app/darkfactory-agent" });
+  const calls: Array<{ method: string; pathName: string; body?: any }> = [];
+
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    dataRepo: "marius-patrik/darkfactory-data",
+    gh: {
+      graphql: async () => ({
+        repository: {
+          pullRequest: {
+            ...pull,
+            id: "PR_8",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: {
+              contexts: {
+                nodes: pull.statusCheckRollup
+              }
+            }
+          }
+        }
+      }),
+      request: async (method: string, pathName: string, body?: any) => {
+        calls.push({ method, pathName, body });
+        if (method === "GET" && pathName.endsWith("/protection")) {
+          const error: Error & { status?: number } = new Error("Branch not protected");
+          error.status = 404;
+          throw error;
+        }
+        if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/8") {
+          return { labels: [{ name: "df:blocked" }] };
+        }
+        if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/8/comments?per_page=100") {
+          return [];
+        }
+        if (method === "PUT" && pathName === "/repos/marius-patrik/active/pulls/8/merge") {
+          return { sha: "merged-blocked-issue-sha" };
+        }
+        if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/8/comments") return {};
+        if (method === "PATCH" && pathName === "/repos/marius-patrik/active/issues/8") return {};
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+
+  const result = await considerSweepPullRequest(repository, pull);
+
+  assert.equal(result.action, "merge");
+  assert.equal(result.base, "dev");
+  assert.equal(result.sha, "merged-blocked-issue-sha");
+  assert.ok(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/8/merge"));
+  assert.equal(calls.some((call) => call.method === "POST" && call.pathName === "/repos/marius-patrik/active/issues/8/labels"), false);
+});
+
 test("df-orchestrate workflow validates trusted refs before privileged tokens", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-orchestrate.yml", import.meta.url), "utf8");
   const gate = workflow.indexOf("Validate trusted control ref");
@@ -1097,7 +1161,7 @@ test("df-orchestrate claims ready issues before dispatching workers", async () =
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   const preflightIndex = source.indexOf("const mergePolicy = await preflightMergePolicy");
-  const claimIndex = source.indexOf("replaceIssueLabels(gh, repository, issueNumber, [\"df:running\"], [\"df:ready\"])");
+  const claimIndex = source.indexOf("replaceIssueLabels(gh, repository, issueNumber, [\"df:running\"], [\"df:ready\"])", preflightIndex);
   const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
   assert.notEqual(preflightIndex, -1);
   assert.notEqual(claimIndex, -1);

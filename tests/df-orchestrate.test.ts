@@ -8,6 +8,16 @@ test("orchestrator dispatches open df:ready issues in active managed repos", asy
   const notFound = Object.assign(new Error("not found"), { status: 404 });
 
   const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: []
+          }
+        }
+      };
+    },
     async request(method: string, path: string, body?: unknown) {
       calls.push({ method, path, body });
 
@@ -66,4 +76,67 @@ test("orchestrator dispatches open df:ready issues in active managed repos", asy
     calls.find((call) => call.method === "POST" && call.path.endsWith("/actions/workflows/df-work.yml/dispatches"))?.body,
     { ref: "main", inputs: { repo: "marius-patrik/example", issue_number: "42" } }
   );
+});
+
+test("orchestrator does not dispatch issues that already have an open worker PR", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-existing-pr-test");
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                id: "PR_21",
+                number: 21,
+                title: "Worker PR",
+                body: "<!-- dark-factory:worker-pr issue=8 -->\n\nCloses #8",
+                url: "https://github.com/marius-patrik/example/pull/21",
+                headRefName: "df/8-worker",
+                baseRefName: "main",
+                headRepository: { owner: { login: "marius-patrik" }, name: "example" },
+                author: { login: "mp-agents[bot]" }
+              }
+            ]
+          }
+        }
+      };
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&labels=df%3Aready&per_page=100&page=1") {
+        return [{ number: 8, labels: [{ name: "df:ready" }] }];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&labels=df%3Aready&per_page=100&page=2") {
+        return [];
+      }
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/8/labels") return {};
+      if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/8/labels/df%3Aready") return {};
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    writeLedger: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.dispatched, []);
+  assert.equal(calls.some((call) => call.path.endsWith("/actions/workflows/df-work.yml/dispatches")), false);
+  assert.deepEqual(
+    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/8/labels")?.body,
+    { labels: ["df:running"] }
+  );
+  assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/8/labels/df%3Aready"));
 });

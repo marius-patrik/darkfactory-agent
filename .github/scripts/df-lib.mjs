@@ -237,6 +237,53 @@ export function isDarkFactoryWorkerPullRequest(pull, repository) {
   );
 }
 
+export async function findOpenWorkerPullRequestForIssue(gh, repository, issueNumber) {
+  const query = `
+    query WorkerPulls($owner: String!, $repo: String!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            number
+            title
+            body
+            url
+            headRefName
+            baseRefName
+            headRepository {
+              name
+              owner { login }
+            }
+            author { login }
+          }
+        }
+      }
+    }`;
+  let cursor = null;
+
+  for (let page = 1; page <= 20; page += 1) {
+    const data = await gh.graphql(query, { owner: repository.owner, repo: repository.repo, cursor });
+    const connection = data.repository.pullRequests;
+    const match = connection.nodes.find((pull) => {
+      return (
+        pull.headRefName?.startsWith(`df/${issueNumber}-`) &&
+        darkFactoryWorkerIssueNumber(pull) === issueNumber &&
+        isDarkFactoryWorkerPullRequest(pull, repository)
+      );
+    });
+    if (match) return match;
+
+    if (!connection.pageInfo?.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+
+  return null;
+}
+
 export function darkFactoryWorkerIssueNumber(pull) {
   const provenance = `${pull.title || ""}\n${pull.body || ""}`;
   const marker = provenance.match(/<!--\s*dark-factory:worker-pr\s+issue=(\d+)\s*-->/i);

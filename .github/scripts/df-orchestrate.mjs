@@ -6,6 +6,7 @@ import {
   assertAllowedRepo,
   createGithubClient,
   ensureLabels,
+  findOpenWorkerPullRequestForIssue,
   getRepository,
   listActiveManagedRepos,
   parseRepo,
@@ -118,6 +119,12 @@ export async function listReadyIssues(gh, repository) {
 }
 
 export async function dispatchWorker(gh, controlRepo, repository, issueNumber) {
+  const existingPullRequest = await findOpenWorkerPullRequestForIssue(gh, repository, issueNumber);
+  if (existingPullRequest) {
+    await replaceIssueLabels(gh, repository, issueNumber, ["df:running"], ["df:ready"]);
+    return false;
+  }
+
   const repo = await getRepository(gh, repository);
   const workBaseBranch = await resolveWorkBaseBranch(gh, repository, repo.default_branch);
   const mergePolicy = await preflightMergePolicy(gh, repository, workBaseBranch, repo);
