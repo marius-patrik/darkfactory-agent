@@ -505,6 +505,17 @@ test("df-sweep requires explicit allowlist before merging PRs with no checks", a
   assert.match(source, /no-checks-not-allowed/);
 });
 
+test("df-sweep filters explicit sweep repositories through lifecycle and GitHub writability", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /if \(configured\.length\) return configured/);
+  assert.match(source, /filterConfiguredActiveManagedRepos\(configured\)/);
+  assert.match(source, /readManagedRepoRegistry/);
+  assert.match(source, /managedRepoLifecycleState/);
+  assert.match(source, /getRepository\(gh, repository\)/);
+  assert.match(source, /repo\.archived === true \|\| repo\.disabled === true/);
+});
+
 test("df-sweep skips open worker PRs whose linked issue is already blocked", async () => {
   const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
 

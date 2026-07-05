@@ -6,11 +6,15 @@ import {
   createGithubClient,
   darkFactoryWorkerIssueNumber,
   extractClosingIssueNumbers,
+  getRepository,
   getRequiredStatusCheckContexts,
   isDarkFactoryWorkerPullRequest as isWorkerPullRequest,
   isParkedRepo,
   listActiveManagedRepos,
+  managedRepoLifecycleState,
+  normalizedRepoName,
   parseRepo,
+  readManagedRepoRegistry,
   repoName,
   requiredEnv,
   warnReadOnlyRepository,
@@ -396,9 +400,43 @@ async function hasDevMergeComment(repository, issueNumber, pullUrl) {
 
 async function targetRepositories() {
   const configured = repoList(process.env.DF_SWEEP_REPOS || "");
-  if (configured.length) return configured;
+  if (configured.length) return await filterConfiguredActiveManagedRepos(configured);
 
   return await listActiveManagedRepos(gh, CONTROL_REPO);
+}
+
+async function filterConfiguredActiveManagedRepos(configured) {
+  const registry = await readManagedRepoRegistry();
+  const active = [];
+
+  for (const repository of configured) {
+    if (repository.owner !== CONTROL_REPO.owner) {
+      console.warn(`DarkFactory skipped configured sweep repository ${repoName(repository)} because it is outside ${CONTROL_REPO.owner}.`);
+      continue;
+    }
+
+    const state = managedRepoLifecycleState(repository, registry);
+    if (state !== "active") {
+      console.warn(`DarkFactory skipped configured sweep repository ${repoName(repository)} because managed lifecycle state is '${state}'.`);
+      continue;
+    }
+
+    try {
+      const repo = await getRepository(gh, repository);
+      if (repo.archived === true || repo.disabled === true) {
+        console.warn(`DarkFactory skipped configured sweep repository ${repoName(repository)} because GitHub reports archived=${repo.archived === true} disabled=${repo.disabled === true}.`);
+        continue;
+      }
+    } catch (error) {
+      if (warnReadOnlyRepository(repository, error, "configured follow-through")) continue;
+      throw error;
+    }
+
+    active.push(repository);
+  }
+
+  active.sort((a, b) => normalizedRepoName(a).localeCompare(normalizedRepoName(b)));
+  return active;
 }
 
 function repoList(value) {
