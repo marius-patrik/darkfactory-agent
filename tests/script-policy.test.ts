@@ -503,6 +503,7 @@ test("df-fix script uses active managed repos and fresh merge gates", async () =
   assert.match(source, /df:ask-owner/);
   assert.match(source, /const mergeGate = await getPullRequestMergeGate/);
   assert.match(source, /checksAreGreen\(mergeGate\.statusCheckRollup, requiredContexts\)/);
+  assert.match(source, /sha: mergeGate\.headRefOid/);
   assert.match(source, /merge_method: "squash"/);
   assert.match(source, /targetSnapshot.*\/target:ro/);
   assert.doesNotMatch(source, /--admin/);

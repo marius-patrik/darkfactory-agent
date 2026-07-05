@@ -827,7 +827,8 @@ export async function mergeGreenPullRequest(gh, repository, pull, requiredContex
 
   const merged = await gh.request("PUT", `/repos/${repoName(repository)}/pulls/${pull.number}/merge`, {
     commit_title: mergeGate.title,
-    merge_method: "squash"
+    merge_method: "squash",
+    sha: mergeGate.headRefOid
   });
   await closeIssuesIfDevMerge(gh, repository, mergeGate);
   return {
@@ -869,6 +870,7 @@ async function getPullRequestMergeGate(gh, repository, pullNumber) {
           mergeable
           baseRefName
           headRefName
+          headRefOid
           headRepository {
             name
             owner { login }
