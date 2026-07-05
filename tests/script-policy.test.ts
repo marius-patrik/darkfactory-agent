@@ -994,6 +994,61 @@ test("df-sweep merges green app-authored dev worker PRs and blocks red ones", as
   assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/41/merge"), false);
 });
 
+test("df-sweep merges green app-authored dev worker PRs even when the worker issue is done", async () => {
+  const repository = { owner: "marius-patrik", repo: "active" };
+  const pull = workerPull({ number: 1349, checkConclusion: "SUCCESS", author: "app/darkfactory-agent" });
+  const calls: Array<{ method: string; pathName: string; body?: any }> = [];
+
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    dataRepo: "marius-patrik/darkfactory-data",
+    gh: {
+      graphql: async () => ({
+        repository: {
+          pullRequest: {
+            ...pull,
+            id: "PR_1349",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: {
+              contexts: {
+                nodes: pull.statusCheckRollup
+              }
+            }
+          }
+        }
+      }),
+      request: async (method: string, pathName: string, body?: any) => {
+        calls.push({ method, pathName, body });
+        if (method === "GET" && pathName.endsWith("/protection")) {
+          const error: Error & { status?: number } = new Error("Branch not protected");
+          error.status = 404;
+          throw error;
+        }
+        if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/1349") {
+          return { labels: [{ name: "df:done" }] };
+        }
+        if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/1349/comments?per_page=100") {
+          return [];
+        }
+        if (method === "PUT" && pathName === "/repos/marius-patrik/active/pulls/1349/merge") {
+          return { sha: "merged-done-issue-sha" };
+        }
+        if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/1349/comments") return {};
+        if (method === "PATCH" && pathName === "/repos/marius-patrik/active/issues/1349") return {};
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+
+  const result = await considerSweepPullRequest(repository, pull);
+
+  assert.equal(result.action, "merge");
+  assert.equal(result.base, "dev");
+  assert.equal(result.sha, "merged-done-issue-sha");
+  assert.ok(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/1349/merge"));
+  assert.equal(calls.some((call) => call.method === "POST" && call.pathName === "/repos/marius-patrik/active/issues/1349/labels"), false);
+});
+
 test("df-orchestrate workflow validates trusted refs before privileged tokens", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-orchestrate.yml", import.meta.url), "utf8");
   const gate = workflow.indexOf("Validate trusted control ref");

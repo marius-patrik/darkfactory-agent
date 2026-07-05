@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 const MODE = process.env.DF_FOLLOW_THROUGH_MODE ?? "sweep";
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
 const DEFAULT_EXCLUDED_REPOS = "";
+const WORK_BRANCH = process.env.DF_WORK_BRANCH || "dev";
 const NO_CHECK_ALLOWLIST = new Set(
   repoList(process.env.DF_ALLOW_NO_CHECK_REPOS || "").map((repo) => repoName(repo).toLowerCase())
 );
@@ -89,9 +90,23 @@ async function main() {
     try {
       assertAllowedRepo(repository);
       const pulls = await listOpenPullRequests(repository);
+      console.log(`DarkFactory sweep listed ${pulls.length} open ${WORK_BRANCH} worker candidate PRs for ${repoName(repository)}.`);
       for (const pull of pulls) {
-        const result = await considerPullRequest(repository, pull);
-        ledger.actions.push(result);
+        try {
+          const result = await considerPullRequest(repository, pull);
+          console.log(formatPullDecision(repository, pull, result));
+          ledger.actions.push(result);
+        } catch (error) {
+          const result = {
+            repo: repoName(repository),
+            pr: `${repoName(repository)}#${pull.number}`,
+            action: "error",
+            reason: "consider-pull-request-failed",
+            error: error.message || String(error)
+          };
+          console.error(formatPullDecision(repository, pull, result));
+          ledger.actions.push(result);
+        }
       }
       const closureResults = await closeRecentlyMergedDevIssues(repository);
       ledger.actions.push(...closureResults);
@@ -107,6 +122,24 @@ async function main() {
   await writeLedger("df-sweep", "sweep", ledger);
   const merged = ledger.actions.filter((action) => action.action === "merge" || action.action === "enable-automerge");
   console.log(`DarkFactory sweep processed ${repos.length} repos; merge actions: ${merged.length}.`);
+}
+
+function formatPullDecision(repository, pull, result) {
+  const decision = result.action === "skip"
+    ? `skip:${result.reason || "unknown"}`
+    : result.action === "error"
+      ? `error:${result.reason || "unknown"}`
+      : result.action;
+  const error = result.error ? ` error=${String(result.error).replace(/\s+/g, " ")}` : "";
+  return [
+    `DarkFactory sweep decision ${repoName(repository)}#${pull.number}`,
+    `base=${pull.baseRefName || "unknown"}`,
+    `head=${pull.headRefName || "unknown"}`,
+    `mergeable=${pull.mergeable || "unknown"}`,
+    `draft=${pull.isDraft === true}`,
+    `checks=${checksSummary(pull.statusCheckRollup)}`,
+    `decision=${decision}${error}`
+  ].join(" ");
 }
 
 export async function considerPullRequest(repository, pull) {
@@ -257,11 +290,23 @@ function canDirectMergeAfterAutomergeFailure(reason) {
 }
 
 async function mergePullRequest(repository, pull) {
-  const merged = await gh.request("PUT", `/repos/${repoName(repository)}/pulls/${pull.number}/merge`, {
-    commit_title: pull.title,
-    merge_method: "squash"
-  });
-  await closeIssuesIfDevMerge(repository, pull);
+  const ref = `${repoName(repository)}#${pull.number}`;
+  let merged;
+  try {
+    merged = await gh.request("PUT", `/repos/${repoName(repository)}/pulls/${pull.number}/merge`, {
+      commit_title: pull.title,
+      merge_method: "squash"
+    });
+  } catch (error) {
+    console.error(`DarkFactory sweep merge error ${ref}: ${error.message || String(error)}`);
+    throw error;
+  }
+
+  try {
+    await closeIssuesIfDevMerge(repository, pull);
+  } catch (error) {
+    console.warn(`DarkFactory sweep dev-closure warning ${ref}: ${error.message || String(error)}`);
+  }
   return merged;
 }
 
@@ -465,9 +510,13 @@ function repoList(value) {
 
 async function listOpenPullRequests(repository) {
   const query = `
-    query Pulls($owner: String!, $repo: String!) {
+    query Pulls($owner: String!, $repo: String!, $cursor: String) {
       repository(owner: $owner, name: $repo) {
-        pullRequests(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
           nodes {
             id
             number
@@ -505,11 +554,24 @@ async function listOpenPullRequests(repository) {
         }
       }
     }`;
-  const data = await gh.graphql(query, { owner: repository.owner, repo: repository.repo });
-  return data.repository.pullRequests.nodes.map((pull) => ({
-    ...pull,
-    statusCheckRollup: pull.statusCheckRollup?.contexts?.nodes || []
-  }));
+  const pulls = [];
+  let cursor = null;
+
+  for (let page = 1; page <= 20; page += 1) {
+    const data = await gh.graphql(query, { owner: repository.owner, repo: repository.repo, cursor });
+    const connection = data.repository.pullRequests;
+    pulls.push(...connection.nodes.map((pull) => ({
+      ...pull,
+      statusCheckRollup: pull.statusCheckRollup?.contexts?.nodes || []
+    })));
+
+    if (!connection.pageInfo?.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+
+  return pulls.filter((pull) => {
+    return pull.baseRefName === WORK_BRANCH && String(pull.headRefName || "").startsWith("df/");
+  });
 }
 
 async function getPullRequestMergeGate(repository, pullNumber) {
