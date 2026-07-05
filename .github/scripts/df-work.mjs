@@ -12,6 +12,7 @@ import {
   createGithubClient,
   ensureLabels,
   getRepository,
+  preflightMergePolicy,
   parseRepo,
   repoName,
   requiredEnv,
@@ -84,7 +85,7 @@ async function main() {
   }
   await ensureLabels(gh, TARGET_REPO, WORK_LABELS);
 
-  const mergePolicy = preflightMergePolicy(TARGET_REPO, workBaseBranch, repo);
+  const mergePolicy = await preflightMergePolicy(gh, TARGET_REPO, workBaseBranch, repo);
   ledger.actions.push({ action: "preflight-merge-policy", result: mergePolicy });
 
   try {
@@ -210,24 +211,6 @@ async function getIssue(repository, issueNumber) {
     throw new Error(`${repoName(repository)}#${issueNumber} is not open.`);
   }
   return issue;
-}
-
-function preflightMergePolicy(repository, baseBranch, repo) {
-  const autoMergeSupported = repo.allow_auto_merge === true;
-
-  if (autoMergeSupported) {
-    return {
-      useAutomerge: true,
-      autoMergeSupported,
-      summary: `auto-merge is available for \`${baseBranch}\`; GitHub automerge will be attempted`
-    };
-  }
-
-  return {
-    useAutomerge: false,
-    autoMergeSupported,
-    summary: `no branch protection on \`${baseBranch}\`; green-PR sweep will squash-merge directly after checks`
-  };
 }
 
 async function resolveWorkBaseBranch(repository, defaultBranch) {

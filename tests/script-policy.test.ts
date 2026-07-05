@@ -10,6 +10,7 @@ const {
   checksAreGreen,
   cleanupTempRoot,
   extractClosingIssueNumbers,
+  getBranchProtection,
   getRequiredStatusCheckContexts,
   darkFactoryWorkerIssueNumber,
   isDarkFactoryWorkerPullRequest,
@@ -17,6 +18,7 @@ const {
   listActiveManagedRepos,
   parsePrdItems,
   plannedIssueLabelDiff,
+  preflightMergePolicy,
   prdIssueBody,
   reconcileLabelDiff,
   taskClassFromLabels
@@ -179,6 +181,40 @@ test("getRequiredStatusCheckContexts treats inaccessible branch protection as no
   );
 
   assert.deepEqual(contexts, []);
+});
+
+test("getBranchProtection treats 403 and 404 as not configured without swallowing other errors", async () => {
+  for (const status of [403, 404]) {
+    const result = await getBranchProtection(
+      {
+        request: async () => {
+          const error: Error & { status?: number } = new Error(`${status} branch protection unavailable`);
+          error.status = status;
+          throw error;
+        }
+      },
+      { owner: "marius-patrik", repo: "example" },
+      "dev"
+    );
+
+    assert.equal(result.configured, false);
+    assert.equal(result.status, status);
+  }
+
+  const serverError: Error & { status?: number } = new Error("server error");
+  serverError.status = 500;
+  await assert.rejects(
+    () => getBranchProtection(
+      {
+        request: async () => {
+          throw serverError;
+        }
+      },
+      { owner: "marius-patrik", repo: "example" },
+      "dev"
+    ),
+    /server error/
+  );
 });
 
 test("extractClosingIssueNumbers deduplicates close references", () => {
@@ -407,15 +443,38 @@ test("df-follow-through workflow validates trusted refs before privileged tokens
   assert.doesNotMatch(workflow, /github\.ref_name|DARK_FACTORY_CONTROL_REF/);
 });
 
-test("df-work does not require branch protection or auto-merge during merge-policy preflight", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+test("df-work merge-policy preflight uses direct sweep when branch protection is absent or unreadable", async () => {
+  const repository = { owner: "marius-patrik", repo: "example" };
+  const unreadablePolicy = await preflightMergePolicy(
+    {
+      request: async () => {
+        const error: Error & { status?: number } = new Error("Resource not accessible by integration");
+        error.status = 403;
+        throw error;
+      }
+    },
+    repository,
+    "dev",
+    { allow_auto_merge: true }
+  );
 
-  assert.match(source, /const autoMergeSupported = repo\.allow_auto_merge === true/);
-  assert.match(source, /autoMergeSupported/);
-  assert.doesNotMatch(source, /branches\/\$\{repoName\(repository\)\}\/branches/);
-  assert.doesNotMatch(source, /does not allow auto-merge/);
-  assert.doesNotMatch(source, /getBranchProtection/);
-  assert.match(source, /green-PR sweep will squash-merge directly after checks/);
+  assert.equal(unreadablePolicy.useAutomerge, false);
+  assert.equal(unreadablePolicy.autoMergeSupported, true);
+  assert.equal(unreadablePolicy.branchProtection.configured, false);
+  assert.match(unreadablePolicy.summary, /no branch protection on `dev`/);
+  assert.match(unreadablePolicy.summary, /green-PR sweep will squash-merge directly after checks/);
+
+  const protectedPolicy = await preflightMergePolicy(
+    {
+      request: async () => ({ required_status_checks: { contexts: ["validate"] } })
+    },
+    repository,
+    "dev",
+    { allow_auto_merge: true }
+  );
+
+  assert.equal(protectedPolicy.useAutomerge, true);
+  assert.equal(protectedPolicy.branchProtection.configured, true);
 });
 
 test("df-work workflow does not expose privileged worker triggers in managed repositories", async () => {

@@ -314,6 +314,55 @@ export async function getRepository(gh, repository) {
   return await gh.request("GET", `/repos/${repoName(repository)}`);
 }
 
+export async function getBranchProtection(gh, repository, branch) {
+  try {
+    const data = await gh.request(
+      "GET",
+      `/repos/${repoName(repository)}/branches/${encodeURIComponent(branch)}/protection`
+    );
+    return { configured: true, data };
+  } catch (error) {
+    if (error.status === 403 || error.status === 404) {
+      return {
+        configured: false,
+        status: error.status,
+        reason: error.message || String(error)
+      };
+    }
+    throw error;
+  }
+}
+
+export async function preflightMergePolicy(gh, repository, baseBranch, repo) {
+  const branchProtection = await getBranchProtection(gh, repository, baseBranch);
+  const autoMergeSupported = repo.allow_auto_merge === true;
+
+  if (!branchProtection.configured) {
+    return {
+      useAutomerge: false,
+      autoMergeSupported,
+      branchProtection,
+      summary: `no branch protection on \`${baseBranch}\`; green-PR sweep will squash-merge directly after checks`
+    };
+  }
+
+  if (autoMergeSupported) {
+    return {
+      useAutomerge: true,
+      autoMergeSupported,
+      branchProtection,
+      summary: `auto-merge is available for \`${baseBranch}\`; GitHub automerge will be attempted`
+    };
+  }
+
+  return {
+    useAutomerge: false,
+    autoMergeSupported,
+    branchProtection,
+    summary: `branch protection is configured on \`${baseBranch}\`; green-PR sweep will squash-merge after checks`
+  };
+}
+
 export async function getRequiredStatusCheckContexts(gh, repository, branch) {
   try {
     const data = await gh.request(
