@@ -1,6 +1,11 @@
 name: DarkFactory Follow Through
 
 on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - dev
   schedule:
     - cron: "41 */2 * * *"
   workflow_dispatch:
@@ -24,10 +29,18 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       ${{
-        github.repository == 'marius-patrik/agent-darkfactory' &&
         (
-          github.event_name == 'schedule' ||
-          github.event_name == 'workflow_dispatch'
+          github.event_name == 'pull_request' &&
+          github.repository_owner == 'marius-patrik' &&
+          github.event.pull_request.merged == true &&
+          github.event.pull_request.base.ref == 'dev'
+        ) ||
+        (
+          github.repository == 'marius-patrik/agent-darkfactory' &&
+          (
+            github.event_name == 'schedule' ||
+            github.event_name == 'workflow_dispatch'
+          )
         )
       }}
     permissions:
@@ -40,29 +53,46 @@ jobs:
       - name: Validate trusted control ref
         shell: bash
         run: |
-          # Privileged follow-through mints an installation token, so it only
-          # runs from the canonical control repository's protected default branch.
+          if [[ "${GITHUB_REPOSITORY_OWNER}" != "marius-patrik" ]]; then
+            echo "::error::DarkFactory follow-through can only run in the marius-patrik owner."
+            exit 1
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            # Pull-request closure runs in the target repository with its
+            # repository token and only closes issues for merged work PRs to dev.
+            if [[ "${DF_EVENT_PR_MERGED}" != "true" || "${DF_EVENT_PR_BASE}" != "dev" ]]; then
+              echo "::error::DarkFactory dev-merge closure only runs for merged pull requests targeting dev."
+              exit 1
+            fi
+            exit 0
+          fi
+
+          # Privileged scheduled/manual follow-through mints an installation
+          # token, so it only runs from the canonical control repository's
+          # protected integration branch.
           if [[ "${GITHUB_REPOSITORY}" != "marius-patrik/agent-darkfactory" ]]; then
             echo "::error::DarkFactory privileged follow-through can only run from marius-patrik/agent-darkfactory."
             exit 1
           fi
 
-          # Scheduled and workflow_dispatch events reliably set GITHUB_REF; the
-          # immutable branch ref is the trusted gate before minting the app token.
-          if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
-            echo "::error::DarkFactory privileged follow-through can only run from refs/heads/main."
+          if [[ "${GITHUB_REF:-}" != "refs/heads/dev" ]]; then
+            echo "::error::DarkFactory privileged follow-through can only run from refs/heads/dev."
             exit 1
           fi
 
-          if [[ "${GITHUB_REF_TYPE:-}" == "branch" && "${GITHUB_REF_NAME:-}" != "main" ]]; then
+          if [[ "${GITHUB_REF_TYPE:-}" == "branch" && "${GITHUB_REF_NAME:-}" != "dev" ]]; then
             echo "::error::DarkFactory privileged follow-through branch mismatch."
             exit 1
           fi
+        env:
+          DF_EVENT_PR_MERGED: ${{ github.event.pull_request.merged }}
+          DF_EVENT_PR_BASE: ${{ github.event.pull_request.base.ref }}
 
       - name: Checkout DarkFactory from this repository
         uses: actions/checkout@v4
         with:
-          # Pin control scripts to the exact trusted event commit before any
+          # Pin scripts to the exact trusted event commit before any
           # installation token is minted.
           ref: ${{ github.sha }}
           # checkout at workspace root
@@ -70,6 +100,7 @@ jobs:
 
       - name: Mint mp-agents installation token
         id: app-token
+        if: github.event_name != 'pull_request'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.DARK_FACTORY_APP_ID }}
@@ -82,9 +113,9 @@ jobs:
 
       - name: Run follow-through
         env:
-          DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
-          DF_CONTROL_REPO: ${{ github.repository }}
-          DF_FOLLOW_THROUGH_MODE: sweep
+          DARK_FACTORY_TOKEN: ${{ github.event_name == 'pull_request' && github.token || steps.app-token.outputs.token }}
+          DF_CONTROL_REPO: marius-patrik/agent-darkfactory
+          DF_FOLLOW_THROUGH_MODE: ${{ github.event_name == 'pull_request' && 'dev-merge' || 'sweep' }}
           DF_SWEEP_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.repos || '' }}
           DF_SWEEP_EXCLUDE_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.exclude_repos || 'marius-patrik/agents-harness' }}
           DF_ALLOW_NO_CHECK_REPOS: ${{ vars.DF_ALLOW_NO_CHECK_REPOS }}

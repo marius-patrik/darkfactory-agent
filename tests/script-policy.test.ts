@@ -456,13 +456,29 @@ test("df-follow-through workflow validates trusted refs before privileged tokens
   assert.ok(checkout < token);
   assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.match(workflow, /GITHUB_REPOSITORY/);
-  assert.match(workflow, /GITHUB_REF_NAME.*main/);
-  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
+  assert.match(workflow, /GITHUB_REF_NAME.*dev/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/dev/);
   assert.match(workflow, /permission-contents:\s+write/);
   assert.match(workflow, /permission-issues:\s+write/);
   assert.match(workflow, /permission-pull-requests:\s+write/);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
-  assert.doesNotMatch(workflow, /github\.ref_name|DARK_FACTORY_CONTROL_REF/);
+  assert.doesNotMatch(workflow, /github\.ref_name|DARK_FACTORY_CONTROL_REF|refs\/heads\/main/);
+});
+
+test("df-follow-through workflow closes work issues on merged dev pull requests without app secrets", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-follow-through.yml", import.meta.url), "utf8");
+
+  assert.match(workflow, /^\s+pull_request:\s*$/m);
+  assert.match(workflow, /^\s+types:\s*$/m);
+  assert.match(workflow, /^\s+-\s+closed\s*$/m);
+  assert.match(workflow, /^\s+branches:\s*$/m);
+  assert.match(workflow, /^\s+-\s+dev\s*$/m);
+  assert.match(workflow, /github\.event\.pull_request\.merged == true/);
+  assert.match(workflow, /github\.event\.pull_request\.base\.ref == 'dev'/);
+  assert.match(workflow, /if:\s+github\.event_name != 'pull_request'/);
+  assert.match(workflow, /DARK_FACTORY_TOKEN: \$\{\{ github\.event_name == 'pull_request' && github\.token \|\| steps\.app-token\.outputs\.token \}\}/);
+  assert.match(workflow, /DF_FOLLOW_THROUGH_MODE: \$\{\{ github\.event_name == 'pull_request' && 'dev-merge' \|\| 'sweep' \}\}/);
+  assert.match(workflow, /DF_CONTROL_REPO: marius-patrik\/agent-darkfactory/);
 });
 
 test("df-work merge-policy preflight uses direct sweep when branch protection is absent or unreadable", async () => {
