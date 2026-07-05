@@ -496,6 +496,7 @@ test("df-fix script uses active managed repos and fresh merge gates", async () =
   assert.match(source, /merge_method: "squash"/);
   assert.doesNotMatch(source, /--admin/);
   assert.doesNotMatch(source, /danger-full-access/);
+  assert.doesNotMatch(source, /path\.join\(worktree, "\.darkfactory"/);
 });
 
 test("df-work merge-policy preflight uses direct sweep when branch protection is absent or unreadable", async () => {

@@ -296,7 +296,7 @@ async function fixPullRequest(gh, repository, pull, classification, codeAuthJson
 
     const summary = await readOptional(path.join(promptWorkspace, ".darkfactory", "df-worker-summary.md"));
     const patch = await readOptional(path.join(promptWorkspace, ".darkfactory", "df-fix.patch"));
-    const appliedPatch = await applyFixPatch(worktree, patch, token);
+    const appliedPatch = await applyFixPatch(worktree, path.join(tempRoot, "df-fix.patch"), patch, token);
 
     const changed = gitOutput(["status", "--porcelain"], worktree, token);
     const round = classification.round;
@@ -463,13 +463,10 @@ async function getPullRequestDiff(repository, pullNumber, token) {
   }
 }
 
-async function applyFixPatch(worktree, patch, token) {
+async function applyFixPatch(worktree, patchPath, patch, token) {
   const trimmed = String(patch || "").trim();
   if (!trimmed) return false;
 
-  const scratchDir = path.join(worktree, ".darkfactory");
-  await mkdir(scratchDir, { recursive: true });
-  const patchPath = path.join(scratchDir, "df-fix.patch");
   await writeFile(patchPath, `${trimmed}\n`);
   try {
     runGit(["apply", "--3way", "--whitespace=fix", patchPath], worktree, token);
@@ -784,11 +781,6 @@ function runCodexWorker(worktree, codexHome, effort, token) {
     process.cwd(),
     token
   );
-}
-
-async function removeWorkerScratch(worktree) {
-  await rm(path.join(worktree, ".darkfactory", "df-task-brief.md"), { force: true });
-  await rm(path.join(worktree, ".darkfactory", "df-worker-summary.md"), { force: true });
 }
 
 async function readOptional(filePath) {
