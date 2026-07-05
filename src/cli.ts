@@ -2,6 +2,7 @@
 import "dotenv/config";
 
 import { App } from "@octokit/app";
+import { Octokit } from "@octokit/core";
 import { createBot } from "./bot.js";
 import { loadAppCredentials, loadConfig } from "./config.js";
 import { ensureManagedRepositorySetup } from "./managed-sync.js";
@@ -11,6 +12,14 @@ import {
   parseRunnerCommand,
   type RunnerStatus
 } from "./runners.js";
+import {
+  CONTROL_OWNER,
+  CONTROL_REPO,
+  DATA_REPO,
+  buildStatusReport,
+  formatStatusReport,
+  type GitHubRequester
+} from "./status.js";
 import { createWebhookServer } from "./server.js";
 
 export async function runCli(args = process.argv.slice(2)): Promise<void> {
@@ -38,6 +47,11 @@ export async function runCli(args = process.argv.slice(2)): Promise<void> {
 
   if (command === "runners") {
     await runRunners(args.slice(1));
+    return;
+  }
+
+  if (command === "status") {
+    await runStatus(args.slice(1));
     return;
   }
 
@@ -93,6 +107,63 @@ async function syncManagedRepositories(): Promise<void> {
   }
 
   console.log(`Processed ${count} installed repositories.`);
+}
+
+async function runStatus(args: string[]): Promise<void> {
+  const json = args.includes("--json");
+  const credentials = loadAppCredentials();
+  const app = new App({
+    appId: credentials.appId,
+    privateKey: credentials.privateKey
+  });
+  const octokit = await getInstallationOctokit(app, CONTROL_OWNER);
+  const requester = createOctokitRequester(octokit);
+  const report = await buildStatusReport(requester, {
+    controlOwner: CONTROL_OWNER,
+    controlRepo: CONTROL_REPO,
+    dataRepo: DATA_REPO
+  });
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(formatStatusReport(report));
+  }
+}
+
+async function getInstallationOctokit(app: App, owner: string): Promise<Octokit> {
+  const { data } = await app.octokit.request("GET /app/installations");
+
+  if (!Array.isArray(data)) {
+    throw new Error("GitHub returned an invalid app installations response");
+  }
+
+  const installation = data.find(
+    (item) =>
+      isRecord(item) &&
+      isRecord(item.account) &&
+      typeof item.account.login === "string" &&
+      item.account.login.toLowerCase() === owner.toLowerCase()
+  );
+
+  if (!installation || !isRecord(installation) || typeof installation.id !== "number") {
+    throw new Error(`GitHub App is not installed for owner ${owner}`);
+  }
+
+  return app.getInstallationOctokit(installation.id);
+}
+
+function createOctokitRequester(octokit: Octokit): GitHubRequester {
+  return {
+    async request(route, parameters) {
+      const response = await octokit.request(route, parameters);
+      return { data: response.data };
+    }
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function runRunners(args: string[]): Promise<void> {
@@ -158,6 +229,7 @@ Usage:
   darkfactory serve
   darkfactory install-url
   darkfactory sync-managed
+  darkfactory status [--json]
   darkfactory runners setup <owner/repo> [--root <path>]
   darkfactory runners start <owner/repo> [--root <path>]
   darkfactory runners stop <owner/repo> [--root <path>]

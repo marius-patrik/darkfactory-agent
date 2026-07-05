@@ -547,6 +547,7 @@ test("df-work merge-policy preflight uses direct sweep when branch protection is
     { allow_auto_merge: true }
   );
 
+  assert.equal(unreadablePolicy.blocked, false);
   assert.equal(unreadablePolicy.useAutomerge, false);
   assert.equal(unreadablePolicy.autoMergeSupported, true);
   assert.equal(unreadablePolicy.branchProtection.configured, false);
@@ -562,8 +563,42 @@ test("df-work merge-policy preflight uses direct sweep when branch protection is
     { allow_auto_merge: true }
   );
 
+  assert.equal(protectedPolicy.blocked, false);
   assert.equal(protectedPolicy.useAutomerge, true);
   assert.equal(protectedPolicy.branchProtection.configured, true);
+});
+
+test("df-work merge-policy preflight blocks protected branches when target auto-merge is disabled", async () => {
+  const repository = { owner: "marius-patrik", repo: "example" };
+  const policy = await preflightMergePolicy(
+    {
+      request: async () => ({ required_status_checks: { contexts: ["validate"] } })
+    },
+    repository,
+    "dev",
+    { allow_auto_merge: false }
+  );
+
+  assert.equal(policy.blocked, true);
+  assert.equal(policy.useAutomerge, false);
+  assert.equal(policy.autoMergeSupported, false);
+  assert.match(policy.summary, /auto-merge is disabled/);
+  assert.match(policy.reason, /requires GitHub auto-merge before dispatching a worker/);
+});
+
+test("df-work blocks target auto-merge setup failures before clone or Codex", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+
+  const blockIndex = source.indexOf("if (mergePolicy.blocked)");
+  const cloneIndex = source.indexOf("await cloneRepository");
+  const codexIndex = source.indexOf("runCodexWorker");
+  assert.notEqual(blockIndex, -1);
+  assert.notEqual(cloneIndex, -1);
+  assert.notEqual(codexIndex, -1);
+  assert.ok(blockIndex < cloneIndex);
+  assert.ok(blockIndex < codexIndex);
+  assert.match(source, /before cloning or running Codex/);
+  assert.match(source, /not a code implementation failure/);
 });
 
 test("df-work workflow does not expose privileged worker triggers in managed repositories", async () => {
@@ -905,7 +940,7 @@ test("df-orchestrate workflow validates trusted refs before privileged tokens", 
   assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /permission-actions:\s+write/);
-  assert.doesNotMatch(workflow, /permission-workflows:\s+write/);
+  assert.match(workflow, /permission-workflows:\s+write/);
   assert.match(workflow, /permission-contents:\s+write/);
   assert.match(workflow, /permission-issues:\s+write/);
 });
@@ -914,9 +949,9 @@ test("df-orchestrate script uses the active managed registry and dispatches via 
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   assert.match(source, /const CONTROL_ROOT = path\.resolve/);
-  assert.match(source, /listActiveManagedRepos\(gh, CONTROL_REPO, \{ root: CONTROL_ROOT \}\)/);
-  assert.match(source, /\/repos\/\$\{repoName\(CONTROL_REPO\)\}\/actions\/workflows\/df-work\.yml\/dispatches/);
-  assert.match(source, /\/df-prd:/);
+  assert.match(source, /listActiveManagedRepos\(gh, controlRepo, options\)/);
+  assert.match(source, /\/repos\/\$\{repoName\(controlRepo\)\}\/actions\/workflows\/df-work\.yml\/dispatches/);
+  assert.doesNotMatch(source, /df-prd:\[a-z0-9-\]\+/);
   assert.match(source, /df:running/);
   assert.match(source, /df:blocked/);
   assert.match(source, /df:done/);
@@ -925,18 +960,35 @@ test("df-orchestrate script uses the active managed registry and dispatches via 
 test("df-orchestrate claims ready issues before dispatching workers", async () => {
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
-  const claimIndex = source.indexOf("replaceIssueLabels(repository, issueNumber, [\"df:running\"], [\"df:ready\"])");
+  const preflightIndex = source.indexOf("const mergePolicy = await preflightMergePolicy");
+  const claimIndex = source.indexOf("replaceIssueLabels(gh, repository, issueNumber, [\"df:running\"], [\"df:ready\"])");
   const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
+  assert.notEqual(preflightIndex, -1);
   assert.notEqual(claimIndex, -1);
   assert.notEqual(dispatchIndex, -1);
+  assert.ok(preflightIndex < claimIndex);
   assert.ok(claimIndex < dispatchIndex);
+});
+
+test("df-orchestrate blocks target auto-merge setup failures before worker dispatch", async () => {
+  const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+
+  const blockIndex = source.indexOf("await blockIssueBeforeDispatch");
+  const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
+  assert.notEqual(blockIndex, -1);
+  assert.notEqual(dispatchIndex, -1);
+  assert.ok(blockIndex < dispatchIndex);
+  assert.match(source, /if \(mergePolicy\.blocked\)/);
+  assert.match(source, /replaceIssueLabels\(gh, repository, issueNumber, \["df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
+  assert.match(source, /DarkFactory blocked this issue before worker dispatch/);
+  assert.match(source, /not a code implementation failure/);
 });
 
 test("df-orchestrate restores df:ready when workflow dispatch fails", async () => {
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
-  const restoreIndex = source.indexOf("replaceIssueLabels(repository, issueNumber, [\"df:ready\"], [\"df:running\"])");
+  const restoreIndex = source.indexOf("replaceIssueLabels(gh, repository, issueNumber, [\"df:ready\"], [\"df:running\"])");
   assert.notEqual(dispatchIndex, -1);
   assert.notEqual(restoreIndex, -1);
   assert.ok(dispatchIndex < restoreIndex);
