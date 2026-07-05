@@ -814,6 +814,31 @@ export async function mergeGreenPullRequest(gh, repository, pull, requiredContex
         checks: checksSummary(mergeGate.statusCheckRollup)
       };
     }
+
+    const stillTrusted = !mergeGateTrustFailure(pull, mergeGate, repository);
+    const stillGreen = checksAreGreen(mergeGate.statusCheckRollup, requiredContexts);
+    if (stillTrusted && stillGreen && mergeGate.mergeable === "MERGEABLE") {
+      try {
+        const merged = await gh.request("PUT", `/repos/${repoName(repository)}/pulls/${pull.number}/merge`, {
+          commit_title: mergeGate.title,
+          merge_method: "squash",
+          sha: mergeGate.headRefOid
+        });
+        await closeIssuesIfDevMerge(gh, repository, mergeGate);
+        return {
+          repo: repoName(repository),
+          pr: ref,
+          url: pull.url,
+          action: "merge",
+          sha: merged.sha,
+          base: pull.baseRefName,
+          checks: checksSummary(mergeGate.statusCheckRollup)
+        };
+      } catch {
+        // fall through to skip with preserved auto-merge error
+      }
+    }
+
     return {
       repo: repoName(repository),
       pr: ref,

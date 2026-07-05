@@ -591,7 +591,7 @@ test("df-fix merge gate fails closed when branch protection is unreadable", asyn
   assert.equal(result.reason, "branch-protection-unreadable");
 });
 
-test("df-fix protected branch skips instead of direct-merging after automerge failure", async () => {
+test("df-fix protected branch direct-merges after automerge failure when checks are green", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
   const originalPull = workerPull({ number: 42, checkConclusion: "SUCCESS" });
   const freshPull = {
@@ -609,14 +609,19 @@ test("df-fix protected branch skips instead of direct-merging after automerge fa
     },
     request: async (method: string, pathName: string) => {
       if (method === "GET" && pathName.endsWith("/branches/dev/protection")) return {};
+      if (method === "PUT" && pathName === "/repos/marius-patrik/active/pulls/42/merge") {
+        return { sha: "defabc" };
+      }
+      if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/42/comments") return {};
+      if (method === "PATCH" && pathName === "/repos/marius-patrik/active/issues/42") return {};
       throw new Error(`unexpected protected-branch merge request: ${method} ${pathName}`);
     }
   };
 
   const result = await mergeGreenPullRequest(gh, repository, originalPull, ["ci"], new Set(), "token");
-  assert.equal(result.action, "skip");
-  assert.equal(result.reason, "protected-branch-automerge-failed");
-  assert.match(result.automerge_error, /clean status/);
+  assert.equal(result.action, "merge");
+  assert.equal(result.sha, "defabc");
+  assert.notEqual(result.reason, "protected-branch-automerge-failed");
 });
 
 test("df-work merge-policy preflight uses direct sweep when branch protection is absent or unreadable", async () => {
