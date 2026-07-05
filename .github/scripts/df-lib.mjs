@@ -547,15 +547,22 @@ export function checksAreGreen(statusCheckRollup, requiredContexts = []) {
     return requiredContexts.length === 0;
   }
 
-  return statusCheckRollup.every((check) => {
+  const required = new Set(requiredContexts);
+  const reported = new Set();
+
+  const allReportedChecksGreen = statusCheckRollup.every((check) => {
     if (check.__typename === "CheckRun") {
+      if (check.name) reported.add(check.name);
       return check.status === "COMPLETED" && check.conclusion === "SUCCESS";
     }
     if (check.__typename === "StatusContext") {
+      if (check.context) reported.add(check.context);
       return check.state === "SUCCESS";
     }
     return false;
   });
+
+  return allReportedChecksGreen && [...required].every((context) => reported.has(context));
 }
 
 export function checksSummary(statusCheckRollup) {

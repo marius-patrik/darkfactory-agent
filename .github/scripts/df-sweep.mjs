@@ -201,7 +201,7 @@ export async function considerPullRequest(repository, pull) {
 
   const mergeGate = await getPullRequestMergeGate(repository, pull.number);
   const hasMergeGateChecks = Array.isArray(mergeGate.statusCheckRollup) && mergeGate.statusCheckRollup.length > 0;
-  if ((!hasMergeGateChecks && !NO_CHECK_ALLOWLIST.has(repoName(repository).toLowerCase())) || !checksAreGreen(mergeGate.statusCheckRollup)) {
+  if ((!hasMergeGateChecks && !NO_CHECK_ALLOWLIST.has(repoName(repository).toLowerCase())) || !checksAreGreen(mergeGate.statusCheckRollup, requiredContexts)) {
     const issueUpdate = await markWorkerIssueBlocked(repository, pull, "merge-checks-not-green", [
       "Fresh merge gate check failed immediately before merge.",
       `Reported checks: ${checksSummary(mergeGate.statusCheckRollup) || "(none)"}`

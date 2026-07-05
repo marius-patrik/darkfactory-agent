@@ -16,13 +16,25 @@ export interface BotOptions {
 interface PullRequestPayload {
   repository: {
     name: string;
+    full_name?: string;
     owner: {
       login: string;
     };
   };
   pull_request: {
     number: number;
+    title?: string;
+    body?: string | null;
+    html_url?: string;
+    merged?: boolean | null;
+    user?: {
+      login?: string;
+    } | null;
+    base?: {
+      ref?: string;
+    };
     head: {
+      ref?: string;
       sha: string;
       repo: {
         name: string;
@@ -97,6 +109,10 @@ export function createBot(options: BotOptions): App {
     await enforceRepositorySetup(octokit, payload);
   });
 
+  app.webhooks.on("pull_request.closed", async ({ octokit, payload }) => {
+    await closeDevMergeIssues(octokit, payload);
+  });
+
   app.webhooks.on("installation.created", async ({ octokit, payload }) => {
     await syncInstalledRepositories(octokit, payload);
   });
@@ -106,6 +122,96 @@ export function createBot(options: BotOptions): App {
   });
 
   return app;
+}
+
+export async function closeDevMergeIssues(
+  octokit: GitHubRequester,
+  payload: PullRequestPayload
+): Promise<number[]> {
+  const pull = payload.pull_request;
+
+  if (pull.merged !== true || pull.base?.ref !== "dev" || !isWorkerPullRequest(payload)) {
+    return [];
+  }
+
+  const repositoryName = payload.repository.full_name ?? `${payload.repository.owner.login}/${payload.repository.name}`;
+  const issueNumbers = extractClosingIssueNumbers(pull.body ?? "", repositoryName);
+  const closed: number[] = [];
+
+  for (const issueNumber of issueNumbers) {
+    const pullUrl = pull.html_url ?? `#${pull.number}`;
+    if (await hasDevMergeComment(octokit, payload, issueNumber, pullUrl)) {
+      continue;
+    }
+
+    await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      issue_number: issueNumber,
+      body: `merged to dev in ${pullUrl}; releases with the next dev→main PR`
+    });
+    await octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", {
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      issue_number: issueNumber,
+      state: "closed"
+    });
+    closed.push(issueNumber);
+  }
+
+  return closed;
+}
+
+async function hasDevMergeComment(
+  octokit: GitHubRequester,
+  payload: PullRequestPayload,
+  issueNumber: number,
+  pullUrl: string
+): Promise<boolean> {
+  const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    issue_number: issueNumber,
+    per_page: 100
+  });
+  const comments = Array.isArray(response.data) ? response.data : [];
+
+  return comments.some((comment) => {
+    return typeof comment === "object" &&
+      comment !== null &&
+      "body" in comment &&
+      typeof comment.body === "string" &&
+      comment.body.includes(`merged to dev in ${pullUrl}`);
+  });
+}
+
+function isWorkerPullRequest(payload: PullRequestPayload): boolean {
+  const pull = payload.pull_request;
+  const author = pull.user?.login ?? "";
+  const headRepo = pull.head.repo;
+  const expectedHeadOwner = payload.repository.owner.login;
+  const expectedHeadRepo = payload.repository.name;
+
+  return String(pull.head.ref ?? "").startsWith("df/") &&
+    headRepo?.name === expectedHeadRepo &&
+    headRepo?.owner?.login === expectedHeadOwner &&
+    /\b(?:github-actions\[bot\]|mp-agents\[bot\]|app\/darkfactory-agent|darkfactory-agent)\b/.test(author) &&
+    /<!--\s*dark-factory:worker-pr\s+issue=\d+\s*-->/.test(pull.body ?? "") &&
+    extractClosingIssueNumbers(pull.body ?? "", payload.repository.full_name ?? `${expectedHeadOwner}/${expectedHeadRepo}`).length > 0;
+}
+
+function extractClosingIssueNumbers(body: string, repositoryName: string): number[] {
+  const refs = new Set<number>();
+  const expectedRepo = repositoryName.toLowerCase();
+  const matches = body.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#|#)(\d+)\b/gi);
+
+  for (const match of matches) {
+    const qualifiedRepo = match[1]?.toLowerCase() ?? "";
+    if (qualifiedRepo && qualifiedRepo !== expectedRepo) continue;
+    refs.add(Number(match[2]));
+  }
+
+  return [...refs].filter((number) => Number.isInteger(number) && number > 0);
 }
 
 async function enforceRepositorySetup(

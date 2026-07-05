@@ -180,7 +180,7 @@ test("cleanupTempRoot reports EACCES cleanup failures without throwing", async (
   assert.match(result.warning, /permission denied/);
 });
 
-test("checksAreGreen rejects pending or failing checks without requiring fixed check names", () => {
+test("checksAreGreen rejects pending, failing, or missing required checks", () => {
   assert.equal(checksAreGreen([]), true);
   assert.equal(checksAreGreen([], ["ci"]), false);
   assert.equal(checksAreGreen([{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }]), true);
@@ -198,7 +198,7 @@ test("checksAreGreen rejects pending or failing checks without requiring fixed c
       [{ __typename: "CheckRun", name: "lint", status: "COMPLETED", conclusion: "SUCCESS" }],
       ["ci"]
     ),
-    true
+    false
   );
   assert.equal(checksAreGreen([{ __typename: "CheckRun", status: "IN_PROGRESS", conclusion: null }]), false);
   assert.equal(checksAreGreen([{ __typename: "StatusContext", state: "FAILURE" }]), false);
@@ -908,7 +908,7 @@ test("df-sweep re-fetches checks immediately before direct merge and blocks red 
   assert.match(source, /hasMergeGateChecks/);
   assert.match(source, /NO_CHECK_ALLOWLIST/);
   assert.match(source, /Fresh merge gate check failed immediately before merge/);
-  assert.match(source, /checksAreGreen\(mergeGate\.statusCheckRollup\)/);
+  assert.match(source, /checksAreGreen\(mergeGate\.statusCheckRollup, requiredContexts\)/);
   assert.doesNotMatch(source, /--admin/);
 });
 
