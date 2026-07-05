@@ -65,7 +65,7 @@ jobs:
           # Pin control scripts to the exact trusted event commit before any
           # installation token is minted.
           ref: ${{ github.sha }}
-          path: darkfactory-control
+          # checkout at workspace root
           persist-credentials: false
 
       - name: Mint mp-agents installation token
@@ -93,4 +93,4 @@ jobs:
         shell: bash
         run: |
           export GITHUB_EVENT_PAYLOAD="$(cat "$GITHUB_EVENT_PATH")"
-          node darkfactory-control/.github/scripts/df-sweep.mjs
+          node .github/scripts/df-sweep.mjs
