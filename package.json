@@ -14,7 +14,7 @@
     "dev": "tsx watch src/cli.ts serve",
     "install:url": "tsx src/cli.ts install-url",
     "sync:managed": "tsx src/cli.ts sync-managed",
-    "test": "node --import tsx --test tests/index.ts",
+    "test": "node --experimental-test-module-mocks --import tsx --test tests/index.ts",
     "start": "node dist/cli.js serve",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
