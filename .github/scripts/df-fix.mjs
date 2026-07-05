@@ -355,7 +355,7 @@ export async function fixPullRequestByRedispatch(gh, controlRepo, repository, pu
   await resetIssueForWorker(gh, repository, issueNumber);
   await closeSupersededPullRequest(gh, repository, freshPull, round);
   await deleteHeadBranch(gh, repository, freshPull.headRefName);
-  await dispatchWorker(gh, controlRepo, repository, issueNumber);
+  await dispatchWorker(gh, controlRepo, repository, issueNumber, freshPull.baseRefName);
 
   return {
     repo: repoName(repository),
@@ -485,12 +485,13 @@ async function deleteHeadBranch(gh, repository, branch) {
   await gh.request("DELETE", `/repos/${repoName(repository)}/git/refs/heads/${encodeRefPath(branch)}`);
 }
 
-async function dispatchWorker(gh, controlRepo, repository, issueNumber) {
+async function dispatchWorker(gh, controlRepo, repository, issueNumber, baseRefName) {
   await gh.request("POST", `/repos/${repoName(controlRepo)}/actions/workflows/df-work.yml/dispatches`, {
     ref: "main",
     inputs: {
       repo: repoName(repository),
-      issue_number: String(issueNumber)
+      issue_number: String(issueNumber),
+      base_ref: baseRefName || ""
     }
   });
 }

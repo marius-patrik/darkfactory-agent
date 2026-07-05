@@ -515,6 +515,7 @@ test("df-fix script is deterministic and only redispatches red worker PRs", asyn
   assert.match(source, /df:ask-owner/);
   assert.match(source, /df-fix-revision/);
   assert.match(source, /\/actions\/workflows\/df-work\.yml\/dispatches/);
+  assert.match(source, /base_ref: baseRefName \|\| ""/);
   assert.match(source, /deleteHeadBranch/);
   assert.match(source, /closeSupersededPullRequest/);
   assert.match(source, /const freshPull = await getPullRequestForFix/);
@@ -605,7 +606,11 @@ test("df-work workflow uses the app token for control-dispatched workers", async
   assert.doesNotMatch(workflow, /steps\.app-token\.outputs\.token \|\| github\.token/);
   assert.match(workflow, /DF_TARGET_REPO: \$\{\{ inputs\.repo \}\}/);
   assert.match(workflow, /DF_TARGET_ISSUE_NUMBER: \$\{\{ inputs\.issue_number \}\}/);
+  assert.match(workflow, /base_ref:/);
+  assert.match(workflow, /DF_TARGET_BASE_REF: \$\{\{ inputs\.base_ref \}\}/);
   assert.match(source, /const TOKEN = requiredEnv\("DARK_FACTORY_TOKEN"\)/);
+  assert.match(source, /const TARGET_BASE_REF = process\.env\.DF_TARGET_BASE_REF/);
+  assert.match(source, /resolveWorkBaseBranch\(TARGET_REPO, repo\.default_branch, TARGET_BASE_REF\)/);
   assert.match(source, /runGit\(\["push", "origin", `HEAD:refs\/heads\/\$\{branch\}`\], worktree\)/);
   assert.match(source, /function runGit\(args, cwd\) \{\s+return runGitWithAuth\(args, cwd\);/);
   assert.match(source, /function runGitWithAuth\(args, cwd\) \{\s+return runCommand\("git", \["-c", authHeader\(\), \.\.\.args\], cwd\);/);
@@ -695,7 +700,7 @@ test("df-fix posts a trusted revision request, closes the red PR, deletes the br
   assert.ok(calls.some((call) => call.method === "POST" && call.pathName === "/repos/marius-patrik/active/issues/10/comments" && call.body.body.includes("<!-- df-fix-revision -->")));
   assert.ok(calls.some((call) => call.method === "PATCH" && call.pathName === "/repos/marius-patrik/active/pulls/10" && call.body.state === "closed"));
   assert.ok(calls.some((call) => call.method === "DELETE" && call.pathName === "/repos/marius-patrik/active/git/refs/heads/df/10-worker"));
-  assert.ok(calls.some((call) => call.method === "POST" && call.pathName === "/repos/marius-patrik/agent-darkfactory/actions/workflows/df-work.yml/dispatches" && call.body.inputs.repo === "marius-patrik/active" && call.body.inputs.issue_number === "10"));
+  assert.ok(calls.some((call) => call.method === "POST" && call.pathName === "/repos/marius-patrik/agent-darkfactory/actions/workflows/df-work.yml/dispatches" && call.body.inputs.repo === "marius-patrik/active" && call.body.inputs.issue_number === "10" && call.body.inputs.base_ref === "dev"));
 });
 
 test("df-fix does not close, delete, or redispatch when the fresh PR head trust check fails", async () => {
