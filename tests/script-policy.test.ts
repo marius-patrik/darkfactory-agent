@@ -606,7 +606,8 @@ test("df-orchestrate workflow validates trusted refs before privileged tokens", 
 test("df-orchestrate script uses the active managed registry and dispatches via workflow_dispatch", async () => {
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /listActiveManagedRepos\(gh, CONTROL_REPO\)/);
+  assert.match(source, /const CONTROL_ROOT = path\.resolve/);
+  assert.match(source, /listActiveManagedRepos\(gh, CONTROL_REPO, \{ root: CONTROL_ROOT \}\)/);
   assert.match(source, /\/repos\/\$\{repoName\(CONTROL_REPO\)\}\/actions\/workflows\/df-work\.yml\/dispatches/);
   assert.match(source, /\/df-prd:/);
   assert.match(source, /df:running/);

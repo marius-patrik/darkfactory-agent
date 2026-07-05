@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DEFAULT_DATA_REPO,
   assertAllowedRepo,
@@ -10,6 +12,7 @@ import {
   writeRunLedger
 } from "./df-lib.mjs";
 
+const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
 const CONTROL_REPO = parseRepo(requiredEnv("DF_CONTROL_REPO"));
 const DATA_REPO = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
@@ -61,7 +64,7 @@ async function main() {
 }
 
 async function targetRepositories() {
-  return await listActiveManagedRepos(gh, CONTROL_REPO);
+  return await listActiveManagedRepos(gh, CONTROL_REPO, { root: CONTROL_ROOT });
 }
 
 async function listReadyIssues(repository) {
