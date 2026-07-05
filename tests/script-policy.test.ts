@@ -469,12 +469,15 @@ test("df-fix workflow validates trusted refs before privileged tokens", async ()
   const gate = workflow.indexOf("Validate trusted control ref");
   const checkout = workflow.indexOf("Checkout installed DarkFactory fix cycle");
   const token = workflow.indexOf("Mint mp-agents installation token");
+  const codexAuth = workflow.indexOf("CODEX_AUTH_JSON");
 
   assert.notEqual(gate, -1);
   assert.notEqual(checkout, -1);
   assert.notEqual(token, -1);
+  assert.notEqual(codexAuth, -1);
   assert.ok(gate < token);
   assert.ok(checkout < token);
+  assert.ok(token < codexAuth);
   assert.match(workflow, /^\s+schedule:\s*$/m);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'/);
@@ -485,7 +488,7 @@ test("df-fix workflow validates trusted refs before privileged tokens", async ()
   assert.match(workflow, /permission-issues:\s+write/);
   assert.match(workflow, /permission-pull-requests:\s+write/);
   assert.doesNotMatch(workflow, /permission-workflows:\s+write/);
-  assert.doesNotMatch(workflow, /CODEX_AUTH_JSON/);
+  assert.match(workflow, /CODEX_AUTH_JSON: \$\{\{ secrets\.CODEX_AUTH_JSON \}\}/);
   assert.match(workflow, /path:\s+darkfactory-control/);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /darkfactory-control\/\.github\/scripts\/df-fix\.mjs/);

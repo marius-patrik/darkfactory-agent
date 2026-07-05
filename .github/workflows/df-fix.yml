@@ -70,6 +70,7 @@ jobs:
       - name: Run fix cycle
         env:
           DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
           DF_CONTROL_REPO: marius-patrik/agent-darkfactory
           DF_TRIGGER: ${{ github.event_name }}
           DF_DATA_REPO: marius-patrik/darkfactory-data
