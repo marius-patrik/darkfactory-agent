@@ -231,7 +231,7 @@ test("checksAreGreen rejects pending or failing checks without requiring fixed c
   assert.equal(checksAreGreen([{ __typename: "StatusContext", state: "FAILURE" }]), false);
 });
 
-test("Codex Review is a universal merge-gate context for worker follow-through", () => {
+test("Codex Review is added to required contexts only after provisioning is detected", () => {
   assert.equal(CODEX_REVIEW_REQUIRED_CONTEXT, "Codex Review");
   assert.deepEqual(withCodexReviewRequiredContext(["Validate", "Codex Review"]), ["Validate", "Codex Review"]);
   assert.equal(
@@ -1237,6 +1237,157 @@ test("df-sweep merges green app-authored dev worker PRs and blocks red ones", as
   assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/41/merge"), false);
 });
 
+test("df-sweep holds worker PRs when the Codex Review context is present and red", async () => {
+  const repository = { owner: "marius-patrik", repo: "active" };
+  const pull = workerPull({
+    number: 42,
+    checkConclusion: "SUCCESS",
+    codexReviewConclusion: "FAILURE",
+    author: "app/darkfactory-agent"
+  });
+  const calls: Array<{ method: string; pathName: string; body?: any }> = [];
+
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    dataRepo: "marius-patrik/darkfactory-data",
+    gh: {
+      request: async (method: string, pathName: string, body?: any) => {
+        calls.push({ method, pathName, body });
+        if (method === "GET" && pathName.endsWith("/protection")) {
+          const error: Error & { status?: number } = new Error("Branch not protected");
+          error.status = 404;
+          throw error;
+        }
+        if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/42/labels") return {};
+        if (method === "DELETE" && pathName.startsWith("/repos/marius-patrik/active/issues/42/labels/")) return {};
+        if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/42/comments?per_page=100") return [];
+        if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/42/comments") return {};
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+
+  const result = await considerSweepPullRequest(repository, pull);
+
+  assert.equal(result.action, "skip");
+  assert.equal(result.reason, "checks-not-green");
+  assert.deepEqual(result.required_checks, ["Codex Review"]);
+  assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/42/merge"), false);
+  assert.equal(calls.some((call) => call.pathName.includes("managed-repository.json")), false);
+});
+
+test("df-sweep falls back to branch-protection checks when Codex Review is not provisioned", async () => {
+  const repository = { owner: "marius-patrik", repo: "active" };
+  const pull = workerPull({
+    number: 43,
+    checkConclusion: "SUCCESS",
+    includeCodexReview: false,
+    author: "app/darkfactory-agent"
+  });
+  const calls: Array<{ method: string; pathName: string; body?: any }> = [];
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (message?: any) => warnings.push(String(message));
+
+  try {
+    configureSweepRuntime({
+      controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+      dataRepo: "marius-patrik/darkfactory-data",
+      gh: {
+        graphql: async () => ({
+          repository: {
+            pullRequest: {
+              ...pull,
+              id: "PR_43",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: { contexts: { nodes: pull.statusCheckRollup } }
+            }
+          }
+        }),
+        request: async (method: string, pathName: string, body?: any) => {
+          calls.push({ method, pathName, body });
+          if (method === "GET" && pathName.endsWith("/protection")) {
+            const error: Error & { status?: number } = new Error("Branch not protected");
+            error.status = 404;
+            throw error;
+          }
+          if (method === "GET" && pathName.includes("/contents/.darkfactory/managed-repository.json")) {
+            const error: Error & { status?: number } = new Error("Missing managed config");
+            error.status = 404;
+            throw error;
+          }
+          if (method === "PUT" && pathName === "/repos/marius-patrik/active/pulls/43/merge") {
+            return { sha: "merged-without-codex-review-sha" };
+          }
+          if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/43/comments?per_page=100") return [];
+          if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/43/comments") return {};
+          if (method === "PATCH" && pathName === "/repos/marius-patrik/active/issues/43") return {};
+          throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+        }
+      }
+    });
+
+    const result = await considerSweepPullRequest(repository, pull);
+
+    assert.equal(result.action, "merge");
+    assert.equal(result.sha, "merged-without-codex-review-sha");
+    assert.equal(result.codex_review_gap.warning, "codex-review-not-provisioned");
+    assert.ok(warnings.some((warning) => warning.includes("falling back to branch-protection checks only")));
+    assert.ok(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/43/merge"));
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("df-sweep holds worker PRs when managed config declares Codex Review but the context is absent", async () => {
+  const repository = { owner: "marius-patrik", repo: "active" };
+  const pull = workerPull({
+    number: 44,
+    checkConclusion: "SUCCESS",
+    includeCodexReview: false,
+    author: "app/darkfactory-agent"
+  });
+  const calls: Array<{ method: string; pathName: string; body?: any }> = [];
+  const managedConfig = {
+    schemaVersion: 1,
+    requiredFiles: [".github/workflows/codex-review.yml"]
+  };
+
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    dataRepo: "marius-patrik/darkfactory-data",
+    gh: {
+      request: async (method: string, pathName: string, body?: any) => {
+        calls.push({ method, pathName, body });
+        if (method === "GET" && pathName.endsWith("/protection")) {
+          const error: Error & { status?: number } = new Error("Branch not protected");
+          error.status = 404;
+          throw error;
+        }
+        if (method === "GET" && pathName.includes("/contents/.darkfactory/managed-repository.json")) {
+          return {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(JSON.stringify(managedConfig), "utf8").toString("base64")
+          };
+        }
+        if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/44/labels") return {};
+        if (method === "DELETE" && pathName.startsWith("/repos/marius-patrik/active/issues/44/labels/")) return {};
+        if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/44/comments?per_page=100") return [];
+        if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/44/comments") return {};
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+
+  const result = await considerSweepPullRequest(repository, pull);
+
+  assert.equal(result.action, "skip");
+  assert.equal(result.reason, "checks-not-green");
+  assert.deepEqual(result.required_checks, ["Codex Review"]);
+  assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/44/merge"), false);
+});
+
 test("df-sweep merges green app-authored dev worker PRs even when the worker issue is done", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
   const pull = workerPull({ number: 1349, checkConclusion: "SUCCESS", author: "app/darkfactory-agent" });
@@ -1505,9 +1656,29 @@ function workerPull(options: {
   number: number;
   checkConclusion: string | null;
   checkStatus?: string;
+  codexReviewConclusion?: string | null;
+  codexReviewStatus?: string;
+  includeCodexReview?: boolean;
   labels?: Array<{ name: string }>;
   author?: string;
 }) {
+  const statusCheckRollup = [
+    {
+      __typename: "CheckRun",
+      name: "ci",
+      status: options.checkStatus || "COMPLETED",
+      conclusion: options.checkConclusion
+    }
+  ];
+  if (options.includeCodexReview !== false) {
+    statusCheckRollup.push({
+      __typename: "CheckRun",
+      name: "Codex Review",
+      status: options.codexReviewStatus || "COMPLETED",
+      conclusion: options.codexReviewConclusion === undefined ? "SUCCESS" : options.codexReviewConclusion
+    });
+  }
+
   return {
     id: `PR_${options.number}`,
     number: options.number,
@@ -1522,19 +1693,6 @@ function workerPull(options: {
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z",
     labels: options.labels || [],
-    statusCheckRollup: [
-      {
-        __typename: "CheckRun",
-        name: "ci",
-        status: options.checkStatus || "COMPLETED",
-        conclusion: options.checkConclusion
-      },
-      {
-        __typename: "CheckRun",
-        name: "Codex Review",
-        status: "COMPLETED",
-        conclusion: "SUCCESS"
-      }
-    ]
+    statusCheckRollup
   };
 }

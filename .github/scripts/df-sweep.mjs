@@ -1,4 +1,5 @@
 import {
+  CODEX_REVIEW_REQUIRED_CONTEXT,
   DEFAULT_DATA_REPO,
   assertAllowedRepo,
   checksAreGreen,
@@ -7,6 +8,7 @@ import {
   darkFactoryWorkerIssueNumber,
   extractClosingIssueNumbers,
   getRepository,
+  getOptionalFileContent,
   getRequiredStatusCheckContexts,
   isDarkFactoryWorkerPullRequest as isWorkerPullRequest,
   isParkedRepo,
@@ -153,9 +155,11 @@ export async function considerPullRequest(repository, pull) {
     return { repo: repoName(repository), pr: ref, action: "skip", reason: "checks-not-reported-yet" };
   }
 
-  const requiredContexts = withCodexReviewRequiredContext(
-    await getRequiredStatusCheckContexts(gh, repository, pull.baseRefName)
-  );
+  const branchProtectionContexts = await getRequiredStatusCheckContexts(gh, repository, pull.baseRefName);
+  const codexReview = await codexReviewProvisioning(repository, pull);
+  const requiredContexts = codexReview.required
+    ? withCodexReviewRequiredContext(branchProtectionContexts)
+    : branchProtectionContexts;
   const hasReportedChecks = Array.isArray(pull.statusCheckRollup) && pull.statusCheckRollup.length > 0;
   if (!hasReportedChecks && requiredContexts.length === 0 && !NO_CHECK_ALLOWLIST.has(repoName(repository).toLowerCase())) {
     const issueUpdate = await markWorkerIssueBlocked(repository, pull, "no-checks-not-allowed", [
@@ -186,7 +190,8 @@ export async function considerPullRequest(repository, pull) {
       reason,
       issue_update: issueUpdate,
       required_checks: requiredContexts,
-      checks: checksSummary(pull.statusCheckRollup)
+      checks: checksSummary(pull.statusCheckRollup),
+      ...codexReviewLedgerGap(codexReview)
     };
   }
   if (pull.mergeable !== "MERGEABLE") {
@@ -214,7 +219,8 @@ export async function considerPullRequest(repository, pull) {
       action: "skip",
       reason: "merge-checks-not-green",
       issue_update: issueUpdate,
-      checks: checksSummary(mergeGate.statusCheckRollup)
+      checks: checksSummary(mergeGate.statusCheckRollup),
+      ...codexReviewLedgerGap(codexReview)
     };
   }
   if (mergeGate.mergeable !== "MERGEABLE") {
@@ -235,7 +241,8 @@ export async function considerPullRequest(repository, pull) {
         url: pull.url,
         action: "enable-automerge",
         result: enabled,
-        checks: checksSummary(pull.statusCheckRollup)
+        checks: checksSummary(pull.statusCheckRollup),
+        ...codexReviewLedgerGap(codexReview)
       };
     }
 
@@ -251,7 +258,8 @@ export async function considerPullRequest(repository, pull) {
         reason: "protected-branch-automerge-failed",
         automerge_error: enabled.reason,
         issue_update: issueUpdate,
-        checks: checksSummary(pull.statusCheckRollup)
+        checks: checksSummary(pull.statusCheckRollup),
+        ...codexReviewLedgerGap(codexReview)
       };
     }
 
@@ -264,7 +272,8 @@ export async function considerPullRequest(repository, pull) {
       sha: merged.sha,
       base: pull.baseRefName,
       fallback_from_automerge: enabled.reason,
-      checks: checksSummary(mergeGate.statusCheckRollup)
+      checks: checksSummary(mergeGate.statusCheckRollup),
+      ...codexReviewLedgerGap(codexReview)
     };
   }
 
@@ -276,7 +285,80 @@ export async function considerPullRequest(repository, pull) {
     action: "merge",
     sha: merged.sha,
     base: pull.baseRefName,
-    checks: checksSummary(mergeGate.statusCheckRollup)
+    checks: checksSummary(mergeGate.statusCheckRollup),
+    ...codexReviewLedgerGap(codexReview)
+  };
+}
+
+async function codexReviewProvisioning(repository, pull) {
+  if (hasCodexReviewContext(pull.statusCheckRollup)) {
+    return { required: true, source: "reported-check" };
+  }
+
+  if (await managedConfigDeclaresCodexReview(repository, pull.baseRefName)) {
+    return { required: true, source: "managed-config" };
+  }
+
+  const message = [
+    `DarkFactory sweep warning ${repoName(repository)}#${pull.number}:`,
+    `${CODEX_REVIEW_REQUIRED_CONTEXT} context is absent and managed config does not declare .github/workflows/codex-review.yml;`,
+    "falling back to branch-protection checks only."
+  ].join(" ");
+  console.warn(message);
+  return {
+    required: false,
+    source: "not-provisioned",
+    warning: "codex-review-not-provisioned",
+    message
+  };
+}
+
+function hasCodexReviewContext(statusCheckRollup) {
+  if (!Array.isArray(statusCheckRollup)) return false;
+  return statusCheckRollup.some((check) => {
+    const name = checkContextName(check).trim().toLowerCase();
+    return name === CODEX_REVIEW_REQUIRED_CONTEXT.toLowerCase();
+  });
+}
+
+async function managedConfigDeclaresCodexReview(repository, ref) {
+  const content = await getOptionalFileContent(gh, repository, ".darkfactory/managed-repository.json", ref);
+  if (!content) return false;
+
+  try {
+    const config = JSON.parse(content);
+    return managedConfigPaths(config).some((filePath) => filePath === ".github/workflows/codex-review.yml");
+  } catch (error) {
+    console.warn(`DarkFactory sweep warning ${repoName(repository)}: invalid .darkfactory/managed-repository.json: ${error.message || String(error)}`);
+    return false;
+  }
+}
+
+function managedConfigPaths(config) {
+  const paths = [];
+  for (const key of ["requiredFiles", "managedFiles", "installedFiles", "workflows"]) {
+    if (!Array.isArray(config?.[key])) continue;
+    for (const item of config[key]) {
+      if (typeof item === "string") paths.push(item);
+      else if (typeof item?.path === "string") paths.push(item.path);
+    }
+  }
+  return paths.map((filePath) => filePath.trim().replace(/^\/+/, ""));
+}
+
+function checkContextName(check) {
+  if (check.__typename === "CheckRun") return check.name || "";
+  if (check.__typename === "StatusContext") return check.context || "";
+  return "";
+}
+
+function codexReviewLedgerGap(codexReview) {
+  if (codexReview.warning !== "codex-review-not-provisioned") return {};
+  return {
+    codex_review_gap: {
+      warning: codexReview.warning,
+      message: codexReview.message
+    }
   };
 }
 
