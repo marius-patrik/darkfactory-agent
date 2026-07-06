@@ -210,11 +210,18 @@ test("orchestrator selects next ready issues by priority, blocked-by, and stream
       number: 17,
       body: "Blocked-by: waiting for owner",
       labels: [{ name: "df:ready" }, { name: "P0" }, { name: "stream:unsafe" }]
+    },
+    {
+      number: 18,
+      body: "",
+      labels: [{ name: "df:ready" }, { name: "df:ask-owner" }, { name: "P0" }, { name: "stream:owner" }]
     }
   ]);
 
   // Issue 16 is held: explicit cross-repo refs never resolve without a
   // managed snapshot index proving the referenced issues are closed.
+  // Issue 18 is held: owner-decision lanes must not dispatch until the
+  // df:ask-owner escalation label is cleared.
   assert.deepEqual(
     selected.map((issue: { number: number }) => issue.number),
     [13, 14, 12]

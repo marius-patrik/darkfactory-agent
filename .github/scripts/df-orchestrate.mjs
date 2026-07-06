@@ -255,7 +255,7 @@ export function selectDispatchableIssues(openIssues, options = {}) {
     .filter((issue) => {
       const names = issueLabelNames(issue);
       if (!names.has("df:ready")) return false;
-      if (names.has("df:running") || names.has("df:blocked") || names.has("df:done")) return false;
+      if (names.has("df:running") || names.has("df:blocked") || names.has("df:done") || names.has("df:ask-owner")) return false;
       return blockedByIssueRefs(issue.body || "", options.repository).every((ref) => {
         if (!Number.isInteger(ref.number)) return false;
         if (ref.repository && ref.repository !== currentRepoName) {

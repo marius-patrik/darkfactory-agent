@@ -496,7 +496,7 @@ test("df-plan drift detection maps M2 PRD commitments to code artifacts", async 
   assert.match(source, /detectPrdArtifactDrift\[\\s\\S\]\*\?/);
 });
 
-test("df-plan workflow reacts safely to PRD edits on trusted default branches", async () => {
+test("df-plan workflow reacts safely to PRD edits on the trusted default branch", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-plan.yml", import.meta.url), "utf8");
   const gate = workflow.indexOf("Validate trusted control ref");
   const pushCheckout = workflow.indexOf("Checkout target repository scripts");
@@ -505,8 +505,8 @@ test("df-plan workflow reacts safely to PRD edits on trusted default branches", 
 
   assert.match(workflow, /^\s+push:\s*$/m);
   assert.match(workflow, /^\s+branches:\s*$/m);
-  assert.match(workflow, /^\s+-\s+dev\s*$/m);
   assert.match(workflow, /^\s+-\s+main\s*$/m);
+  assert.doesNotMatch(workflow, /^\s+-\s+dev\s*$/m);
   assert.match(workflow, /PRD\.md/);
   assert.doesNotMatch(workflow, /raw\.githubusercontent\.com|commits\/main|method:\s*'HEAD'/);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);

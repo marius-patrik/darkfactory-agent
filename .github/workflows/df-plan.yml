@@ -3,7 +3,6 @@ name: DarkFactory Plan
 on:
   push:
     branches:
-      - dev
       - main
     paths:
       - 'PRD.md'
