@@ -336,7 +336,6 @@ async function blockStaleWorkerBranch(branch) {
     `DarkFactory found the branch before creating a new worker branch, but no open worker PR was found for #${TARGET_ISSUE_NUMBER}.`
   ].join(" ");
 
-  await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:blocked"], ["df:ready", "df:running", "df:done"]);
   await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:ask-owner", "df:blocked"], ["df:ready", "df:running", "df:done"]);
   await createIssueComment(
     TARGET_REPO,
@@ -394,6 +393,12 @@ async function upsertStaleBranchAskOwnerIssue(branch) {
     const updated = await gh.request("PATCH", `/repos/${repoName(TARGET_REPO)}/issues/${existing.number}`, {
       title,
       body
+    });
+    // The upsert path must enforce the escalation label on update as well as
+    // create, or a recovery issue that lost df:ask-owner disappears from
+    // label-driven dashboards and queues.
+    await gh.request("POST", `/repos/${repoName(TARGET_REPO)}/issues/${existing.number}/labels`, {
+      labels: ["df:ask-owner"]
     });
     return `#${updated.number || existing.number}`;
   }
