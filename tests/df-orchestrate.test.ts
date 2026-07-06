@@ -318,6 +318,9 @@ test("sequencing pass auto-readies scoped issues only when blockers are resolved
       if (method === "GET" && path === "/repos/marius-patrik/example/issues/20/comments?per_page=100&page=1") return [];
       if (method === "GET" && path === "/repos/marius-patrik/example/issues/20/timeline?per_page=100&page=1") return [];
       if (method === "POST" && path === "/repos/marius-patrik/example/issues/20/labels") return {};
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/26/comments?per_page=100&page=1") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/26/timeline?per_page=100&page=1") return [];
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/26/labels") return {};
 
       throw new Error(`Unexpected GitHub request: ${method} ${path}`);
     }
@@ -325,15 +328,18 @@ test("sequencing pass auto-readies scoped issues only when blockers are resolved
 
   const autoReadied = await autoReadySequencedIssues(gh, snapshots, () => {});
 
-  assert.deepEqual(autoReadied, [{ repo: "marius-patrik/example", issue: 20 }]);
+  assert.deepEqual(autoReadied, [
+    { repo: "marius-patrik/example", issue: 20 },
+    { repo: "marius-patrik/example", issue: 26 }
+  ]);
   assert.ok(snapshots[0].openIssues[0].labels.some((label: { name: string }) => label.name === "df:ready"));
   assert.equal(calls.some((call) => call.path === "/repos/marius-patrik/example/issues/21/labels"), false);
   assert.equal(calls.some((call) => call.path === "/repos/marius-patrik/example/issues/22/labels"), false);
   assert.equal(calls.some((call) => call.path === "/repos/marius-patrik/example/issues/24/labels"), false);
   assert.equal(calls.some((call) => call.path === "/repos/marius-patrik/example/issues/25/labels"), false);
-  // Planned/PRD issues with no Blocked-by references are queued by planning,
-  // not by the sequencing pass.
-  assert.equal(calls.some((call) => call.path === "/repos/marius-patrik/example/issues/26/labels"), false);
+  // Spec (#168): planning signals (df:planned / df-prd:) make an issue
+  // eligible even without Blocked-by refs; refs gate only when present.
+  assert.ok(calls.some((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/26/labels"));
 });
 
 test("sequencing pass does not create an owner-reset ready label over repeated failures", async () => {
