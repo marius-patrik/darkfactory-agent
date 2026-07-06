@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "agentos-inferer",
+  "name": "Agentos Inferer",
+  "kind": "agent",
+  "description": "Agentos inference runtime, agent loop, execution lanes, daemon/manager services, deploy assets, and unfinished inference architecture work.",
+  "provides": ["inference-orchestration", "agent-loop", "runtime-services"]
+}

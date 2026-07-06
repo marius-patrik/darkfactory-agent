@@ -1,0 +1,30 @@
+[project]
+name = "andromeda-agent"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    # Runtime for the generated wire-contract stubs (agent/gen, [S3.0]).
+    # protoc-gen-python v35 emits gencode that validates against the matching
+    # protobuf runtime. Connect-python is deferred to VS2 (plain pb is enough
+    # for VS0) — see docs/contracts/wire.md.
+    "protobuf>=7.35.0",
+    "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: tests that require a reachable live Rommie gateway",
+]

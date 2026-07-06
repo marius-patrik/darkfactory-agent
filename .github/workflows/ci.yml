@@ -21,11 +21,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
+          fetch-depth: 1
+          submodules: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -33,30 +31,10 @@ jobs:
           bun-version: 1.3.14
 
       - name: Install dependencies
-        shell: bash
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          elif [ -f bun.lock ] || [ -f bun.lockb ]; then
-            bun install --frozen-lockfile
-          elif [ -f package.json ]; then
-            npm install
-          else
-            echo "No package manifest found; skipping dependency install."
-          fi
+        run: bun install --frozen-lockfile
 
       - name: Validate
-        shell: bash
-        run: |
-          if [ ! -f package.json ]; then
-            echo "No package.json found; nothing to validate."
-            exit 0
-          fi
+        run: bun run ci
 
-          if node -e "const p=require('./package.json'); process.exit(p.scripts?.ci ? 0 : 1)"; then
-            npm run ci
-          elif node -e "const p=require('./package.json'); process.exit(p.scripts?.check ? 0 : 1)"; then
-            npm run check
-          else
-            npm test
-          fi
+      - name: Verify obsolete root skills/ directory is not tracked
+        run: test -z "$(git ls-files skills/)"

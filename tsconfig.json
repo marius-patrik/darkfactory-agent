@@ -8,7 +8,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["os/agents-manager/src/**/*.ts", "os/agents-manager/test/**/*.ts"]
+  "include": ["packages/agents-manager/src/**/*.ts", "packages/agents-manager/test/**/*.ts"]
 }
-
-

@@ -1,0 +1,10 @@
+{
+  "name": "agents-harness",
+  "version": "4.0.0-alpha.3",
+  "private": true,
+  "description": "Thin runtime harness package managed by Agentos. Builds the agents-harness CLI artifact.",
+  "scripts": {
+    "check": "go test ./services/cli/...",
+    "test": "go test ./services/cli/..."
+  }
+}

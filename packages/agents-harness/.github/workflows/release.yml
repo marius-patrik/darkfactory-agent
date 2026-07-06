@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate VERSION / tag alignment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce VERSION / tag alignment
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          test -n "$VERSION"
+          echo "VERSION=${VERSION}"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match VERSION v${VERSION}" >&2
+            exit 1
+          fi
+          echo "Release inputs are valid."
+
+  build-artifacts:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/cli/go.mod
+          cache-dependency-path: services/cli/go.sum
+      - run: cd services/cli && go test ./...
+      - name: Build CLI
+        run: |
+          mkdir -p dist/agents-harness
+          (cd services/cli && go build -o ../../dist/agents-harness/rommie ./cmd/rommie)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agents-harness
+          path: dist/agents-harness/**/*
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [[ "${GITHUB_REF_NAME}" =~ -(alpha|beta|rc) ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          # For the v4.0.0-alpha line, start generated notes from alpha.1 so the
+          # ~15 commits between alpha.1 and the new alpha tag are included.
+          NOTES_START_FLAG=""
+          if [[ "${GITHUB_REF_NAME}" == v4.0.0-alpha.* ]]; then
+            NOTES_START_FLAG="--notes-start-tag v4.0.0-alpha.1"
+          fi
+          gh release create "${GITHUB_REF_NAME}" dist/agents-harness/* \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            ${NOTES_START_FLAG} \
+            ${PRERELEASE_FLAG}

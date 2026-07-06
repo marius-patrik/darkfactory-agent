@@ -1,0 +1,12 @@
+go 1.26
+
+use (
+	../agents-core/contracts-go
+	./engine-go
+	./services/coordination
+	./services/daemon
+	./services/db
+	./services/inferctl
+	./services/manager
+	./services/statesync
+)

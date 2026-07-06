@@ -1,0 +1,32 @@
+name: VS0 hardening
+description: Track a contract-first hardening slice for the VS0 runtime.
+title: "VS0: "
+labels: ["vs0", "hardening"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What contract, runtime behavior, or verification gap does this close?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      value: |
+        - [ ] Interfaces remain aligned with INTERFACES.md
+        - [ ] Idempotency is verified
+        - [ ] CLI/SDK path is covered
+        - [ ] Docs and handoff are updated
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      value: |
+        - [ ] pytest
+        - [ ] manifest validation
+        - [ ] VS0 run
+        - [ ] Go tests where relevant
