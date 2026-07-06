@@ -133,6 +133,14 @@ async function main() {
         "Owner/manual recovery is required."
       ].join("\n")
     );
+    const askOwnerIssue = await createStaleBranchAskOwnerIssue(branch);
+    ledger.actions.push({
+      action: "ask-owner",
+      result: "created",
+      reason: "stale-worker-branch",
+      issue: `#${askOwnerIssue.number}`,
+      branch
+    });
     await writeLedger(ledger);
     return;
   }
@@ -326,6 +334,25 @@ async function replaceIssueLabels(repository, issueNumber, add, remove) {
 
 async function createIssueComment(repository, issueNumber, body) {
   await gh.request("POST", `/repos/${repoName(repository)}/issues/${issueNumber}/comments`, { body });
+}
+
+async function createStaleBranchAskOwnerIssue(branch) {
+  await ensureLabels(gh, TARGET_REPO, WORK_LABELS);
+  await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:ask-owner", "df:blocked"], ["df:ready", "df:running", "df:done"]);
+  return await gh.request("POST", `/repos/${repoName(TARGET_REPO)}/issues`, {
+    title: `Resolve stale DarkFactory worker branch for #${TARGET_ISSUE_NUMBER}`,
+    labels: ["df:ask-owner", "df:blocked"],
+    body: [
+      "<!-- dark-factory:stale-worker-branch -->",
+      "",
+      "DarkFactory found a remote worker branch without an open worker PR.",
+      "",
+      `Source issue: #${TARGET_ISSUE_NUMBER}`,
+      `Branch: \`${branch}\``,
+      "",
+      "Owner/manual recovery is required before this lane should be dispatched again."
+    ].join("\n")
+  });
 }
 
 async function cloneRepository(repository, worktree, branch) {

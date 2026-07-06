@@ -964,6 +964,10 @@ test("df-work blocks stale remote branches without open worker PRs", async () =>
   assert.match(source, /result: "blocked"/);
   assert.match(source, /Stale worker branch exists without an open worker PR\. Owner\/manual recovery is required\./);
   assert.match(source, /replaceIssueLabels\(TARGET_REPO, TARGET_ISSUE_NUMBER, \["df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
+  assert.match(source, /createStaleBranchAskOwnerIssue\(branch\)/);
+  assert.match(source, /replaceIssueLabels\(TARGET_REPO, TARGET_ISSUE_NUMBER, \["df:ask-owner", "df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
+  assert.match(source, /dark-factory:stale-worker-branch/);
+  assert.match(source, /reason: "stale-worker-branch"/);
   assert.match(source, /no open worker PR was found/);
   assert.doesNotMatch(source, /action: "remote-branch-exists"/);
 });
