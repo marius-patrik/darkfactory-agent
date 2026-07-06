@@ -366,6 +366,17 @@ async function sequenceReadyIssues(gh, repository, state) {
   for (const issue of state.issues.filter((candidate) => isManagedWorkIssue(candidate))) {
     if (issue.labels.has("df:done") || issue.labels.has("df:running") || issue.labels.has("df:ask-owner")) continue;
 
+    if (issue.openWorkerPull && issue.labels.has("df:ready")) {
+      await replaceIssueLabels(gh, repository, issue.number, ["df:running"], ["df:ready"]);
+      actions.push({
+        action: "mark-running-existing-pr",
+        repo: repoName(repository),
+        issue: `#${issue.number}`,
+        pull: issue.openWorkerPull.number || issue.openWorkerPull.url || "open"
+      });
+      continue;
+    }
+
     const blockersClosed = blockersAreClosed(issue, state.issueByNumber);
     if (blockersClosed && issue.labels.has("df:blocked") && isDependencyOnlyBlocked(issue)) {
       await replaceIssueLabels(gh, repository, issue.number, ["df:ready"], ["df:blocked", "df:done"]);
@@ -860,6 +871,10 @@ function applySequenceActionsToState(state, actions) {
       issue.labels.add("df:ready");
       issue.labels.delete("df:blocked");
       issue.labels.delete("df:done");
+    }
+    if (action.action === "mark-running-existing-pr") {
+      issue.labels.add("df:running");
+      issue.labels.delete("df:ready");
     }
     if (action.action === "remove-ready-blocked-by") {
       issue.labels.add("df:blocked");

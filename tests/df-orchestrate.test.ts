@@ -174,9 +174,12 @@ test("orchestrator does not dispatch issues that already have an open worker PR"
 
   assert.deepEqual(result.dispatched, []);
   assert.equal(calls.some((call) => call.path.endsWith("/actions/workflows/df-work.yml/dispatches")), false);
-  assert.equal(calls.some((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/8/labels"), false);
-  assert.equal(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/8/labels/df%3Aready"), false);
-  assert.deepEqual(result.ledger.actions, []);
+  assert.deepEqual(
+    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/8/labels")?.body,
+    { labels: ["df:running"] }
+  );
+  assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/8/labels/df%3Aready"));
+  assert.ok(result.ledger.actions.some((action: any) => action.action === "mark-running-existing-pr" && action.issue === "#8"));
 });
 
 test("orchestrator records merge-policy ask-owner escalations distinctly", async () => {
