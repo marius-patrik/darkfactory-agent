@@ -10,6 +10,7 @@ import {
   findOpenWorkerPullRequestForIssue,
   getRepository,
   listActiveManagedRepos,
+  normalizedRepoName,
   parseRepo,
   preflightMergePolicy,
   readLocalJson,
@@ -231,8 +232,9 @@ export async function listOpenIssues(gh, repository) {
   return issues;
 }
 
-export function selectDispatchableIssues(openIssues) {
+export function selectDispatchableIssues(openIssues, options = {}) {
   const openIssueNumbers = new Set(openIssues.map((issue) => issue.number).filter(Number.isInteger));
+  const currentRepoName = options.repository ? normalizedRepoName(options.repository) : null;
   const occupiedLanes = new Set();
   const selectedLanes = new Set();
 
@@ -247,9 +249,18 @@ export function selectDispatchableIssues(openIssues) {
       const names = issueLabelNames(issue);
       if (!names.has("df:ready")) return false;
       if (names.has("df:running") || names.has("df:blocked") || names.has("df:done")) return false;
-      return blockedByIssueNumbers(issue.body || "").every(
-        (number) => Number.isInteger(number) && !openIssueNumbers.has(number)
-      );
+      return blockedByIssueRefs(issue.body || "", options.repository).every((ref) => {
+        if (!Number.isInteger(ref.number)) return false;
+        if (ref.repository && ref.repository !== currentRepoName) {
+          // Cross-repo references only resolve as unblocked when the referenced
+          // repository is part of the managed snapshot set and the issue is
+          // positively observed as absent/closed there. Unknown repositories
+          // hold the issue so work is never dispatched past an unverified blocker.
+          if (!options.openIssueIndex || !options.knownRepositories?.has(ref.repository)) return false;
+          return !options.openIssueIndex.has(openIssueKey(ref.repository, ref.number));
+        }
+        return !openIssueNumbers.has(ref.number);
+      });
     })
     .sort(compareReadyIssues)
     .filter((issue) => {
@@ -306,6 +317,8 @@ export function buildOrchestrationPlan(snapshots, policyInput = DEFAULT_ORCHESTR
   const counts = activeConcurrencyCounts(snapshots);
   const gateWave = globalGateWave(snapshots, policy);
   const targetIssue = options.targetIssue || null;
+  const openIssueIndex = buildOpenIssueIndex(snapshots);
+  const knownRepositories = buildKnownRepositories(snapshots);
   const candidates = [];
   const repositories = [];
 
@@ -314,7 +327,7 @@ export function buildOrchestrationPlan(snapshots, policyInput = DEFAULT_ORCHESTR
     const openIssues = Array.isArray(snapshot.openIssues) ? snapshot.openIssues : [];
     const repositoryName = repoName(repository);
     const repositoryWave = repositoryGateWave(openIssues, policy);
-    const selected = selectDispatchableIssues(openIssues)
+    const selected = selectDispatchableIssues(openIssues, { repository, openIssueIndex, knownRepositories })
       .map((issue) => ({
         repository,
         issue,
@@ -412,11 +425,12 @@ export function issueWave(issue, policyInput = DEFAULT_ORCHESTRATION_POLICY) {
 
 async function escalateOwnerDecisionIssues(gh, snapshots, warn = console.warn) {
   const escalated = [];
+  const knownRepositories = buildKnownRepositories(snapshots);
 
   for (const snapshot of snapshots) {
     const repository = snapshot.repository;
     for (const issue of snapshot.openIssues || []) {
-      const escalation = ownerDecisionEscalation(issue);
+      const escalation = ownerDecisionEscalation(issue, knownRepositories);
       if (!escalation) continue;
 
       try {
@@ -455,7 +469,7 @@ async function escalateOwnerDecisionIssues(gh, snapshots, warn = console.warn) {
   return escalated;
 }
 
-export function ownerDecisionEscalation(issue) {
+export function ownerDecisionEscalation(issue, knownRepositories = new Set()) {
   const names = issueLabelNames(issue);
   if (names.has("df:ask-owner") || names.has("df:done") || names.has("df:running")) return null;
   if (!names.has("df:ready") && !names.has("df:blocked")) return null;
@@ -476,10 +490,22 @@ export function ownerDecisionEscalation(issue) {
     };
   }
 
-  if (blockedByIssueNumbers(issue.body || "").some((number) => !Number.isInteger(number))) {
+  const refs = blockedByIssueRefs(issue.body || "");
+  if (refs.some((ref) => !Number.isInteger(ref.number))) {
     return {
       reason: "ambiguous-blocked-by",
       detail: "Blocked-by lines must reference GitHub issues as #123 or owner/repo#123."
+    };
+  }
+
+  const unknownCrossRepo = refs
+    .filter((ref) => Number.isInteger(ref.number) && ref.repository && !knownRepositories.has(ref.repository))
+    .map((ref) => ref.raw)
+    .filter(Boolean);
+  if (unknownCrossRepo.length) {
+    return {
+      reason: "unknown-cross-repo-blocked-by",
+      detail: `Blocked-by references repositories outside the managed snapshot set: ${unknownCrossRepo.join("; ")}. The orchestrator cannot verify these blockers, so owner input is required.`
     };
   }
 
@@ -619,20 +645,56 @@ function issueStreamKeys(issue) {
 }
 
 export function blockedByIssueNumbers(body) {
-  const numbers = [];
+  return blockedByIssueRefs(body).map((ref) => ref.number);
+}
+
+export function blockedByIssueRefs(body, currentRepository = null) {
+  const refs = [];
   for (const line of String(body || "").split(/\r?\n/)) {
     const match = line.match(/^\s*Blocked-by:\s*(.+)$/i);
     if (!match) continue;
 
-    const refs = [...match[1].matchAll(/(?:[\w.-]+\/[\w.-]+)?#(\d+)/g)];
-    if (refs.length === 0) {
-      numbers.push(Number.NaN);
+    const found = [...match[1].matchAll(/(?:(?<owner>[\w.-]+)\/(?<repo>[\w.-]+))?#(?<number>\d+)/g)];
+    if (found.length === 0) {
+      refs.push({ repository: null, number: Number.NaN, raw: match[1].trim() });
       continue;
     }
 
-    numbers.push(...refs.map((ref) => Number(ref[1])));
+    refs.push(...found.map((entry) => ({
+      repository: entry.groups?.owner
+        ? `${entry.groups.owner.toLowerCase()}/${entry.groups.repo.toLowerCase()}`
+        : currentRepository
+          ? normalizedRepoName(currentRepository)
+          : null,
+      number: Number(entry.groups?.number),
+      raw: entry[0]
+    })));
   }
-  return numbers;
+  return refs;
+}
+
+function buildOpenIssueIndex(snapshots) {
+  const index = new Set();
+  for (const snapshot of snapshots) {
+    for (const issue of snapshot.openIssues || []) {
+      if (Number.isInteger(issue.number)) {
+        index.add(openIssueKey(repoName(snapshot.repository), issue.number));
+      }
+    }
+  }
+  return index;
+}
+
+function buildKnownRepositories(snapshots) {
+  const repositories = new Set();
+  for (const snapshot of snapshots) {
+    repositories.add(normalizedRepoName(snapshot.repository));
+  }
+  return repositories;
+}
+
+function openIssueKey(repositoryName, issueNumber) {
+  return `${String(repositoryName).toLowerCase()}#${issueNumber}`;
 }
 
 function issueLabelNames(issue) {

@@ -198,10 +198,62 @@ test("orchestrator selects next ready issues by priority, blocked-by, and stream
     }
   ]);
 
+  // Issue 16 is held: explicit cross-repo refs never resolve without a
+  // managed snapshot index proving the referenced issues are closed.
   assert.deepEqual(
     selected.map((issue: { number: number }) => issue.number),
-    [13, 14, 16, 12]
+    [13, 14, 12]
   );
+});
+
+test("orchestrator holds and escalates unknown cross-repo Blocked-by references", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { selectDispatchableIssues, ownerDecisionEscalation } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-cross-repo-test");
+
+  const repository = { full_name: "marius-patrik/example" };
+  const knownRepositories = new Set(["marius-patrik/example", "marius-patrik/managed-peer"]);
+  const openIssueIndex = new Set(["marius-patrik/managed-peer#5"]);
+
+  const issues = [
+    {
+      number: 20,
+      body: "Blocked-by: marius-patrik/managed-peer#4",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:a" }]
+    },
+    {
+      number: 21,
+      body: "Blocked-by: marius-patrik/managed-peer#5",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:b" }]
+    },
+    {
+      number: 22,
+      body: "Blocked-by: someone-else/unknown-repo#7",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:c" }]
+    }
+  ];
+
+  const selected = selectDispatchableIssues(issues, { repository, openIssueIndex, knownRepositories });
+
+  // #20: known repo, issue absent from the open index (positively observed closed) -> dispatchable.
+  // #21: known repo, issue still open -> held.
+  // #22: unknown repo -> held, never dispatched past an unverifiable blocker.
+  assert.deepEqual(
+    selected.map((issue: { number: number }) => issue.number),
+    [20]
+  );
+
+  const escalation = ownerDecisionEscalation(issues[2], knownRepositories);
+  assert.equal(escalation?.reason, "unknown-cross-repo-blocked-by");
+  assert.ok(escalation?.detail.includes("someone-else/unknown-repo#7"));
+
+  // Known-repo cross references and same-repo references do not escalate.
+  assert.equal(ownerDecisionEscalation(issues[0], knownRepositories), null);
+  const sameRepoIssue = {
+    number: 23,
+    body: "Blocked-by: #9",
+    labels: [{ name: "df:ready" }, { name: "P1" }]
+  };
+  assert.equal(ownerDecisionEscalation(sameRepoIssue, knownRepositories), null);
 });
 
 test("orchestration plan applies wave gates and cross-repo concurrency caps", async () => {
