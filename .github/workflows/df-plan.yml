@@ -106,6 +106,12 @@ jobs:
             echo "path=.github/scripts/df-plan.mjs" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Checkout target repository scripts
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Checkout DarkFactory control scripts
         if: github.event_name != 'push'
         uses: actions/checkout@v4

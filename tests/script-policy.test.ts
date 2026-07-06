@@ -482,6 +482,7 @@ test("df-plan drift detection covers untracked open issues and PRs", async () =>
 test("df-plan workflow reacts safely to PRD edits on trusted default branches", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-plan.yml", import.meta.url), "utf8");
   const gate = workflow.indexOf("Validate trusted control ref");
+  const pushCheckout = workflow.indexOf("Checkout target repository scripts");
   const checkout = workflow.indexOf("Checkout DarkFactory control scripts");
   const token = workflow.indexOf("Mint mp-agents installation token");
 
@@ -497,11 +498,17 @@ test("df-plan workflow reacts safely to PRD edits on trusted default branches", 
   assert.match(workflow, /github\.event_name == 'workflow_dispatch'.*github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.doesNotMatch(workflow, /actions:\s+write/);
   assert.notEqual(gate, -1);
+  assert.notEqual(pushCheckout, -1);
   assert.notEqual(checkout, -1);
   assert.notEqual(token, -1);
+  assert.ok(gate < pushCheckout);
+  assert.ok(pushCheckout < token);
   assert.ok(gate < checkout);
   assert.ok(checkout < token);
   assert.match(workflow, /Resolve DarkFactory script path/);
+  assert.match(workflow, /Checkout target repository scripts/);
+  assert.match(workflow, /if:\s*github\.event_name == 'push'/);
+  assert.match(workflow, /persist-credentials:\s+false/);
   assert.match(workflow, /Checkout DarkFactory control scripts/);
   assert.match(workflow, /repository:\s+marius-patrik\/agent-darkfactory/);
   assert.match(workflow, /GITHUB_REPOSITORY_OWNER/);
