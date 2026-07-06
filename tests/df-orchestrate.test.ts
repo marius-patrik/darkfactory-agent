@@ -251,10 +251,26 @@ test("orchestrator holds and escalates unknown cross-repo Blocked-by references"
       number: 22,
       body: "Blocked-by: someone-else/unknown-repo#7",
       labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:c" }]
+    },
+    {
+      number: 27,
+      body: "Blocked-by: waiting for owner",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:e" }]
+    },
+    {
+      number: 28,
+      body: "Blocked-by: #29 or ask owner",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:f" }]
     }
   ];
 
   const selected = selectDispatchableIssues(issues, { repository, openIssueIndex, knownRepositories });
+
+  // Malformed dependency metadata always yields marker refs from the parser
+  // (never an empty list), so ready issues with malformed or partially
+  // malformed Blocked-by lines are held from dispatch.
+  assert.equal(selected.some((issue: { number: number }) => issue.number === 27), false);
+  assert.equal(selected.some((issue: { number: number }) => issue.number === 28), false);
 
   // #20: known repo, issue absent from the open index (positively observed closed) -> dispatchable.
   // #21: known repo, issue still open -> held.
