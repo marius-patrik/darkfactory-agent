@@ -27,30 +27,37 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       ${{
-        github.repository == 'marius-patrik/agent-darkfactory' &&
         (
-          github.event_name == 'schedule' ||
-          github.event_name == 'workflow_dispatch' ||
+          github.repository == 'marius-patrik/agent-darkfactory' &&
           (
-            github.event_name == 'issues' &&
-            github.event.action == 'labeled' &&
-            github.event.label.name == 'df:ready'
-          ) ||
-          (
-            github.event_name == 'issue_comment' &&
-            github.event.action == 'created' &&
-            !github.event.issue.pull_request &&
-            contains(github.event.comment.body, '/df run') &&
+            github.event_name == 'schedule' ||
+            github.event_name == 'workflow_dispatch' ||
             (
-              github.event.comment.author_association == 'OWNER' ||
-              github.event.comment.author_association == 'MEMBER' ||
-              github.event.comment.author_association == 'COLLABORATOR'
+              github.event_name == 'workflow_run' &&
+              github.event.workflow_run.head_branch == 'main' &&
+              github.event.workflow_run.conclusion == 'success'
             )
-          ) ||
+          )
+        ) ||
+        (
+          github.repository_owner == 'marius-patrik' &&
           (
-            github.event_name == 'workflow_run' &&
-            github.event.workflow_run.head_branch == 'main' &&
-            github.event.workflow_run.conclusion == 'success'
+            (
+              github.event_name == 'issues' &&
+              github.event.action == 'labeled' &&
+              github.event.label.name == 'df:ready'
+            ) ||
+            (
+              github.event_name == 'issue_comment' &&
+              github.event.action == 'created' &&
+              !github.event.issue.pull_request &&
+              contains(github.event.comment.body, '/df run') &&
+              (
+                github.event.comment.author_association == 'OWNER' ||
+                github.event.comment.author_association == 'MEMBER' ||
+                github.event.comment.author_association == 'COLLABORATOR'
+              )
+            )
           )
         )
       }}
