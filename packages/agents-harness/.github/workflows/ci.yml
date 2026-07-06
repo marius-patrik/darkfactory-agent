@@ -1,0 +1,173 @@
+name: ci
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+  push:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate harness package boundary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: services/cli/go.mod
+          cache-dependency-path: services/cli/go.sum
+
+      - uses: oven-sh/setup-bun@f4d14e03ff726c06358e5557344e1da148b56cf7 # v1
+        with:
+          bun-version: 1.3.14
+
+      - name: Go tests
+        run: |
+          go work sync
+          cd services/cli && go test ./...
+
+      - name: Package script check
+        run: bun run check
+
+      - name: Lockfile presence / consistency
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, sys, json
+          with open('package.json') as f:
+              pkg = json.load(f)
+          has_deps = bool(
+              pkg.get('dependencies') or pkg.get('devDependencies') or pkg.get('peerDependencies')
+          )
+          lock_exists = os.path.exists('bun.lock')
+          if has_deps and not lock_exists:
+              print('error: dependencies declared but bun.lock is missing')
+              sys.exit(1)
+          if lock_exists:
+              # Use Bun itself to validate lockfile consistency.
+              r = subprocess.run(
+                  ['bun', 'install', '--frozen-lockfile'],
+                  capture_output=True, text=True
+              )
+              if r.returncode != 0:
+                  print(r.stdout)
+                  print(r.stderr)
+                  sys.exit(1)
+              print('ok: bun.lock present and consistent')
+          else:
+              print('ok: no dependencies and no bun.lock')
+          PY
+
+      - name: agent.package.json schema validation
+        run: |
+          pip install jsonschema
+          python3 -m jsonschema -i agent.package.json agent.package.schema.json
+          python3 - <<'PY'
+          import json, os, sys
+          with open('agent.package.json') as f:
+              m = json.load(f)
+          if not os.path.isdir(m['workingDirectory']):
+              print(f'error: workingDirectory {m["workingDirectory"]!r} does not exist')
+              sys.exit(1)
+          print('ok: agent.package.json schema valid and workingDirectory exists')
+          PY
+
+      - name: Managed-file drift check
+        run: |
+          base_ref="${GITHUB_BASE_REF:-${GITHUB_REF_NAME:-dev}}"
+          git fetch origin "$base_ref" --depth=1
+          base_has=$(git ls-tree -d "origin/$base_ref" .darkfactory | wc -l)
+          if [ "$base_has" -eq 0 ]; then
+              echo "ok: .darkfactory is not yet on origin/$base_ref; drift check inactive"
+              exit 0
+          fi
+          if [ ! -d .darkfactory ]; then
+              echo "error: .darkfactory exists on origin/$base_ref but is missing in this PR"
+              exit 1
+          fi
+          if ! git diff --quiet "origin/$base_ref" -- .darkfactory; then
+              echo "error: .darkfactory files drift from origin/$base_ref baseline"
+              git diff "origin/$base_ref" -- .darkfactory
+              exit 1
+          fi
+          echo "ok: .darkfactory files match origin/$base_ref baseline"
+
+      - name: Submodule status check
+        run: |
+          if [ ! -f .gitmodules ]; then
+              echo "ok: no .gitmodules; submodule check skipped"
+              exit 0
+          fi
+          status=$(git submodule status --recursive)
+          if echo "$status" | grep -qE '^[-+U]'; then
+              echo "error: submodule(s) not clean/initialized"
+              echo "$status"
+              exit 1
+          fi
+          python3 - <<'PY'
+          import configparser, re, subprocess, sys
+          cfg = configparser.ConfigParser()
+          cfg.read('.gitmodules')
+          status = subprocess.check_output(['git', 'submodule', 'status', '--recursive'], text=True)
+          shas = {}
+          for line in status.splitlines():
+              m = re.match(r'^[\s\-U+]*([0-9a-f]+)\s+(\S+)', line)
+              if m:
+                  shas[m.group(2)] = m.group(1)
+          for section in cfg.sections():
+              if not section.startswith('submodule '):
+                  continue
+              name = section[len('submodule '):].strip('"')
+              branch = cfg.get(section, 'branch', fallback=None)
+              if not branch:
+                  print(f'error: submodule {name} does not declare a branch in .gitmodules')
+                  sys.exit(1)
+              path = cfg.get(section, 'path', fallback=name)
+              sha = shas.get(path)
+              if not sha:
+                  print(f'error: submodule {name} not found in status')
+                  sys.exit(1)
+              remote = f'origin/{branch}'
+              try:
+                  branches = subprocess.check_output(
+                      ['git', '-C', path, 'branch', '-r', '--contains', sha],
+                      text=True, stderr=subprocess.DEVNULL
+                  )
+              except subprocess.CalledProcessError:
+                  branches = ''
+              if remote not in branches.split():
+                  print(f'error: submodule {name} pinned {sha} is not on configured branch {remote}')
+                  sys.exit(1)
+              print(f'ok: submodule {name} pinned {sha} is on {remote}')
+          PY
+          echo "ok: submodules clean and pinned to configured branches"
+
+      - name: Release-name policy check
+        run: |
+          version_file=$(tr -d '[:space:]' < VERSION)
+          version_pkg=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
+          if [ "$version_file" != "$version_pkg" ]; then
+              echo "error: VERSION ($version_file) != package.json version ($version_pkg)"
+              exit 1
+          fi
+          release_yml=.github/workflows/release.yml
+          if ! grep -qE '^\s*name:\s*["'"'"']?agents-harness["'"'"']?\s*$' "$release_yml"; then
+              echo "error: release.yml must declare an artifact named 'agents-harness'"
+              exit 1
+          fi
+          if ! grep -qE 'path:\s*["'"'"']?dist/agents-harness' "$release_yml"; then
+              echo "error: release.yml must upload from the dist/agents-harness path"
+              exit 1
+          fi
+          echo "ok: release-name policy consistent (version=$version_file, artifact=agents-harness)"

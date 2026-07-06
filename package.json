@@ -1,16 +1,14 @@
 {
   "name": "@marius-patrik/agents-mono",
   "version": "0.1.0",
-  "description": "Root aggregator workspace for the agents-mono topology. Exposes the `agents` CLI and validates the `os/agents-manager` TypeScript test surface.",
+  "description": "Root aggregator workspace for the agents-mono topology. Exposes the `agents` CLI and validates the `packages/agents-manager` TypeScript test surface.",
   "type": "module",
   "bin": {
-    "agents": "./os/agents-manager/src/cli.ts"
+    "agents": "./packages/agents-manager/src/cli.ts"
   },
   "scripts": {
     "check": "bunx tsc --noEmit",
-    "test": "bun test os/agents-manager/test/gitmodules.test.ts os/agents-manager/test/adapters.test.ts os/agents-manager/test/packages.test.ts os/agents-manager/test/data-repos.test.ts os/agents-manager/test/harness-cli.test.ts os/agents-manager/test/secrets.test.ts os/agents-manager/test/state.test.ts",
-    "image:build": "docker build -f os/agents-os/Dockerfile -t agents-os:dev --build-arg AGENTS_OS_CHANNEL=dev .",
-    "image:smoke": "bun os/agents-os/bin/smoke.ts",
+    "test": "bun test packages/agents-manager/test/gitmodules.test.ts packages/agents-manager/test/adapters.test.ts packages/agents-manager/test/packages.test.ts packages/agents-manager/test/data-repos.test.ts packages/agents-manager/test/harness-cli.test.ts packages/agents-manager/test/secrets.test.ts packages/agents-manager/test/state.test.ts",
     "ci": "bun run check && bun run test",
     "smoke:release": "bash install/smoke-release.sh"
   },
@@ -23,5 +21,3 @@
   },
   "license": "MIT"
 }
-
-

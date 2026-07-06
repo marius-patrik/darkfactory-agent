@@ -3,11 +3,11 @@ set -euo pipefail
 
 # Smoke test for the agents CLI installer.
 # Verifies that the linked `agents` command is on PATH and resolves to this
-# checkout's `os/agents-manager/src/cli.ts`, then runs fast CLI commands
+# checkout's `packages/agents-manager/src/cli.ts`, then runs fast CLI commands
 # (`agents state init` and `agents list`).
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_SCRIPT="$ROOT_DIR/os/agents-manager/src/cli.ts"
+EXPECTED_SCRIPT="$ROOT_DIR/packages/agents-manager/src/cli.ts"
 
 if ! command -v agents >/dev/null 2>&1; then
   echo "error: agents command not found on PATH" >&2
@@ -44,7 +44,7 @@ else
   GLOBAL_PKG="$(dirname "$AGENTS_PATH")/../install/global/node_modules/@marius-patrik/agents-mono"
   GLOBAL_PKG="$(cd "$GLOBAL_PKG" 2>/dev/null && pwd -P)" || GLOBAL_PKG=""
   if [ -n "$GLOBAL_PKG" ]; then
-    RESOLVED="$GLOBAL_PKG/os/agents-manager/src/cli.ts"
+    RESOLVED="$GLOBAL_PKG/packages/agents-manager/src/cli.ts"
   fi
 fi
 

@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/marius-patrik/agents-mono/dev/insta
 ```
 
 The install script clones the repo into `~/.agents-mono`, initializes the
-required `os/agents-manager` submodule, installs dependencies, links the
+required `packages/agents-manager` submodule, installs dependencies, links the
 `agents` CLI, and smoke-tests with fast commands (`agents state init` and
 `agents list`). It does not initialize every git submodule, so `agents doctor`
 may report missing checkouts until you run `agents sync`.
@@ -53,7 +53,7 @@ agents list
 agents state init
 agents state env
 agents cli doctor
-agents packages register os/agents-harness
+agents packages register packages/agents-harness
 agents harness doctor agents-harness
 agents data repo list
 agents doctor
@@ -61,22 +61,17 @@ agents doctor
 
 ## Layout
 
-- `os/agents-core` is a submodule containing shared proto contracts, generated clients, schemas, and contract docs.
-- `os/agents-manager` is a submodule containing the `agents` CLI source and tests.
-- `os/agents-harness` is a submodule containing the managed Agents runtime harness.
-- `os/agents-workspace` is the global system workspace submodule, paired with `agentos-data`.
-- `os/llm-gateway` is a submodule containing the OpenAI-format LLM gateway, model registry routing, fallback, switchers, quota, OAuth seams, and tests.
-- `os/inference-engine` is a submodule containing the Python agent loop, Go runtime services, engine work, deploy assets, and inference architecture.
-- `os/agents-plugin` is the Rommie Codex plugin submodule.
-- `plugins/dream` is the Dream plugin submodule.
-- `agents/agent-darkfactory`, `agents/life-support`, and `agents/skyblock-agent` are managed agent submodules.
-- `apps/singularity` contains the managed Singularity app.
-- `apps/fabrica` contains the managed Fabrica app workspace.
-- `templates/darkfactory-templates` contains the Bun templates monorepo and nested template submodules.
-- `data/data-agentos` contains the private AgentOS managed data repository and migrated non-code material.
-- `workspaces/workspace-darkfactory` contains the DarkFactory workspace package, paired with `darkfactory-data`.
-- `os/agents-workspace` contains the global system workspace package, paired with `agentos-data`.
-- Future agents follow the per-agent pattern: `data/<agent-name>-data` + `workspaces/<agent-name>-workspace`.
+- `packages/agents-core` contains shared proto contracts, generated clients, schemas, and contract docs.
+- `packages/agents-manager` contains the `agents` CLI source and tests.
+- `packages/agents-harness` contains the managed Agents runtime harness.
+- `packages/llm-gateway` contains the OpenAI-format LLM gateway, model registry routing, fallback, switchers, quota, OAuth seams, and tests.
+- `packages/inference-engine` contains the Python agent loop, Go runtime services, engine work, deploy assets, and inference architecture.
+- `packages/agents-plugin` is the Rommie Codex plugin submodule.
+- `packages/dream` is the Dream plugin submodule.
+- `packages/darkfactory`, `packages/life-support`, and `packages/skyblock-agent` are managed agent submodules.
+- `packages/singularity` contains the managed Singularity app.
+- `packages/fabrica` contains the managed Fabrica app workspace.
+- `data` is the consolidated private DarkFactory + AgentOS data submodule.
 
 ## Naming contract
 
@@ -84,8 +79,8 @@ This repository uses the following names consistently. Legacy names are retained
 only where they identify an existing repo, env var, or historical concept.
 
 - `agents-mono` — the root aggregator repository and workspace (this repo).
-- `agents` — the unified management CLI implemented in `os/agents-manager`.
-- `os/agents-*` — OS/platform packages (`agents-core`, `agents-manager`, `agents-harness`).
+- `agents` — the unified management CLI implemented in `packages/agents-manager`.
+- `packages/agents-*` — OS/platform packages (`agents-core`, `agents-manager`, `agents-harness`).
 - `agentos-data` — retained compatibility name for the default git-backed data repository and its env var (`AGENTOS_DATA_ROOT`).
 - `Agentos`, `Andromeda`, `Rommie`, and similar legacy names are intentionally scoped; new docs and metadata use the current names above.
 
@@ -104,18 +99,6 @@ only where they identify an existing repo, env var, or historical concept.
 - `agents install <skill|plugin|hook|template|cli|harness> <name> <source-path-or-url>` installs shared capabilities.
 - `agents credits` shows the shared credit store.
 - `agents doctor` checks package registration and shared state.
-
-## Agents OS Container Distribution
-
-The `agents-os` image packages the agents CLI and runtime toolchains into a
-local Docker container. See `docs/agents-os/ARCHITECTURE.md` and
-`docs/agents-os/DATA-CONTRACTS.md` for the full design contract.
-
-Local image commands:
-
-- `bun run image:build` — build the `agents-os:dev` image.
-- `bun run image:smoke` — run a self-contained smoke test in a throwaway
-  container.
 
 ## Shared State
 

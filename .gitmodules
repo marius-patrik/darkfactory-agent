@@ -1,67 +1,32 @@
-[submodule "os/agents-harness"]
-	path = os/agents-harness
-	url = https://github.com/marius-patrik/agents-harness.git
-	branch = dev
-[submodule "agents/life-support"]
-	path = agents/life-support
-	url = https://github.com/marius-patrik/life-support.git
-	branch = main
-[submodule "agents/skyblock-agent"]
-	path = agents/skyblock-agent
-	url = https://github.com/marius-patrik/skyblock-agent.git
-	branch = main
-[submodule "agents/agent-darkfactory"]
-	path = agents/agent-darkfactory
-	url = https://github.com/marius-patrik/agent-darkfactory.git
-	branch = main
-[submodule "templates/darkfactory-templates"]
-	path = templates/darkfactory-templates
-	url = https://github.com/marius-patrik/darkfactory-templates.git
-	branch = dev
-[submodule "apps/singularity"]
-	path = apps/singularity
-	url = https://github.com/marius-patrik/singularity.git
-	branch = main
-[submodule "data/data-agentos"]
-	path = data/data-agentos
-	url = https://github.com/marius-patrik/data-agentos.git
-	branch = main
-[submodule "apps/fabrica"]
-	path = apps/fabrica
-	url = https://github.com/marius-patrik/Fabrica.git
-	branch = dev
-[submodule "workspaces/workspace-darkfactory"]
-	path = workspaces/workspace-darkfactory
-	url = https://github.com/marius-patrik/workspace-darkfactory.git
-	branch = main
-
-[submodule "os/agents-core"]
-	path = os/agents-core
-	url = https://github.com/marius-patrik/agents-core.git
-	branch = main
-[submodule "os/agents-manager"]
-	path = os/agents-manager
-	url = https://github.com/marius-patrik/agents-manager.git
-	branch = main
-[submodule "os/llm-gateway"]
-	path = os/llm-gateway
-	url = https://github.com/marius-patrik/llm-gateway.git
-	branch = dev
-[submodule "os/inference-engine"]
-	path = os/inference-engine
-	url = https://github.com/marius-patrik/inference-engine.git
-	branch = main
-[submodule "plugins/dream"]
-	path = plugins/dream
-	url = https://github.com/marius-patrik/dream.git
-	branch = dev
-[submodule "os/agents-plugin"]
-	path = os/agents-plugin
+[submodule "packages/agents-plugin"]
+	path = packages/agents-plugin
 	url = https://github.com/marius-patrik/agents-plugin.git
 	branch = main
-
-
-[submodule "os/agents-workspace"]
-	path = os/agents-workspace
-	url = https://github.com/marius-patrik/workspace-agents.git
+[submodule "packages/darkfactory"]
+	path = packages/darkfactory
+	url = https://github.com/marius-patrik/agent-darkfactory.git
+	branch = main
+[submodule "packages/dream"]
+	path = packages/dream
+	url = https://github.com/marius-patrik/dream.git
+	branch = dev
+[submodule "packages/fabrica"]
+	path = packages/fabrica
+	url = https://github.com/marius-patrik/Fabrica.git
+	branch = dev
+[submodule "packages/life-support"]
+	path = packages/life-support
+	url = https://github.com/marius-patrik/life-support.git
+	branch = main
+[submodule "packages/singularity"]
+	path = packages/singularity
+	url = https://github.com/marius-patrik/singularity.git
+	branch = main
+[submodule "packages/skyblock-agent"]
+	path = packages/skyblock-agent
+	url = https://github.com/marius-patrik/skyblock-agent.git
+	branch = main
+[submodule "data"]
+	path = data
+	url = https://github.com/marius-patrik/agents-data.git
 	branch = main

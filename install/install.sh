@@ -37,7 +37,7 @@ install_or_update() {
     cd "$INSTALL_DIR"
 
     echo "Initializing required submodule ..."
-    git submodule update --init --checkout os/agents-manager
+    git submodule update --init --checkout packages/agents-manager
 
     echo "Installing dependencies ..."
     bun install --frozen-lockfile
