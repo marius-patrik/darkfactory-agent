@@ -947,13 +947,18 @@ async function resolveWorkBaseBranch(gh, repository, defaultBranch) {
 
 async function blockIssueBeforeDispatch(gh, repository, issueNumber, baseBranch, mergePolicy) {
   await ensureLabels(gh, repository, WORK_LABELS);
-  await replaceIssueLabels(gh, repository, issueNumber, ["df:blocked"], ["df:ready", "df:running", "df:done"]);
+  // Merge-policy blockers are owner decisions (repository setup), not code
+  // failures: apply df:ask-owner alongside df:blocked so the lane stays
+  // visible on the owner-decision queue and dashboards instead of stalling
+  // silently.
+  await replaceIssueLabels(gh, repository, issueNumber, ["df:ask-owner", "df:blocked"], ["df:ready", "df:running", "df:done"]);
   await createIssueComment(
     gh,
     repository,
     issueNumber,
     [
-      "DarkFactory blocked this issue before worker dispatch.",
+      `<!-- ${ASK_OWNER_MARKER} issue=${issueNumber} reason=merge-policy-blocked -->`,
+      "DarkFactory blocked this issue before worker dispatch and escalated it for owner input.",
       "",
       "Blocker:",
       "",
@@ -964,7 +969,8 @@ async function blockIssueBeforeDispatch(gh, repository, issueNumber, baseBranch,
       `Target branch: \`${baseBranch}\``,
       `Repository auto-merge enabled: \`${mergePolicy.autoMergeSupported ? "yes" : "no"}\``,
       "",
-      "This is target repository setup work, not a code implementation failure."
+      "This is target repository setup work, not a code implementation failure.",
+      "Resolve the repository merge policy, then remove `df:ask-owner`/`df:blocked` and reapply `df:ready`."
     ].join("\n")
   );
 }

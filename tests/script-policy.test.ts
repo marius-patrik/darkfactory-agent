@@ -1426,8 +1426,11 @@ test("df-orchestrate blocks target auto-merge setup failures before worker dispa
   assert.notEqual(dispatchIndex, -1);
   assert.ok(blockIndex < dispatchIndex);
   assert.match(source, /if \(mergePolicy\.blocked\)/);
-  assert.match(source, /replaceIssueLabels\(gh, repository, issueNumber, \["df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
-  assert.match(source, /DarkFactory blocked this issue before worker dispatch/);
+  // Merge-policy blockers escalate for owner input (df:ask-owner + df:blocked)
+  // so the lane stays on the owner-decision queue instead of stalling silently.
+  assert.match(source, /replaceIssueLabels\(gh, repository, issueNumber, \["df:ask-owner", "df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
+  assert.match(source, /reason=merge-policy-blocked/);
+  assert.match(source, /DarkFactory blocked this issue before worker dispatch and escalated it for owner input/);
   assert.match(source, /not a code implementation failure/);
 });
 
