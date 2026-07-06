@@ -1134,12 +1134,16 @@ test("df-work blocks stale remote branches without open worker PRs", async () =>
   assert.match(source, /action: "stale-worker-branch"/);
   assert.match(source, /result: "blocked"/);
   assert.match(source, /Stale worker branch exists without an open worker PR\. Owner\/manual recovery is required\./);
-  assert.match(source, /replaceIssueLabels\(TARGET_REPO, TARGET_ISSUE_NUMBER, \["df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
   assert.match(source, /upsertStaleBranchAskOwnerIssue\(branch\)/);
   assert.match(source, /replaceIssueLabels\(TARGET_REPO, TARGET_ISSUE_NUMBER, \["df:ask-owner", "df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
-  assert.match(source, /dark-factory:stale-worker-branch issue=\$\{TARGET_ISSUE_NUMBER\} branch=\$\{slug\(branch\)\}/);
-  assert.match(source, /findOpenIssueByMarker\(TARGET_REPO, marker\)/);
-  assert.match(source, /method === "PATCH"|gh\.request\("PATCH", `\/repos\/\$\{repoName\(TARGET_REPO\)\}\/issues\/\$\{existing\.number\}`/);
+  // Recovery issues are upserted in the CONTROL repository (central owner
+  // queue), keyed by a marker that includes the target repo and issue.
+  assert.match(source, /dark-factory:stale-worker-branch repo=\$\{repoName\(TARGET_REPO\)\} issue=\$\{TARGET_ISSUE_NUMBER\} branch=\$\{slug\(branch\)\}/);
+  assert.match(source, /findOpenIssueByMarker\(CONTROL_REPO, marker\)/);
+  assert.match(source, /gh\.request\("PATCH", `\/repos\/\$\{repoName\(CONTROL_REPO\)\}\/issues\/\$\{existing\.number\}`/);
+  // The update path re-applies df:ask-owner so a recovery issue that lost the
+  // label reappears on label-driven queues.
+  assert.match(source, /gh\.request\("POST", `\/repos\/\$\{repoName\(CONTROL_REPO\)\}\/issues\/\$\{existing\.number\}\/labels`/);
   assert.match(source, /reason: "stale-worker-branch"/);
   assert.match(source, /no open worker PR was found/);
   assert.doesNotMatch(source, /action: "remote-branch-exists"/);

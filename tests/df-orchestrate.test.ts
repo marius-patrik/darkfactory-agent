@@ -198,9 +198,75 @@ test("orchestrator selects next ready issues by priority, blocked-by, and stream
     }
   ]);
 
+  // Issue 16 is held: explicit cross-repo refs never resolve without a
+  // managed snapshot index proving the referenced issues are closed.
   assert.deepEqual(
     selected.map((issue: { number: number }) => issue.number),
-    [13, 14, 16, 12]
+    [13, 14, 12]
+  );
+});
+
+test("orchestrator holds and escalates unknown cross-repo Blocked-by references", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { selectDispatchableIssues, ownerDecisionEscalation } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-cross-repo-test");
+
+  const repository = { full_name: "marius-patrik/example" };
+  const knownRepositories = new Set(["marius-patrik/example", "marius-patrik/managed-peer"]);
+  const openIssueIndex = new Set(["marius-patrik/managed-peer#5"]);
+
+  const issues = [
+    {
+      number: 20,
+      body: "Blocked-by: marius-patrik/managed-peer#4",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:a" }]
+    },
+    {
+      number: 21,
+      body: "Blocked-by: marius-patrik/managed-peer#5",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:b" }]
+    },
+    {
+      number: 22,
+      body: "Blocked-by: someone-else/unknown-repo#7",
+      labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:c" }]
+    }
+  ];
+
+  const selected = selectDispatchableIssues(issues, { repository, openIssueIndex, knownRepositories });
+
+  // #20: known repo, issue absent from the open index (positively observed closed) -> dispatchable.
+  // #21: known repo, issue still open -> held.
+  // #22: unknown repo -> held, never dispatched past an unverifiable blocker.
+  assert.deepEqual(
+    selected.map((issue: { number: number }) => issue.number),
+    [20]
+  );
+
+  const escalation = ownerDecisionEscalation(issues[2], knownRepositories);
+  assert.equal(escalation?.reason, "unknown-cross-repo-blocked-by");
+  assert.ok(escalation?.detail.includes("someone-else/unknown-repo#7"));
+
+  // Known-repo cross references and same-repo references do not escalate.
+  assert.equal(ownerDecisionEscalation(issues[0], knownRepositories), null);
+  const sameRepoIssue = {
+    number: 23,
+    body: "Blocked-by: #9",
+    labels: [{ name: "df:ready" }, { name: "P1" }]
+  };
+  assert.equal(ownerDecisionEscalation(sameRepoIssue, knownRepositories), null);
+
+  // A Blocked-by line with leftover text beyond refs and separators is
+  // ambiguous even when it contains a parseable reference: it escalates and
+  // is never dispatched on the partially-parsed dependency.
+  const partiallyMalformed = {
+    number: 24,
+    body: "Blocked-by: #12 or ask owner",
+    labels: [{ name: "df:ready" }, { name: "P1" }, { name: "stream:d" }]
+  };
+  assert.equal(ownerDecisionEscalation(partiallyMalformed, knownRepositories)?.reason, "ambiguous-blocked-by");
+  assert.deepEqual(
+    selectDispatchableIssues([partiallyMalformed], { repository, openIssueIndex, knownRepositories }),
+    []
   );
 });
 
@@ -327,6 +393,84 @@ test("orchestrator updates the L6 dashboard issue after dispatch", async () => {
   assert.match(dashboardUpdate?.body.body, new RegExp(DASHBOARD_MARKER));
   assert.match(dashboardUpdate?.body.body, /marius-patrik\/example#7/);
   assert.match(dashboardUpdate?.body.body, /AI tokens: 0/);
+});
+
+test("orchestrator escalates ambiguous sequencing to df:ask-owner without dispatch", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { ASK_OWNER_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-ask-owner-test");
+  const calls: Array<{ method: string; path: string; body?: any }> = [];
+
+  const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: []
+          }
+        }
+      };
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=1") {
+        return [
+          {
+            number: 17,
+            title: "Needs owner",
+            body: "## Sequencing\n\nBlocked-by: waiting for owner",
+            labels: [{ name: "df:ready" }, { name: "P0" }, { name: "stream:core" }]
+          }
+        ];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
+      if (method === "POST" && path === "/repos/marius-patrik/example/labels") return {};
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/17/labels") return {};
+      if (method === "DELETE" && path.startsWith("/repos/marius-patrik/example/issues/17/labels/")) return {};
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/17/comments") return {};
+      if (method === "POST" && path === "/repos/marius-patrik/agent-darkfactory/labels") return {};
+      if (method === "GET" && path === "/repos/marius-patrik/agent-darkfactory/issues?state=open&per_page=100&page=1") {
+        return [{ number: 99, body: "<!-- df-dashboard:orchestration -->", labels: [] }];
+      }
+      if (method === "PATCH" && path === "/repos/marius-patrik/agent-darkfactory/issues/99") return {};
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    writeLedger: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.dispatched, []);
+  assert.deepEqual(result.escalated, [
+    {
+      repo: "marius-patrik/example",
+      issue: 17,
+      reason: "ambiguous-blocked-by",
+      detail: "Blocked-by lines must reference GitHub issues as #123 or owner/repo#123."
+    }
+  ]);
+  assert.deepEqual(
+    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/17/labels")?.body,
+    { labels: ["df:ask-owner", "df:blocked"] }
+  );
+  assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/17/labels/df%3Aready"));
+  assert.match(
+    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/17/comments")?.body.body,
+    new RegExp(ASK_OWNER_MARKER)
+  );
+  assert.equal(calls.some((call) => call.path.endsWith("/actions/workflows/df-work.yml/dispatches")), false);
+  const dashboardUpdate = calls.find((call) => call.method === "PATCH" && call.path === "/repos/marius-patrik/agent-darkfactory/issues/99");
+  assert.match(dashboardUpdate?.body.body, /Owner Escalations/);
+  assert.match(dashboardUpdate?.body.body, /marius-patrik\/example#17/);
 });
 
 test("orchestrator turns trusted /df run comments into df:ready before dispatch", async () => {

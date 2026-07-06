@@ -151,7 +151,13 @@ async function main() {
     const codexHome = path.join(tempRoot, "codex-home");
 
     await cloneRepository(TARGET_REPO, worktree, workBaseBranch);
-    await ensureNoRemoteBranch(TARGET_REPO, branch);
+    if (await remoteBranchExists(TARGET_REPO, branch)) {
+      const staleBranchResult = await blockStaleWorkerBranch(branch);
+      ledger.status = "blocked";
+      ledger.error = staleBranchResult.message;
+      ledger.actions.push(staleBranchResult);
+      return;
+    }
     runGit(["checkout", "-b", branch], worktree);
 
     await writeCodexAuth(codexHome);
@@ -315,14 +321,111 @@ async function cloneRepository(repository, worktree, branch) {
   runGitWithAuth(["clone", "--depth", "1", "--branch", branch, url, worktree], process.cwd());
 }
 
-async function ensureNoRemoteBranch(repository, branch) {
+async function remoteBranchExists(repository, branch) {
   const refs = await gh.request(
     "GET",
     `/repos/${repoName(repository)}/git/matching-refs/heads/${encodeURIComponent(branch)}`
   );
-  if (Array.isArray(refs) && refs.some((ref) => ref.ref === `refs/heads/${branch}`)) {
-    throw new Error(`Remote branch already exists: ${branch}`);
+  return Array.isArray(refs) && refs.some((ref) => ref.ref === `refs/heads/${branch}`);
+}
+
+async function blockStaleWorkerBranch(branch) {
+  const message = [
+    `Stale worker branch exists without an open worker PR. Owner/manual recovery is required.`,
+    `Branch: ${branch}`,
+    `DarkFactory found the branch before creating a new worker branch, but no open worker PR was found for #${TARGET_ISSUE_NUMBER}.`
+  ].join(" ");
+
+  await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:ask-owner", "df:blocked"], ["df:ready", "df:running", "df:done"]);
+  await createIssueComment(
+    TARGET_REPO,
+    TARGET_ISSUE_NUMBER,
+    [
+      "DarkFactory blocked this worker before running Codex.",
+      "",
+      "Blocker:",
+      "",
+      "```text",
+      message,
+      "```",
+      "",
+      "The stale branch must be deleted, connected to an open worker PR, or otherwise resolved by the owner before this issue can be retried."
+    ].join("\n")
+  );
+
+  const askOwner = await upsertStaleBranchAskOwnerIssue(branch);
+  return {
+    action: "stale-worker-branch",
+    result: "blocked",
+    reason: "stale-worker-branch",
+    branch,
+    issue: `#${TARGET_ISSUE_NUMBER}`,
+    ask_owner_issue: askOwner,
+    message
+  };
+}
+
+async function upsertStaleBranchAskOwnerIssue(branch) {
+  // Recovery issues live in the CONTROL repository so owner decisions stay on
+  // the central DarkFactory queue/dashboard regardless of which managed repo
+  // the stale branch belongs to.
+  const marker = `<!-- dark-factory:stale-worker-branch repo=${repoName(TARGET_REPO)} issue=${TARGET_ISSUE_NUMBER} branch=${slug(branch)} -->`;
+  const title = `DarkFactory stale worker branch: ${repoName(TARGET_REPO)}#${TARGET_ISSUE_NUMBER}`;
+  const body = [
+    marker,
+    "## Owner Decision Required",
+    "",
+    `Target repository: \`${repoName(TARGET_REPO)}\``,
+    `Worker issue: #${TARGET_ISSUE_NUMBER}`,
+    `Stale branch: \`${branch}\``,
+    "",
+    "DarkFactory cannot safely reuse or overwrite this branch because no open worker PR was found for the target issue.",
+    "",
+    "## Acceptance Criteria",
+    "",
+    "- Delete the stale branch, restore the missing worker PR, or document why the branch should be preserved.",
+    "- Remove `df:ask-owner`/`df:blocked` from the original worker issue and reapply `df:ready` when it is safe to retry.",
+    "",
+    "## Token Use",
+    "",
+    "- AI tokens: 0 (deterministic worker preflight)."
+  ].join("\n");
+  const existing = await findOpenIssueByMarker(CONTROL_REPO, marker);
+
+  if (existing) {
+    const updated = await gh.request("PATCH", `/repos/${repoName(CONTROL_REPO)}/issues/${existing.number}`, {
+      title,
+      body
+    });
+    // The upsert path must enforce the escalation label on update as well as
+    // create, or a recovery issue that lost df:ask-owner disappears from
+    // label-driven dashboards and queues.
+    await gh.request("POST", `/repos/${repoName(CONTROL_REPO)}/issues/${existing.number}/labels`, {
+      labels: ["df:ask-owner"]
+    });
+    return `#${updated.number || existing.number}`;
   }
+
+  const created = await gh.request("POST", `/repos/${repoName(CONTROL_REPO)}/issues`, {
+    title,
+    body,
+    labels: ["df:ask-owner"]
+  });
+  return `#${created.number}`;
+}
+
+async function findOpenIssueByMarker(repository, marker) {
+  for (let page = 1; page <= 10; page += 1) {
+    const issues = await gh.request(
+      "GET",
+      `/repos/${repoName(repository)}/issues?state=open&per_page=100&page=${page}`
+    );
+    if (!Array.isArray(issues) || issues.length === 0) break;
+    const found = issues.find((issue) => !issue.pull_request && String(issue.body || "").includes(marker));
+    if (found) return found;
+    if (issues.length < 100) break;
+  }
+  return null;
 }
 
 async function writeCodexAuth(codexHome) {
