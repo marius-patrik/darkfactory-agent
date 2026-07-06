@@ -5,4 +5,4 @@
 - `bun run test`
 - `bun run ci`
 
-Root CI initializes only `os/agents-manager` because the root typecheck and test scripts depend on that submodule.
+Root CI needs no submodule initialization: `packages/agents-manager` is a normal folder since the packages/ restructure, and the root typecheck and test scripts run against it directly.
