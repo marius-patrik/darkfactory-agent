@@ -87,6 +87,17 @@ async function main() {
   }
   await ensureLabels(gh, TARGET_REPO, WORK_LABELS);
 
+  if (await remoteBranchExists(TARGET_REPO, branch)) {
+    ledger.status = "success";
+    ledger.actions.push({
+      action: "remote-branch-exists",
+      result: "noop",
+      branch
+    });
+    console.log(`DarkFactory worker skipped ${target} because remote branch ${branch} already exists.`);
+    return;
+  }
+
   const existingPullRequest = await findOpenWorkerPullRequestForIssue(gh, TARGET_REPO, TARGET_ISSUE_NUMBER);
   if (existingPullRequest) {
     ledger.status = "success";
@@ -151,7 +162,6 @@ async function main() {
     const codexHome = path.join(tempRoot, "codex-home");
 
     await cloneRepository(TARGET_REPO, worktree, workBaseBranch);
-    await ensureNoRemoteBranch(TARGET_REPO, branch);
     runGit(["checkout", "-b", branch], worktree);
 
     await writeCodexAuth(codexHome);
@@ -310,14 +320,12 @@ async function cloneRepository(repository, worktree, branch) {
   runGitWithAuth(["clone", "--depth", "1", "--branch", branch, url, worktree], process.cwd());
 }
 
-async function ensureNoRemoteBranch(repository, branch) {
+async function remoteBranchExists(repository, branch) {
   const refs = await gh.request(
     "GET",
     `/repos/${repoName(repository)}/git/matching-refs/heads/${encodeURIComponent(branch)}`
   );
-  if (Array.isArray(refs) && refs.some((ref) => ref.ref === `refs/heads/${branch}`)) {
-    throw new Error(`Remote branch already exists: ${branch}`);
-  }
+  return Array.isArray(refs) && refs.some((ref) => ref.ref === `refs/heads/${branch}`);
 }
 
 async function writeCodexAuth(codexHome) {

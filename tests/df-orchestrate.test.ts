@@ -129,11 +129,42 @@ test("orchestrator does not dispatch issues that already have an open worker PR"
 
   assert.deepEqual(result.dispatched, []);
   assert.equal(calls.some((call) => call.path.endsWith("/actions/workflows/df-work.yml/dispatches")), false);
-  assert.deepEqual(
-    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/8/labels")?.body,
-    { labels: ["df:running"] }
-  );
-  assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/8/labels/df%3Aready"));
+  assert.equal(calls.some((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/8/labels"), false);
+  assert.equal(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/8/labels/df%3Aready"), false);
+  assert.deepEqual(result.ledger.actions, []);
+});
+
+test("orchestrator does not dispatch candidates with running blocked or ask-owner labels", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-state-label-test");
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+  const issues = [
+    { number: 10, title: "Running", body: "", state: "open", labels: [{ name: "df:ready" }, { name: "df:running" }, { name: "roadmap" }] },
+    { number: 11, title: "Blocked", body: "", state: "open", labels: [{ name: "df:ready" }, { name: "df:blocked" }, { name: "roadmap" }] },
+    { number: 12, title: "Ask owner", body: "", state: "open", labels: [{ name: "df:ready" }, { name: "df:ask-owner" }, { name: "roadmap" }] }
+  ];
+
+  const gh = baseGithubMock(calls, { issues, graphql: async () => emptyPullRequestConnection() });
+  const baseRequest = gh.request;
+  gh.request = async (method: string, path: string, body?: unknown) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/repos/marius-patrik/example/issues/11/comments?per_page=100") return [];
+    return baseRequest(method, path, body);
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    writeLedger: false,
+    updateDashboard: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.dispatched, []);
+  assert.equal(calls.some((call) => call.path.endsWith("/actions/workflows/df-work.yml/dispatches")), false);
 });
 
 test("orchestrator sequences Blocked-by issues before dispatch", async () => {
@@ -232,7 +263,7 @@ test("orchestrator writes dashboard digest and escalates repeated failures to df
     title: "Repeated failure",
     body: "",
     state: "open",
-    labels: [{ name: "roadmap" }, { name: "df:blocked" }]
+    labels: [{ name: "roadmap" }, { name: "df:ready" }, { name: "df:blocked" }]
   };
 
   const gh = baseGithubMock(calls, {
@@ -254,6 +285,8 @@ test("orchestrator writes dashboard digest and escalates repeated failures to df
     }
     if (method === "POST" && path === "/repos/marius-patrik/example/labels") return {};
     if (method === "PATCH" && path.startsWith("/repos/marius-patrik/example/labels/")) return {};
+    if (method === "POST" && path === "/repos/marius-patrik/example/issues/9/labels") return {};
+    if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/9/labels/df%3Aready") return null;
     if (method === "POST" && path === "/repos/marius-patrik/example/issues") return { number: 100, ...body };
     if (method === "POST" && path === "/repos/marius-patrik/agent-darkfactory/issues") return { number: 200, ...body };
     throw new Error(`Unexpected GitHub request: ${method} ${path}`);
@@ -271,6 +304,11 @@ test("orchestrator writes dashboard digest and escalates repeated failures to df
   });
 
   assert.ok(calls.some((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues" && call.body.labels.includes("df:ask-owner")));
+  assert.deepEqual(
+    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/9/labels")?.body,
+    { labels: ["df:ask-owner", "df:blocked"] }
+  );
+  assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/9/labels/df%3Aready"));
   assert.ok(calls.some((call) => call.method === "POST" && call.path === "/repos/marius-patrik/agent-darkfactory/issues" && String(call.body.body).includes("orchestrator-dashboard")));
   assert.ok(result.ledger.escalations.some((action: any) => action.reason === "repeated-worker-failure"));
 });

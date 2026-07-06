@@ -180,11 +180,12 @@ export async function targetRepositories(gh, controlRepo, options = {}) {
 export async function reconstructRepositoryState(gh, repository, warn = console.warn) {
   const repo = await getRepository(gh, repository);
   const defaultBranch = repo.default_branch || "main";
-  const [issues, branch, prd, workflowRuns] = await Promise.all([
+  const [issues, branch, prd, workflowRuns, openWorkerPullsByIssue] = await Promise.all([
     listIssues(gh, repository, "open"),
     getDefaultBranchState(gh, repository, defaultBranch),
     getPrdState(gh, repository, defaultBranch),
-    getRecentWorkflowRuns(gh, repository, defaultBranch, warn)
+    getRecentWorkflowRuns(gh, repository, defaultBranch, warn),
+    listOpenWorkerPullRequestsByIssue(gh, repository)
   ]);
   const issueStates = issues.map((issue) => normalizeIssueState(issue));
   const issueByNumber = new Map(issueStates.map((issue) => [issue.number, issue]));
@@ -206,9 +207,15 @@ export async function reconstructRepositoryState(gh, repository, warn = console.
   }
 
   for (const issue of issueStates) {
-    if (!issue.labels.has("df:running") && !issue.labels.has("df:done")) continue;
-    const pull = await findOpenWorkerPullRequestForIssue(gh, repository, issue.number);
-    if (pull) openWorkerIssues.push({ issue: issue.number, pull: pull.number || pull.url || "open" });
+    if (!isManagedWorkIssue(issue)) continue;
+    const pull = openWorkerPullsByIssue.get(issue.number);
+    if (!pull) continue;
+    issue.openWorkerPull = pull;
+    openWorkerIssues.push({
+      issue: issue.number,
+      pull: pull.number || pull.url || "open",
+      branch: pull.headRefName || ""
+    });
   }
 
   const brief = {
@@ -310,6 +317,7 @@ export function dispatchCandidates(state) {
       if (!issue.labels.has("df:ready")) return false;
       if (issue.labels.has("df:running") || issue.labels.has("df:blocked") || issue.labels.has("df:done")) return false;
       if (issue.labels.has("df:ask-owner")) return false;
+      if (issue.openWorkerPull) return false;
       return blockersAreClosed(issue, state.issueByNumber);
     })
     .map((issue) => ({
@@ -359,6 +367,7 @@ async function escalateOwnerOnlyBlockers(gh, repository, state, controlRepo) {
     const repeatedWorkerFailure = issue.fixRound >= 3 || issue.blockedCommentCount >= 3;
     if (!repeatedWorkerFailure) continue;
 
+    await markSourceIssueAskOwner(gh, repository, issue);
     const ask = await ensureAskOwnerIssue(gh, repository, issue.number, {
       reason: "repeated-worker-failure",
       title: "Resolve repeated DarkFactory worker failure",
@@ -378,6 +387,14 @@ async function escalateOwnerOnlyBlockers(gh, repository, state, controlRepo) {
     });
   }
   return actions;
+}
+
+async function markSourceIssueAskOwner(gh, repository, issue) {
+  await ensureLabels(gh, repository, WORK_LABELS);
+  await replaceIssueLabels(gh, repository, issue.number, ["df:ask-owner", "df:blocked"], ["df:ready"]);
+  issue.labels.add("df:ask-owner");
+  issue.labels.add("df:blocked");
+  issue.labels.delete("df:ready");
 }
 
 async function ensureAskOwnerIssue(gh, repository, sourceIssueNumber, request) {
@@ -456,6 +473,49 @@ async function findOpenIssueByMarker(gh, repository, marker) {
     if (batch.length < 100) break;
   }
   return null;
+}
+
+async function listOpenWorkerPullRequestsByIssue(gh, repository) {
+  const query = `
+    query WorkerBranchPulls($owner: String!, $repo: String!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            number
+            title
+            url
+            headRefName
+            headRepository {
+              name
+              owner { login }
+            }
+            author { login }
+          }
+        }
+      }
+    }`;
+  const pullsByIssue = new Map();
+  let cursor = null;
+
+  for (let page = 1; page <= 20; page += 1) {
+    const data = await gh.graphql(query, { owner: repository.owner, repo: repository.repo, cursor });
+    const connection = data.repository.pullRequests;
+    for (const pull of connection.nodes) {
+      const sameRepositoryHead = pull.headRepository?.owner?.login === repository.owner && pull.headRepository?.name === repository.repo;
+      const issue = Number(pull.headRefName?.match(/^df\/(\d+)-/)?.[1]);
+      if (!sameRepositoryHead || !Number.isInteger(issue) || issue <= 0) continue;
+      if (!pullsByIssue.has(issue)) pullsByIssue.set(issue, pull);
+    }
+
+    if (!connection.pageInfo?.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+
+  return pullsByIssue;
 }
 
 function synthesizeGlobalBrief(repoStates, actions, limits) {
