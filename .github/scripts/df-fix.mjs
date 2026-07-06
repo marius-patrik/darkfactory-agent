@@ -24,6 +24,7 @@ const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const DEFAULT_MAX_ROUNDS = 3;
 const EMPTY_CHECK_SETTLE_MS = 10 * 60 * 1000;
 const REVISION_MARKER = "<!-- df-fix-revision -->";
+const CONTROL_WORKFLOW_REF = process.env.DF_CONTROL_WORKFLOW_REF?.trim() || "dev";
 
 export function parseFixRound(labels = [], body = "") {
   const rounds = [];
@@ -508,7 +509,7 @@ async function deleteHeadBranch(gh, repository, branch) {
 
 async function dispatchWorker(gh, controlRepo, repository, issueNumber, baseRefName) {
   await gh.request("POST", `/repos/${repoName(controlRepo)}/actions/workflows/df-work.yml/dispatches`, {
-    ref: "main",
+    ref: CONTROL_WORKFLOW_REF,
     inputs: {
       repo: repoName(repository),
       issue_number: String(issueNumber),

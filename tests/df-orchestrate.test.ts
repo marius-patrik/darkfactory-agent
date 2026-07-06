@@ -75,7 +75,7 @@ test("orchestrator dispatches open df:ready issues in active managed repos", asy
   assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/42/labels/df%3Aready"));
   assert.deepEqual(
     calls.find((call) => call.method === "POST" && call.path.endsWith("/actions/workflows/df-work.yml/dispatches"))?.body,
-    { ref: "main", inputs: { repo: "marius-patrik/example", issue_number: "42" } }
+    { ref: "dev", inputs: { repo: "marius-patrik/example", issue_number: "42" } }
   );
 });
 
@@ -261,6 +261,109 @@ test("orchestration plan applies wave gates and cross-repo concurrency caps", as
       ["marius-patrik/pkg-b", "hygiene", "hygiene"],
       ["marius-patrik/pkg-c", "hygiene", "features"]
     ]
+  );
+});
+
+test("orchestrator resolves Blocked-by references across managed repositories", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-cross-repo-blocked-by-test");
+
+  const policy = {
+    concurrency: { global: 4, perRepository: 2, perStream: 2 },
+    waves: [{ name: "features", streams: ["features", "default"] }],
+    dashboard: { enabled: true }
+  };
+  const blocked = buildOrchestrationPlan([
+    {
+      repository: { owner: "marius-patrik", repo: "pkg-a" },
+      openIssues: [
+        { number: 10, title: "Feature A", body: "Blocked-by: marius-patrik/pkg-b#20", labels: [{ name: "df:ready" }] }
+      ]
+    },
+    {
+      repository: { owner: "marius-patrik", repo: "pkg-b" },
+      openIssues: [
+        { number: 20, title: "Feature B", body: "", labels: [{ name: "df:running" }] }
+      ]
+    }
+  ], policy);
+
+  assert.deepEqual(blocked.candidates.map((candidate: { issue: { number: number } }) => candidate.issue.number), []);
+
+  const unblocked = buildOrchestrationPlan([
+    {
+      repository: { owner: "marius-patrik", repo: "pkg-a" },
+      openIssues: [
+        { number: 10, title: "Feature A", body: "Blocked-by: marius-patrik/pkg-b#20", labels: [{ name: "df:ready" }] }
+      ]
+    },
+    {
+      repository: { owner: "marius-patrik", repo: "pkg-b" },
+      openIssues: []
+    }
+  ], policy);
+
+  assert.deepEqual(unblocked.candidates.map((candidate: { issue: { number: number } }) => candidate.issue.number), [10]);
+});
+
+test("orchestrator escalates ambiguous sequencing to df:ask-owner", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-owner-escalation-test");
+  const calls: Array<{ method: string; path: string; body?: any }> = [];
+
+  const gh = {
+    async graphql() {
+      throw new Error("ambiguous issue must not dispatch a worker");
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=1") {
+        return [
+          {
+            number: 31,
+            title: "Needs decision",
+            body: "Blocked-by: waiting for owner",
+            labels: [{ name: "df:ready" }, { name: "roadmap" }]
+          }
+        ];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
+      if (method === "POST" && path === "/repos/marius-patrik/example/labels") return {};
+      if (method === "PATCH" && path.startsWith("/repos/marius-patrik/example/labels/")) return {};
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/31/labels") return {};
+      if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/31/labels/df%3Aready") return {};
+      if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/31/labels/df%3Arunning") return {};
+      if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/31/labels/df%3Ablocked") return {};
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/31/comments") return {};
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    writeLedger: false,
+    updateDashboard: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.dispatched, []);
+  assert.deepEqual(result.escalations, [
+    { repo: "marius-patrik/example", issue: 31, reason: "Unresolved Blocked-by reference: waiting for owner" }
+  ]);
+  assert.deepEqual(
+    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/31/labels")?.body,
+    { labels: ["df:ask-owner"] }
+  );
+  assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/31/labels/df%3Aready"));
+  assert.match(
+    calls.find((call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/31/comments")?.body.body,
+    /dark-factory:ask-owner/
   );
 });
 

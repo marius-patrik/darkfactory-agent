@@ -39,15 +39,15 @@ jobs:
             exit 1
           fi
 
-          if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
-            echo "::error::DarkFactory fix cycle can only run from refs/heads/main. Manual runs must use --ref main."
+          if [[ "${GITHUB_REF:-}" != "refs/heads/dev" ]]; then
+            echo "::error::DarkFactory fix cycle can only run from refs/heads/dev. Manual runs must use --ref dev."
             exit 1
           fi
 
       - name: Checkout installed DarkFactory fix cycle
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: dev
           path: darkfactory-control
           persist-credentials: false
 

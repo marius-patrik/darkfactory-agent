@@ -611,8 +611,7 @@ test("df-follow-through workflow validates trusted refs before privileged tokens
   assert.ok(checkout < token);
   assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.match(workflow, /GITHUB_REPOSITORY/);
-  assert.match(workflow, /GITHUB_REF_NAME.*main/);
-  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/dev/);
   assert.match(workflow, /permission-contents:\s+write/);
   assert.match(workflow, /permission-issues:\s+write/);
   assert.match(workflow, /permission-pull-requests:\s+write/);
@@ -621,7 +620,7 @@ test("df-follow-through workflow validates trusted refs before privileged tokens
   assert.match(workflow, /workflows:\s*\n\s+-\s+DarkFactory Work/);
   assert.match(workflow, /types:\s*\n\s+-\s+completed/);
   assert.match(workflow, /github\.event_name == 'workflow_run'/);
-  assert.match(workflow, /github\.event\.workflow_run\.head_branch == 'main'/);
+  assert.match(workflow, /github\.event\.workflow_run\.head_branch == 'dev'/);
   assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
   assert.doesNotMatch(workflow, /github\.ref_name|DARK_FACTORY_CONTROL_REF/);
 });
@@ -641,8 +640,8 @@ test("df-fix workflow validates trusted refs before privileged tokens", async ()
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'/);
   assert.match(workflow, /GITHUB_REPOSITORY/);
-  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
-  assert.match(workflow, /Manual runs must use --ref main/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/dev/);
+  assert.match(workflow, /Manual runs must use --ref dev/);
   assert.match(workflow, /actions:\s+write/);
   assert.match(workflow, /permission-contents:\s+write/);
   assert.match(workflow, /permission-issues:\s+write/);
@@ -653,7 +652,7 @@ test("df-fix workflow validates trusted refs before privileged tokens", async ()
   assert.doesNotMatch(workflow, /CODEX_AUTH_JSON/);
   assert.doesNotMatch(workflow, /docker|DF_WORKER_IMAGE/);
   assert.match(workflow, /path:\s+darkfactory-control/);
-  assert.match(workflow, /ref:\s+main/);
+  assert.match(workflow, /ref:\s+dev/);
   assert.match(workflow, /darkfactory-control\/\.github\/scripts\/df-fix\.mjs/);
 });
 
@@ -1312,7 +1311,7 @@ test("df-orchestrate workflow validates trusted refs before privileged tokens", 
   assert.ok(gate < token);
   assert.ok(checkout < token);
   assert.match(workflow, /GITHUB_REPOSITORY/);
-  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/dev/);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /github\.repository == 'marius-patrik\/agent-darkfactory'[\s\S]+github\.event_name == 'schedule'/);
   assert.match(workflow, /github\.repository_owner == 'marius-patrik'[\s\S]+github\.event_name == 'issues'/);
@@ -1332,7 +1331,7 @@ test("df-orchestrate workflow validates trusted refs before privileged tokens", 
   assert.match(workflow, /workflows:\s*\n\s+-\s+DarkFactory Plan\s*\n\s+-\s+DarkFactory Work\s*\n\s+-\s+DarkFactory Follow Through/);
   assert.match(workflow, /types:\s*\n\s+-\s+completed/);
   assert.match(workflow, /github\.event_name == 'workflow_run'/);
-  assert.match(workflow, /github\.event\.workflow_run\.head_branch == 'main'/);
+  assert.match(workflow, /github\.event\.workflow_run\.head_branch == 'dev'/);
   assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
 });
 
