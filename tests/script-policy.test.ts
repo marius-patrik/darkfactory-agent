@@ -461,7 +461,7 @@ test("df-plan drift detection covers untracked open issues and PRs", async () =>
   assert.match(source, /listOpenPullRequests/);
 });
 
-test("df-plan workflow reacts safely to PRD edits on main", async () => {
+test("df-plan workflow reacts safely to PRD edits on trusted default branches", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-plan.yml", import.meta.url), "utf8");
   const gate = workflow.indexOf("Validate trusted control ref");
   const checkout = workflow.indexOf("Checkout DarkFactory control scripts");
@@ -469,6 +469,7 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
 
   assert.match(workflow, /^\s+push:\s*$/m);
   assert.match(workflow, /^\s+branches:\s*$/m);
+  assert.match(workflow, /^\s+-\s+dev\s*$/m);
   assert.match(workflow, /^\s+-\s+main\s*$/m);
   assert.match(workflow, /PRD\.md/);
   assert.doesNotMatch(workflow, /raw\.githubusercontent\.com|commits\/main|method:\s*'HEAD'/);
@@ -486,8 +487,8 @@ test("df-plan workflow reacts safely to PRD edits on main", async () => {
   assert.match(workflow, /Checkout DarkFactory control scripts/);
   assert.match(workflow, /repository:\s+marius-patrik\/agent-darkfactory/);
   assert.match(workflow, /GITHUB_REPOSITORY_OWNER/);
-  assert.match(workflow, /GITHUB_REF_NAME.*main/);
-  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
+  assert.match(workflow, /GITHUB_REF_NAME.*dev.*main/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/dev.*GITHUB_REF.*refs\/heads\/main/);
   assert.doesNotMatch(workflow, /path:\s+darkfactory-control/);
   assert.match(workflow, /ref:\s+\$\{\{\s*github\.sha\s*\}\}/);
   assert.match(workflow, /if:\s*github\.event_name != 'push'/);
