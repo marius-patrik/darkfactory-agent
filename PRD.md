@@ -61,11 +61,11 @@ DarkFactory **automates** the orchestration work style; it does not replicate it
 
 ## Milestones
 
-- **M1 — Minimum work loop (dogfood ASAP)**: Actions workflow in agent-darkfactory that spawns a codex worker for one scheduled `df:ready` issue, with control-repository event triggers as a low-latency path only where control secrets are present → branch → PR → existing review gate → automerge. Acceptance: one issue in a target repo goes label-to-merged after scheduled pickup with zero terminal use. First dogfood targets: `dream` (small), then `agents-plugin`.
-- **M2 — Planning loop / PRD enforcement**: PRD→backlog reconciliation for one repo, then all. Acceptance: editing PRD.md files/updates sequenced issues automatically; drift report issue when code contradicts PRD.
+- [x] **M1 — Minimum work loop (dogfood ASAP)**: Actions workflow in agent-darkfactory that spawns a codex worker for one scheduled `df:ready` issue, with control-repository event triggers as a low-latency path only where control secrets are present → branch → PR → existing review gate → automerge. Acceptance: one issue in a target repo goes label-to-merged after scheduled pickup with zero terminal use. First dogfood targets: `dream` (small), then `agents-plugin`.
+- [x] **M2 — Planning loop / PRD enforcement**: PRD→backlog reconciliation for one repo, then all. Acceptance: editing PRD.md files/updates sequenced issues automatically; drift report issue when code contradicts PRD.
 - [x] **M3 — Orchestrator loop & streams**: L0 shipped — sequencing engine (priorities, Blocked-by graph, stream lanes, concurrency caps), cross-repo waves, scheduled orchestrator runs dispatching workers, dashboard, `df:ask-owner` escalation. Acceptance: the agents-mono backlog (113 issues) drains through DarkFactory in parallel lanes **with zero orchestrator terminal sessions** — the session that built this system is retired.
-- **M4 — Audit loop**: scheduled per-repo deep audits filing findings-as-issues feeding L4 sequencing. Acceptance: a regression (dirty submodule, red CI, stale doc) is detected and issued within one schedule period.
-- **M5 — Full replacement**: releases, managed-baseline evolution, self-improvement PRs (DarkFactory files and implements issues against its own PRD), webhook server deployment for low latency. Acceptance: a month of repo work with GitHub as the only interface.
+- [x] **M4 — Audit loop**: scheduled per-repo deep audits filing findings-as-issues feeding L4 sequencing. Acceptance: a regression (dirty submodule, red CI, stale doc) is detected and issued within one schedule period.
+- [x] **M5 — Full replacement**: releases, managed-baseline evolution, self-improvement PRs (DarkFactory files and implements issues against its own PRD), webhook server deployment for low latency. Acceptance: a month of repo work with GitHub as the only interface.
 
 ## Non-goals (now)
 
