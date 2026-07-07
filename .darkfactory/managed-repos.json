@@ -14,25 +14,29 @@
       "state": "active",
       "note": "Dogfood target from the DarkFactory PRD."
     },
-    "marius-patrik/agents-harness": {
-      "state": "active",
-      "note": "Long-term orchestration engine; follow-through may still exclude it by workflow input."
-    },
-    "marius-patrik/agents-core": {
-      "state": "active",
-      "note": "Agentos core package repository."
-    },
     "marius-patrik/agents-manager": {
       "state": "active",
-      "note": "Agentos manager package repository."
+      "note": "Renamed from agents-mono; contains the folded packages/ directory (agents-core, agents-harness, agents-manager, llm-gateway, inference-engine)."
+    },
+    "marius-patrik/agents-manager-legacy": {
+      "state": "archived",
+      "note": "Original agents-manager repo; content folded into agents-manager packages/agents-manager and repo renamed/archived."
+    },
+    "marius-patrik/agents-harness": {
+      "state": "archived",
+      "note": "Folded into agents-manager packages/agents-harness via Phase B restructure."
+    },
+    "marius-patrik/agents-core": {
+      "state": "archived",
+      "note": "Folded into agents-manager packages/agents-core via Phase B restructure."
     },
     "marius-patrik/llm-gateway": {
-      "state": "active",
-      "note": "Agentos LLM gateway package repository."
+      "state": "archived",
+      "note": "Folded into agents-manager packages/llm-gateway via Phase B restructure."
     },
     "marius-patrik/inference-engine": {
-      "state": "active",
-      "note": "Agentos inference engine package repository."
+      "state": "archived",
+      "note": "Folded into agents-manager packages/inference-engine via Phase B restructure."
     },
     "marius-patrik/darkfactory-templates": {
       "state": "archived",
@@ -55,16 +59,20 @@
       "note": "Folded into agent-darkfactory/templates/templates/template-web via Phase D restructure."
     },
     "marius-patrik/workspace-darkfactory": {
-      "state": "active",
-      "note": "DarkFactory workspace package repository."
+      "state": "archived",
+      "note": "Consolidated into private agents-data repo via Phase A restructure."
     },
     "marius-patrik/workspace-agents": {
       "state": "active",
       "note": "Agents workspace package repository."
     },
     "marius-patrik/data-agentos": {
-      "state": "active",
-      "note": "Agentos data package repository."
+      "state": "archived",
+      "note": "Consolidated into private agents-data repo via Phase A restructure."
+    },
+    "marius-patrik/agents-data": {
+      "state": "parked",
+      "note": "Private consolidated data repo (workspace-darkfactory + data-agentos)."
     },
     "marius-patrik/skyblock-agent": {
       "state": "parked",
