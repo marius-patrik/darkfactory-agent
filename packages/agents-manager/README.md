@@ -74,6 +74,16 @@ Important paths:
 
 Harness runtime data lives under `.agents/harnesses/<id>/runtime`; this repo does not use a separate `.agents/harness-runtimes` directory.
 
+## Agent State Consolidation and Cross-Machine Sync
+
+The `agents state` subcommands consolidate provider CLI state under the shared `~/.agents` directory and sync a shareable subset to the private `agents-data` repository.
+
+- `agents state status` shows whether each known tool state directory (`claude`, `codex`, `kimi`, `agents`) is in its original location, already adopted under `~/.agents/state/<tool>`, missing, or in conflict. It also reports the state repo configuration and cleanliness.
+- `agents state adopt <claude|codex|kimi>` moves the original state directory to `~/.agents/state/<tool>` and leaves a Windows directory junction (or symlink on other platforms) at the original path. It is idempotent and refuses to run if the directory is locked or would overwrite existing data. Use `--dry-run` to preview the plan.
+- `agents state sync` clones `https://github.com/marius-patrik/agents-data.git` into `~/.agents/state-repo`, copies the shareable subset of `~/.agents` into `machines/<hostname>/`, and commits, rebases, and pushes. Use `--dry-run` to list what would be synced.
+
+Sync rules are allowlist-driven from `~/.agents/state-sync.json` (created with sensible defaults on first sync). The hard denylist can never be overridden and always excludes files or directories matching secrets, credentials, tokens, keys, cookies, caches, logs, transcripts/history, and `node_modules`.
+
 ## Command Surface
 
 ```text
@@ -84,6 +94,9 @@ agents remove <name-or-path>
 agents sync
 agents state init
 agents state env
+agents state status [--json]
+agents state adopt <claude|codex|kimi> [--dry-run]
+agents state sync [--dry-run]
 agents cli list|doctor
 agents cli env <codex|claude|kimi|agy>
 agents cli materialize-creds <codex|claude|kimi|agy>

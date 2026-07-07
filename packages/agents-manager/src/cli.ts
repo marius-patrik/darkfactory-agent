@@ -25,6 +25,20 @@ import {
 } from "./packages";
 import { listSecrets, secretPath, syncGitHubSecret, writeSecret } from "./secrets";
 import { osCommand } from "./os-lifecycle";
+import {
+  defaultAgentsHome,
+  ensureSyncConfig,
+  executeAdopt,
+  executeSync,
+  formatStatus,
+  loadSyncConfig,
+  planAdopt,
+  readStateRepoStatus,
+  readToolStatus,
+  stateRepoPath,
+  toolStateSpecs,
+  type ToolStateId,
+} from "./state-consolidation";
 
 const root = process.cwd();
 const gitmodulesPath = path.join(root, ".gitmodules");
@@ -56,6 +70,9 @@ Usage:
   agents sync
   agents state init
   agents state env
+  agents state status [--json]
+  agents state adopt <claude|codex|kimi> [--dry-run]
+  agents state sync [--dry-run]
   agents cli list|doctor
   agents cli env <codex|claude|kimi|agy>
   agents cli materialize-creds <codex|claude|kimi|agy>
@@ -222,15 +239,64 @@ async function sync(): Promise<void> {
   await Bun.$`git submodule update --init --recursive`;
 }
 
-async function stateCommand(action: string | undefined): Promise<void> {
+async function stateCommand(values: string[], flags: Record<string, string | boolean>): Promise<void> {
   const state = runtimeState();
   await ensureSharedState(state);
+  const action = values[0];
   if (!action || action === "init") {
     console.log(`initialized ${path.relative(root, state.stateDir)}`);
     return;
   }
   if (action === "env") {
     console.log(await Bun.file(state.envFile).text());
+    return;
+  }
+  if (action === "status") {
+    const agentsHome = defaultAgentsHome();
+    const tools = await Promise.all(toolStateSpecs.map((spec) => readToolStatus(spec.id)));
+    const repo = await readStateRepoStatus(stateRepoPath(agentsHome));
+    const config = await loadSyncConfig(path.join(agentsHome, "state-sync.json"));
+    if (flags.json) {
+      console.log(JSON.stringify({ tools, repo, includes: config.include }, null, 2));
+      return;
+    }
+    console.log(formatStatus(tools, repo, config));
+    return;
+  }
+  if (action === "adopt") {
+    const tool = values[1] as ToolStateId | undefined;
+    if (!tool || !toolStateSpecs.some((spec) => spec.id === tool)) {
+      throw new Error("adopt requires a tool: claude, codex, or kimi");
+    }
+    const dryRun = Boolean(flags["dry-run"]);
+    if (dryRun) {
+      const plan = planAdopt(tool);
+      console.log(`plan: ${plan.action}`);
+      console.log(`  move ${plan.original}`);
+      console.log(`    to ${plan.adopted}`);
+      console.log(`  create junction ${plan.original} -> ${plan.adopted}`);
+      return;
+    }
+    const result = await executeAdopt(tool);
+    if (result.alreadyAdopted) console.log(`${tool} is already adopted`);
+    else console.log(`adopted ${tool}: ${result.original} -> ${result.adopted}`);
+    return;
+  }
+  if (action === "sync") {
+    const dryRun = Boolean(flags["dry-run"]);
+    const result = await executeSync({ dryRun });
+    if (dryRun) {
+      const allowed = result.candidates.filter((c) => !c.denied);
+      const denied = result.candidates.filter((c) => c.denied);
+      console.log(`would sync ${allowed.length} file(s) to machines/${require("node:os").hostname()}`);
+      for (const c of allowed) console.log(`  + ${c.relPath}`);
+      if (denied.length > 0) {
+        console.log(`would skip ${denied.length} file(s)`);
+        for (const c of denied) console.log(`  - ${c.relPath} (${c.denyReason})`);
+      }
+      return;
+    }
+    console.log(result.message);
     return;
   }
   throw new Error(`unknown state action: ${action}`);
@@ -810,7 +876,7 @@ async function main(): Promise<void> {
   if (command === "add") return add(values, flags);
   if (command === "remove") return remove(values[0]);
   if (command === "sync") return sync();
-  if (command === "state") return stateCommand(values[0]);
+  if (command === "state") return stateCommand(values, flags);
   if (command === "cli") return cliCommand(rest);
   if (command === "packages") return packageCommand(values, flags);
   if (command === "env") return envCommand(values, flags);

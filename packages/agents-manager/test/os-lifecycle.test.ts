@@ -4,15 +4,22 @@ import os from "node:os";
 import path from "node:path";
 import {
   buildCreatePlan,
+  checkPathSharing,
+  configuredProfiles,
   containerEnv,
   containerMounts,
   defaultContainerName,
   dockerCreateArgs,
+  isPortAvailable,
+  preflightProfile,
+  preflightProfiles,
   resolveImageRef,
+  resetDockerRunner,
   toPosixPath,
 } from "../src/os-lifecycle";
 import { upsertDataRepo } from "../src/data-repos";
 import { ensureSharedState, sharedState } from "../src/state";
+import { writeSecret } from "../src/secrets";
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -201,6 +208,9 @@ describe("agents os CLI", () => {
       await Bun.write(dockerfile, "FROM scratch\n");
       const data = await runAgents(root, ["data", "repo", "set", "darkfactory-data", "marius-patrik/agents-data", "--path", "data/workspace", "--env", "DARKFACTORY_DATA_ROOT"]);
       expect(data.code).toBe(0);
+      await mkdir(path.join(root, "data", "agentos"), { recursive: true });
+      await mkdir(path.join(root, "data", "workspace"), { recursive: true });
+      await mkdir(path.join(root, "workspaces", "darkfactory-workspace"), { recursive: true });
       const build = await runAgents(root, ["os", "image", "build", "--image", "agents-os"], env);
       expect(build.code).toBe(0);
       const doctor = await runAgents(root, ["os", "doctor"], env);
@@ -547,6 +557,171 @@ describe("agents os CLI", () => {
       expect(result.code).toBe(0);
       const calls = (await Bun.file(log).text()).trim().split(/\r?\n/);
       expect(calls[calls.length - 1]).toContain("container exec mycontainer echo hi");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("os doctor acceptance additions", () => {
+  test("checkPathSharing validates each configured host path through docker using the configured OS image", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-os-path-share-"));
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      await mkdir(state.dataDir, { recursive: true });
+      await mkdir(state.workspaceDir, { recursive: true });
+      await mkdir(path.join(root, "data", "agentos"), { recursive: true });
+      await mkdir(path.join(root, "workspaces", "darkfactory-workspace"), { recursive: true });
+
+      const passingRunner = async () => ({ code: 0, stdout: "", stderr: "" });
+      const passing = await checkPathSharing(state, { runner: passingRunner, image: "test-image" });
+      expect(passing.ok).toBe(true);
+      expect(passing.details.length).toBeGreaterThan(0);
+      expect(passing.details.every((d) => d.ok)).toBe(true);
+
+      const failingRunner = async () => ({ code: 1, stdout: "", stderr: "" });
+      const failing = await checkPathSharing(state, { runner: failingRunner, image: "test-image" });
+      expect(failing.ok).toBe(false);
+      expect(failing.details.every((d) => !d.ok)).toBe(true);
+      expect(failing.issues[0]).toContain("Docker cannot access host path");
+    } finally {
+      resetDockerRunner();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("configuredProfiles reads profiles from container records", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-os-profiles-"));
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      expect(await configuredProfiles(state)).toEqual([]);
+
+      const { ensureContainerRecord } = await import("../src/os-lifecycle");
+      await ensureContainerRecord(state, {
+        id: "agents-os-dev",
+        name: "agents-os-dev",
+        environment: "dev",
+        image: "agents-os:dev",
+        channel: "dev",
+        status: "created",
+        profiles: ["inference-engine", "llm-gateway"],
+      });
+      expect(await configuredProfiles(state)).toEqual(["inference-engine", "llm-gateway"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("preflightProfile checks required data repos, secrets and ports", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-os-preflight-"));
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+
+      const harness = await preflightProfile(state, "harness", { checkPorts: false });
+      expect(harness.ok).toBe(true);
+      expect(harness.issues).toEqual([]);
+
+      const unknown = await preflightProfile(state, "unknown-profile", { checkPorts: false });
+      expect(unknown.ok).toBe(false);
+      expect(unknown.issues).toContain("unknown profile: unknown-profile");
+
+      // Simulate missing darkfactory-data by writing a minimal data-repos file without it.
+      await Bun.write(
+        state.dataReposFile,
+        JSON.stringify([{ id: "agentos-data", repo: "marius-patrik/agentos-data", path: path.join(root, "data", "data-agentos"), branch: "main" }]),
+      );
+      const darkfactory = await preflightProfile(state, "darkfactory", { checkPorts: false });
+      expect(darkfactory.ok).toBe(false);
+      expect(darkfactory.issues).toContain("profile darkfactory requires data repo: darkfactory-data");
+
+      await writeSecret(state, "OPENAI", "sk-test");
+      const gateway = await preflightProfile(state, "llm-gateway", { checkPorts: false });
+      expect(gateway.ok).toBe(false);
+      expect(gateway.issues).toContain("profile llm-gateway requires secret: github");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("preflightProfiles aggregates issues across profiles", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-os-preflight-multi-"));
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const result = await preflightProfiles(state, ["unknown-a", "unknown-b"], { checkPorts: false });
+      expect(result.ok).toBe(false);
+      expect(result.issues).toContain("unknown profile: unknown-a");
+      expect(result.issues).toContain("unknown profile: unknown-b");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("isPortAvailable reflects port occupancy", async () => {
+    const server = await import("node:net").then((m) =>
+      m.createServer().listen(0, "127.0.0.1"),
+    );
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    try {
+      expect(await isPortAvailable(port)).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    // Port should be free after close.
+    expect(await isPortAvailable(port)).toBe(true);
+  });
+
+  test("preflightProfile respects expected ports from running containers", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-os-expected-ports-"));
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const occupiedPorts = new Set([8080]);
+      const portChecker = async (port: number) => !occupiedPorts.has(port);
+
+      // Without expected port, an occupied port is reported.
+      const withoutExpected = await preflightProfile(state, "inference-engine", {
+        checkPorts: true,
+        expectedPorts: new Set(),
+        portChecker,
+      });
+      expect(withoutExpected.issues).toContain("profile inference-engine host port 8080 is in use");
+
+      // With the port marked as expected from a running container, no port issue is reported.
+      const withExpected = await preflightProfile(state, "inference-engine", {
+        checkPorts: true,
+        expectedPorts: new Set([8080]),
+        portChecker,
+      });
+      expect(withExpected.issues).not.toContain("profile inference-engine host port 8080 is in use");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("doctor warns on profile preflight failures", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-os-doctor-profiles-"));
+    try {
+      const { env } = await fakeDocker(root);
+      const { ensureContainerRecord } = await import("../src/os-lifecycle");
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      await ensureContainerRecord(state, {
+        id: "agents-os-dev",
+        name: "agents-os-dev",
+        environment: "dev",
+        image: "agents-os:dev",
+        channel: "dev",
+        status: "created",
+        profiles: ["llm-gateway"],
+      });
+      const result = await runAgents(root, ["os", "doctor"], env);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("profile llm-gateway requires secret: openai");
+      expect(result.stderr).toContain("profile llm-gateway requires secret: github");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

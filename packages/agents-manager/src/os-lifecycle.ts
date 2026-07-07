@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 import path from "node:path";
+import crypto from "node:crypto";
+import { createServer } from "node:net";
 import { mkdir, rm, stat } from "node:fs/promises";
 import type { SharedState } from "./state";
 import { ensureSharedState, sharedStateFromEnv } from "./state";
@@ -7,6 +9,7 @@ import type { DataRepoRegistration } from "./data-repos";
 import { readDataRepos } from "./data-repos";
 import type { ContainerPackageRecord, OsContainerRecord } from "./environments";
 import { readPackagesAndEnvironmentsState, writePackagesAndEnvironmentsState } from "./environments";
+import { listSecrets } from "./secrets";
 
 export interface DockerMount {
   host: string;
@@ -335,6 +338,195 @@ export function resolveImageRef(image: string, channel: string): string {
   return `${image}:${channel}`;
 }
 
+export interface PathSharingResult {
+  ok: boolean;
+  issues: string[];
+  details: Array<{ host: string; container: string; ok: boolean }>;
+}
+
+async function isDirectory(file: string): Promise<boolean> {
+  try {
+    const info = await stat(file);
+    return info.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function collectPathSharingPaths(state: SharedState): Promise<Array<{ host: string; container: string }>> {
+  const paths: Array<{ host: string; container: string }> = [
+    { host: state.stateDir, container: "/agents/state" },
+    { host: state.dataDir, container: "/agents/data" },
+    { host: state.workspaceDir, container: "/workspace/agents" },
+    { host: path.join(state.root, "workspaces", "darkfactory-workspace"), container: "/workspace/darkfactory" },
+  ];
+  for (const repo of await readDataRepos(state)) {
+    const containerPath = containerDataRepoPath(repo);
+    if (paths.some((p) => p.container === containerPath)) continue;
+    paths.push({ host: repo.path, container: containerPath });
+  }
+  return paths;
+}
+
+export async function checkPathSharing(
+  state: SharedState,
+  options?: { image?: string; runner?: DockerRunner },
+): Promise<PathSharingResult> {
+  const runner = options?.runner ?? runDocker;
+  const osImages = (await readOsState(state)).images;
+  const firstImage = osImages[0];
+  const image = options?.image ?? (firstImage ? resolveImageRef(firstImage.image, firstImage.tags?.[0] || "dev") : undefined);
+  if (!image) {
+    return { ok: true, issues: [], details: [] };
+  }
+
+  const paths = await collectPathSharingPaths(state);
+  const details: Array<{ host: string; container: string; ok: boolean }> = [];
+  const issues: string[] = [];
+
+  for (const [index, { host, container }] of paths.entries()) {
+    if (!(await isDirectory(host))) {
+      details.push({ host, container, ok: false });
+      issues.push(`Configured host path does not exist: ${host}`);
+      continue;
+    }
+    const pathSentinel = `.agents-pathcheck-${crypto.randomUUID()}-${index}`;
+    try {
+      await Bun.write(path.join(host, pathSentinel), "ok");
+      const sentinelContainerPath = `${container}/${pathSentinel}`;
+      const args = ["run", "--rm", "--entrypoint", "cat", "-v", `${toPosixPath(host)}:${container}:ro`, image, sentinelContainerPath];
+      const result = await runner(args, { cwd: state.root, env: process.env });
+      const ok = result.code === 0;
+      details.push({ host, container, ok });
+      if (!ok) {
+        issues.push(`Docker cannot access host path ${host}; verify Docker Desktop path sharing or permissions`);
+      }
+    } catch {
+      details.push({ host, container, ok: false });
+      issues.push(`Cannot write sentinel to host path ${host}; check permissions`);
+    } finally {
+      try {
+        await rm(path.join(host, pathSentinel));
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  }
+
+  return { ok: issues.length === 0, issues, details };
+}
+
+export async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+export interface ProfilePreflightResult {
+  ok: boolean;
+  issues: string[];
+}
+
+async function readSharedEnv(state: SharedState): Promise<Record<string, string>> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  try {
+    const text = await Bun.file(state.envFile).text();
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq === -1) continue;
+      env[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+    }
+  } catch {
+    // env file may not exist yet
+  }
+  return env;
+}
+
+export async function configuredProfiles(state: SharedState): Promise<string[]> {
+  const { containers } = await readOsState(state);
+  const set = new Set<string>();
+  for (const container of containers) {
+    for (const profile of container.profiles ?? []) {
+      set.add(profile);
+    }
+  }
+  return [...set];
+}
+
+function expectedPortsForProfiles(containers: OsContainerRecord[], profiles: string[]): Set<number> {
+  const expected = new Set<number>();
+  for (const container of containers) {
+    if (container.status !== "running") continue;
+    for (const profile of container.profiles ?? []) {
+      if (!profiles.includes(profile)) continue;
+      for (const port of container.ports ?? []) {
+        expected.add(port.host);
+      }
+    }
+  }
+  return expected;
+}
+
+export async function preflightProfile(
+  state: SharedState,
+  profile: string,
+  options?: { checkPorts?: boolean; expectedPorts?: Set<number>; portChecker?: (port: number) => Promise<boolean> },
+): Promise<ProfilePreflightResult> {
+  const issues: string[] = [];
+  const config = profileConfigs[profile];
+  if (!config) {
+    return { ok: false, issues: [`unknown profile: ${profile}`] };
+  }
+
+  const dataRepos = await readDataRepos(state);
+  const secrets = await listSecrets(state);
+  const env = await readSharedEnv(state);
+  const expectedPorts = options?.expectedPorts ?? new Set<number>();
+  const portChecker = options?.portChecker ?? isPortAvailable;
+
+  for (const key of config.requires?.env ?? []) {
+    if (!(key in env) || env[key] === "") issues.push(`profile ${profile} requires env ${key}`);
+  }
+  for (const id of config.requires?.dataRepos ?? []) {
+    if (!dataRepos.find((repo) => repo.id === id)) issues.push(`profile ${profile} requires data repo: ${id}`);
+  }
+  const secretSet = new Set(secrets.map((name) => name.toLowerCase()));
+  for (const name of config.requires?.secrets ?? []) {
+    if (!secretSet.has(name.toLowerCase())) issues.push(`profile ${profile} requires secret: ${name}`);
+  }
+  if (options?.checkPorts !== false) {
+    for (const port of config.ports ?? []) {
+      if (expectedPorts.has(port.host)) continue;
+      if (!(await portChecker(port.host))) issues.push(`profile ${profile} host port ${port.host} is in use`);
+    }
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
+export async function preflightProfiles(
+  state: SharedState,
+  profiles: string[],
+  options?: { checkPorts?: boolean; expectedPorts?: Set<number> },
+): Promise<ProfilePreflightResult> {
+  const issues: string[] = [];
+  for (const profile of profiles) {
+    const result = await preflightProfile(state, profile, options);
+    issues.push(...result.issues);
+  }
+  return { ok: issues.length === 0, issues };
+}
+
 function requireName(values: string[], index: number): string {
   const name = values[index];
   if (!name) throw new Error("name is required");
@@ -414,25 +606,39 @@ export async function osCommand(rawArgs: string[]): Promise<void> {
 }
 
 async function osDoctor(state: SharedState, flags: Record<string, string | boolean>): Promise<void> {
-  const issues: string[] = [];
+  const stateIssues: string[] = [];
   const docker = await runDocker(["--version"], { cwd: state.root, env: process.env });
-  if (docker.code !== 0) issues.push("docker not available; install Docker Desktop or Docker Engine");
+  if (docker.code !== 0) stateIssues.push("docker not available; install Docker Desktop or Docker Engine");
 
   for (const file of [state.envFile, state.packagesFile, state.dataReposFile, state.environmentsFile]) {
-    if (!(await exists(file))) issues.push(`missing shared state file: ${file}`);
+    if (!(await exists(file))) stateIssues.push(`missing shared state file: ${file}`);
   }
 
   const dataRepos = await readDataRepos(state);
   for (const id of ["agentos-data", "darkfactory-data"]) {
-    if (!dataRepos.find((r) => r.id === id)) issues.push(`missing data repo registration: ${id}`);
+    if (!dataRepos.find((r) => r.id === id)) stateIssues.push(`missing data repo registration: ${id}`);
   }
 
   const osState = await readOsState(state);
-  if (osState.images.length === 0) issues.push("no OS images configured; run agents os image build or pull");
+  if (osState.images.length === 0) stateIssues.push("no OS images configured; run agents os image build or pull");
+
+  const pathSharing = docker.code === 0 ? await checkPathSharing(state) : undefined;
+  const profiles = await configuredProfiles(state);
+  const expectedPorts = expectedPortsForProfiles(osState.containers, profiles);
+  const profilePreflight =
+    profiles.length > 0
+      ? await preflightProfiles(state, profiles, { checkPorts: true, expectedPorts })
+      : { ok: true, issues: [] as string[] };
+
+  const issues: string[] = [...stateIssues];
+  if (pathSharing && !pathSharing.ok) issues.push(...pathSharing.issues);
+  if (!profilePreflight.ok) issues.push(...profilePreflight.issues);
 
   const report = {
     docker: docker.code === 0 ? { ok: true, version: docker.stdout.trim() } : { ok: false, error: docker.stderr.trim() || "docker not found" },
-    state: issues.filter((i) => i.includes("missing")),
+    pathSharing: pathSharing ? { ok: pathSharing.ok, paths: pathSharing.details } : undefined,
+    profiles: { configured: profiles, ok: profilePreflight.ok, issues: profilePreflight.issues },
+    state: stateIssues.filter((i) => i.includes("missing")),
     images: osState.images.map((i) => ({ id: i.id, image: i.image, tags: i.tags })),
     containers: osState.containers.map((c) => ({ name: c.name, status: c.status, image: c.image })),
   };
@@ -442,7 +648,15 @@ async function osDoctor(state: SharedState, flags: Record<string, string | boole
   } else {
     if (docker.code === 0) console.log(`ok docker ${docker.stdout.trim()}`);
     else console.error(report.docker.error);
-    for (const issue of issues) console.error(`warn ${issue}`);
+    if (pathSharing) {
+      if (pathSharing.ok) console.log("ok path-sharing");
+      else for (const issue of pathSharing.issues) console.error(`warn ${issue}`);
+    }
+    if (profiles.length > 0) {
+      if (profilePreflight.ok) console.log("ok profiles");
+      else for (const issue of profilePreflight.issues) console.error(`warn ${issue}`);
+    }
+    for (const issue of stateIssues) console.error(`warn ${issue}`);
   }
 
   if (issues.length > 0 || docker.code !== 0) process.exitCode = 1;
@@ -682,15 +896,44 @@ async function osRemove(
   }
 }
 
-const profilePorts: Record<string, Array<{ name: string; container: number; host: number }>> = {
-  harness: [],
-  "inference-engine": [{ name: "http", container: 8080, host: 8080 }],
-  "llm-gateway": [{ name: "http", container: 8787, host: 8787 }],
-  darkfactory: [],
-  "full-system": [
-    { name: "http", container: 8080, host: 8080 },
-    { name: "gateway", container: 8787, host: 8787 },
-  ],
+export interface ProfileConfig {
+  ports?: Array<{ name: string; container: number; host: number }>;
+  requires?: {
+    env?: string[];
+    dataRepos?: string[];
+    secrets?: string[];
+  };
+}
+
+const profileConfigs: Record<string, ProfileConfig> = {
+  harness: { ports: [], requires: { env: ["AGENTS_HOME", "AGENTS_DATA", "AGENTS_WORKSPACE"], dataRepos: ["agentos-data"] } },
+  "inference-engine": {
+    ports: [{ name: "http", container: 8080, host: 8080 }],
+    requires: { env: ["AGENTS_HOME", "AGENTS_DATA", "AGENTS_WORKSPACE"], dataRepos: ["agentos-data"] },
+  },
+  "llm-gateway": {
+    ports: [{ name: "http", container: 8787, host: 8787 }],
+    requires: {
+      env: ["AGENTS_HOME", "AGENTS_DATA", "AGENTS_WORKSPACE", "AGENTS_CREDITS"],
+      dataRepos: ["agentos-data"],
+      secrets: ["openai", "github"],
+    },
+  },
+  darkfactory: {
+    ports: [],
+    requires: { env: ["AGENTS_HOME", "AGENTS_DATA", "AGENTS_WORKSPACE"], dataRepos: ["agentos-data", "darkfactory-data"], secrets: ["github"] },
+  },
+  "full-system": {
+    ports: [
+      { name: "http", container: 8080, host: 8080 },
+      { name: "gateway", container: 8787, host: 8787 },
+    ],
+    requires: {
+      env: ["AGENTS_HOME", "AGENTS_DATA", "AGENTS_WORKSPACE", "AGENTS_CREDITS"],
+      dataRepos: ["agentos-data", "darkfactory-data"],
+      secrets: ["openai", "github"],
+    },
+  },
 };
 
 async function osDeploy(
@@ -699,7 +942,7 @@ async function osDeploy(
   flags: Record<string, string | boolean>,
   options: DockerRunnerOptions,
 ): Promise<void> {
-  if (!Object.prototype.hasOwnProperty.call(profilePorts, profile)) {
+  if (!Object.prototype.hasOwnProperty.call(profileConfigs, profile)) {
     throw new Error(`unknown profile: ${profile}`);
   }
   const environment = String(flags.env || "agents-os");
@@ -713,7 +956,7 @@ async function osDeploy(
     image: resolveImageRef(image, channel),
     environment,
     channel,
-    ports: profilePorts[profile],
+    ports: profileConfigs[profile].ports ?? [],
     network: typeof flags.network === "string" ? flags.network : undefined,
     restart: typeof flags.restart === "string" ? flags.restart : "no",
     includeSecrets: Boolean(flags["with-secrets"]),
@@ -753,7 +996,7 @@ async function osDeploy(
       image: resolveImageRef(image, channel),
       channel,
       status: started ? "running" : "created",
-      ports: profilePorts[profile],
+      ports: profileConfigs[profile].ports ?? [],
       profiles: [profile],
     });
   }
