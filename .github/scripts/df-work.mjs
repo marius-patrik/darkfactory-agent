@@ -68,7 +68,6 @@ async function main() {
   const target = `${repoName(TARGET_REPO)}#${TARGET_ISSUE_NUMBER}`;
   const resumeInfo = await buildResumeInfo(TARGET_REPO, TARGET_ISSUE_NUMBER);
   const branch = resumeInfo?.branch || `df/${TARGET_ISSUE_NUMBER}-${slug(issue.title)}`;
-  ledger.resume = resumeInfo ? { type: resumeInfo.type, branch: resumeInfo.branch } : null;
   const providerRegistry = await loadProviderRegistry(CONTROL_ROOT);
   const candidateProviders = availableProviders(providerRegistry, process.env);
 
@@ -89,6 +88,8 @@ async function main() {
       note: "provider token counters are not exposed to this script yet"
     }
   };
+
+  ledger.resume = resumeInfo ? { type: resumeInfo.type, branch: resumeInfo.branch } : null;
   let tempRoot = "";
   let pullRequest = null;
 
