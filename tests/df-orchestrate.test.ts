@@ -1186,3 +1186,428 @@ test("orchestrator ignores event runs for inactive managed repositories", async 
     else process.env.GITHUB_EVENT_PAYLOAD = previousPayload;
   }
 });
+
+
+function runningIssue(number: number, title: string) {
+  return {
+    number,
+    title,
+    body: "Implement the thing.",
+    labels: [{ name: "df:running" }, { name: "P1" }],
+    created_at: "2026-07-01T00:00:00Z"
+  };
+}
+
+function workerStartedComment(createdAt: string) {
+  return {
+    body: "DarkFactory worker started for `marius-patrik/example#55` from `schedule`.",
+    created_at: createdAt
+  };
+}
+
+function workerOpenedComment(createdAt: string) {
+  return {
+    body: "DarkFactory worker opened https://github.com/marius-patrik/example/pull/21.",
+    created_at: createdAt
+  };
+}
+
+function runningLabelEvent(createdAt: string) {
+  return {
+    event: "labeled",
+    label: { name: "df:running" },
+    created_at: createdAt
+  };
+}
+
+test("orchestrator resumes an interrupted worker from a pushed branch", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate, RECOVERY_MARKER } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-branch-test");
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: []
+          }
+        }
+      };
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=1") {
+        return [runningIssue(55, "Resume from branch")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/55/comments?per_page=100&page=1") {
+        return [workerStartedComment("2026-07-07T10:00:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/55/comments?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/55/timeline?per_page=100&page=1") {
+        return [runningLabelEvent("2026-07-07T09:59:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/55/timeline?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
+      if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") {
+        const notFound = Object.assign(new Error("not found"), { status: 404 });
+        throw notFound;
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/git/matching-refs/heads/df%2F55-") {
+        return [{ ref: "refs/heads/df/55-resume-from-branch" }];
+      }
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/55/comments") return {};
+      if (method === "POST" && path === "/repos/marius-patrik/agent-darkfactory/actions/workflows/df-work.yml/dispatches") return null;
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    trigger: "schedule",
+    writeLedger: false,
+    updateDashboard: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.resumed, [
+    { repo: "marius-patrik/example", issue: 55, kind: "branch", branch: "df/55-resume-from-branch", pr: undefined }
+  ]);
+  assert.deepEqual(result.requeued, []);
+  assert.deepEqual(result.dispatched, []);
+
+  const dispatch = calls.find(
+    (call) => call.method === "POST" && call.path === "/repos/marius-patrik/agent-darkfactory/actions/workflows/df-work.yml/dispatches"
+  );
+  assert.ok(dispatch);
+  assert.deepEqual(dispatch?.body, {
+    ref: "main",
+    inputs: {
+      repo: "marius-patrik/example",
+      issue_number: "55",
+      base_ref: "main",
+      resume_branch: "df/55-resume-from-branch"
+    }
+  });
+
+  const recoveryComment = calls.find(
+    (call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/55/comments"
+  );
+  assert.ok(recoveryComment);
+  assert.match(String((recoveryComment?.body as { body?: string }).body), new RegExp(RECOVERY_MARKER));
+  assert.match(String((recoveryComment?.body as { body?: string }).body), /df\/55-resume-from-branch/);
+});
+
+test("orchestrator resumes an interrupted worker against an existing PR", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate, RECOVERY_MARKER } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-pr-test");
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                id: "PR_77",
+                number: 77,
+                title: "Worker PR",
+                body: "<!-- dark-factory:worker-pr issue=56 -->\n\nCloses #56",
+                url: "https://github.com/marius-patrik/example/pull/77",
+                headRefName: "df/56-resume-against-pr",
+                baseRefName: "main",
+                headRepository: { owner: { login: "marius-patrik" }, name: "example" },
+                author: { login: "mp-agents[bot]" }
+              }
+            ]
+          }
+        }
+      };
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=1") {
+        return [runningIssue(56, "Resume against PR")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/56/comments?per_page=100&page=1") {
+        return [workerStartedComment("2026-07-07T10:00:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/56/comments?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/56/timeline?per_page=100&page=1") {
+        return [runningLabelEvent("2026-07-07T09:59:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/56/timeline?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
+      if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") {
+        const notFound = Object.assign(new Error("not found"), { status: 404 });
+        throw notFound;
+      }
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/56/comments") return {};
+      if (method === "POST" && path === "/repos/marius-patrik/agent-darkfactory/actions/workflows/df-work.yml/dispatches") return null;
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    trigger: "schedule",
+    writeLedger: false,
+    updateDashboard: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.resumed, [
+    { repo: "marius-patrik/example", issue: 56, kind: "pr", branch: "df/56-resume-against-pr", pr: 77 }
+  ]);
+  assert.deepEqual(result.requeued, []);
+  assert.deepEqual(result.dispatched, []);
+
+  const dispatch = calls.find(
+    (call) => call.method === "POST" && call.path === "/repos/marius-patrik/agent-darkfactory/actions/workflows/df-work.yml/dispatches"
+  );
+  assert.ok(dispatch);
+  assert.deepEqual(dispatch?.body, {
+    ref: "main",
+    inputs: {
+      repo: "marius-patrik/example",
+      issue_number: "56",
+      base_ref: "main",
+      resume_branch: "df/56-resume-against-pr",
+      resume_pr_number: "77"
+    }
+  });
+
+  const recoveryComment = calls.find(
+    (call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/56/comments"
+  );
+  assert.ok(recoveryComment);
+  assert.match(String((recoveryComment?.body as { body?: string }).body), new RegExp(RECOVERY_MARKER));
+  assert.match(String((recoveryComment?.body as { body?: string }).body), /#77/);
+});
+
+test("orchestrator requeues an interrupted worker with no usable branch", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate, RECOVERY_MARKER } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-requeue-test");
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: []
+          }
+        }
+      };
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=1") {
+        return [runningIssue(57, "Requeue me")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/57/comments?per_page=100&page=1") {
+        return [workerStartedComment("2026-07-07T10:00:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/57/comments?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/57/timeline?per_page=100&page=1") {
+        return [runningLabelEvent("2026-07-07T09:59:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/57/timeline?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/git/matching-refs/heads/df%2F57-") return [];
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/57/labels") return {};
+      if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/57/labels/df%3Arunning") return null;
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/57/comments") return {};
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    trigger: "schedule",
+    writeLedger: false,
+    updateDashboard: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.resumed, []);
+  assert.deepEqual(result.requeued, [{ repo: "marius-patrik/example", issue: 57, reason: "no-usable-branch" }]);
+  assert.deepEqual(result.dispatched, []);
+
+  const labelUpdate = calls.find(
+    (call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/57/labels"
+  );
+  assert.deepEqual(labelUpdate?.body, { labels: ["df:ready"] });
+  assert.ok(calls.some((call) => call.method === "DELETE" && call.path === "/repos/marius-patrik/example/issues/57/labels/df%3Arunning"));
+
+  const recoveryComment = calls.find(
+    (call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/57/comments"
+  );
+  assert.ok(recoveryComment);
+  assert.match(String((recoveryComment?.body as { body?: string }).body), new RegExp(RECOVERY_MARKER));
+  assert.match(String((recoveryComment?.body as { body?: string }).body), /no usable branch/);
+});
+
+test("orchestrator does not recover a running issue that already has a terminal comment", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-no-recovery-test");
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+
+  const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: []
+          }
+        }
+      };
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=1") {
+        return [runningIssue(58, "Already terminal")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/58/comments?per_page=100&page=1") {
+        return [
+          workerStartedComment("2026-07-07T10:00:00Z"),
+          workerOpenedComment("2026-07-07T10:30:00Z")
+        ];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/58/comments?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/58/timeline?per_page=100&page=1") {
+        return [runningLabelEvent("2026-07-07T09:59:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/58/timeline?per_page=100&page=2") return [];
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    trigger: "schedule",
+    writeLedger: false,
+    updateDashboard: false,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.resumed, []);
+  assert.deepEqual(result.requeued, []);
+  assert.deepEqual(result.dispatched, []);
+  assert.equal(calls.some((call) => call.path.includes("/actions/workflows/df-work.yml/dispatches")), false);
+  assert.equal(calls.some((call) => call.path === "/repos/marius-patrik/example/issues/58/comments"), false);
+});
+
+test("orchestrator surfaces resumed interrupted runs on the dashboard", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { orchestrate, DASHBOARD_MARKER } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-dashboard-test");
+  const calls: Array<{ method: string; path: string; body?: any }> = [];
+
+  const gh = {
+    async graphql() {
+      return {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: []
+          }
+        }
+      };
+    },
+    async request(method: string, path: string, body?: unknown) {
+      calls.push({ method, path, body });
+
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=1") {
+        return [runningIssue(59, "Resume for dashboard")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/59/comments?per_page=100&page=1") {
+        return [workerStartedComment("2026-07-07T10:00:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/59/comments?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/59/timeline?per_page=100&page=1") {
+        return [runningLabelEvent("2026-07-07T09:59:00Z")];
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/issues/59/timeline?per_page=100&page=2") return [];
+      if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
+      if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") {
+        const notFound = Object.assign(new Error("not found"), { status: 404 });
+        throw notFound;
+      }
+      if (method === "GET" && path === "/repos/marius-patrik/example/git/matching-refs/heads/df%2F59-") {
+        return [{ ref: "refs/heads/df/59-resume-for-dashboard" }];
+      }
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/59/comments") return {};
+      if (method === "POST" && path === "/repos/marius-patrik/agent-darkfactory/actions/workflows/df-work.yml/dispatches") return null;
+      if (method === "POST" && path === "/repos/marius-patrik/agent-darkfactory/labels") return {};
+      if (method === "GET" && path === "/repos/marius-patrik/agent-darkfactory/issues?state=open&per_page=100&page=1") {
+        return [{ number: 99, body: `<!-- ${DASHBOARD_MARKER} -->`, labels: [] }];
+      }
+      if (method === "PATCH" && path === "/repos/marius-patrik/agent-darkfactory/issues/99") return {};
+
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+
+  const result = await orchestrate({
+    gh,
+    controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
+    registry: { repositories: { "marius-patrik/example": { state: "active" } } },
+    repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
+    policy: {
+      concurrency: { global: 2, perRepository: 1, perStream: 1 },
+      waves: [{ name: "features", streams: ["features", "default"] }],
+      dashboard: { enabled: true, issueTitle: "Dashboard" }
+    },
+    trigger: "schedule",
+    writeLedger: false,
+    updateDashboard: true,
+    warn: () => {},
+    log: () => {}
+  });
+
+  assert.deepEqual(result.resumed, [
+    { repo: "marius-patrik/example", issue: 59, kind: "branch", branch: "df/59-resume-for-dashboard", pr: undefined }
+  ]);
+
+  const dashboardUpdate = calls.find(
+    (call) => call.method === "PATCH" && call.path === "/repos/marius-patrik/agent-darkfactory/issues/99"
+  );
+  assert.equal(dashboardUpdate?.body.title, "Dashboard");
+  assert.match(dashboardUpdate?.body.body, new RegExp(DASHBOARD_MARKER));
+  assert.match(dashboardUpdate?.body.body, /## Resumed Interrupted Runs/);
+  assert.match(dashboardUpdate?.body.body, /marius-patrik\/example#59/);
+  assert.match(dashboardUpdate?.body.body, /df\/59-resume-for-dashboard/);
+});

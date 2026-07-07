@@ -833,12 +833,18 @@ test("df-work workflow uses the app token for control-dispatched workers", async
   assert.match(workflow, /DF_TARGET_BASE_REF: \$\{\{ inputs\.base_ref \}\}/);
   assert.match(source, /const TOKEN = requiredEnv\("DARK_FACTORY_TOKEN"\)/);
   assert.match(source, /const TARGET_BASE_REF = process\.env\.DF_TARGET_BASE_REF/);
+  assert.match(source, /const RESUME_BRANCH = process\.env\.DF_RESUME_BRANCH/);
+  assert.match(source, /const RESUME_PR_NUMBER = Number\(process\.env\.DF_RESUME_PR_NUMBER/);
   assert.match(source, /resolveWorkBaseBranch\(TARGET_REPO, repo\.default_branch, TARGET_BASE_REF\)/);
   assert.match(source, /\/git\/ref\/heads\/\$\{encodeRefPath\(branch\)\}/);
   assert.match(source, /split\("\/"\)\.map\(encodeURIComponent\)\.join\("\/"\)/);
-  assert.match(source, /runGit\(\["push", "origin", `HEAD:refs\/heads\/\$\{branch\}`\], worktree\)/);
+  assert.match(source, /runGit\(\["push", "origin", `HEAD:refs\/heads\/\$\{workBranch\}`\], worktree\)/);
   assert.match(source, /function runGit\(args, cwd\) \{\s+return runGitWithAuth\(args, cwd\);/);
   assert.match(source, /function runGitWithAuth\(args, cwd\) \{\s+return runCommand\("git", \["-c", authHeader\(\), \.\.\.args\], cwd\);/);
+  assert.match(workflow, /resume_branch:/);
+  assert.match(workflow, /resume_pr_number:/);
+  assert.match(workflow, /DF_RESUME_BRANCH: \$\{\{ inputs\.resume_branch \}\}/);
+  assert.match(workflow, /DF_RESUME_PR_NUMBER: \$\{\{ inputs\.resume_pr_number \}\}/);
 });
 
 test("df-fix selects only red worker PRs from active repositories", async () => {
@@ -1145,7 +1151,7 @@ test("df-work no-ops instead of blocking when an open worker PR already exists",
 test("df-work blocks stale remote branches without open worker PRs", async () => {
   const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
 
-  const openPrIndex = source.indexOf("const existingPullRequest = await findOpenWorkerPullRequestForIssue(gh, TARGET_REPO, TARGET_ISSUE_NUMBER)");
+  const openPrIndex = source.indexOf("findOpenWorkerPullRequestForIssue(gh, TARGET_REPO, TARGET_ISSUE_NUMBER)");
   const remoteBranchIndex = source.indexOf("if (await remoteBranchExists(TARGET_REPO, branch))");
 
   assert.notEqual(openPrIndex, -1);
@@ -1599,7 +1605,7 @@ test("df-orchestrate claims ready issues before dispatching workers", async () =
 
   const preflightIndex = source.indexOf("const mergePolicy = await preflightMergePolicy");
   const claimIndex = source.indexOf("replaceIssueLabels(gh, repository, issueNumber, [\"df:running\"], [\"df:ready\"])", preflightIndex);
-  const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
+  const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches", claimIndex);
   assert.notEqual(preflightIndex, -1);
   assert.notEqual(claimIndex, -1);
   assert.notEqual(dispatchIndex, -1);
@@ -1629,7 +1635,7 @@ test("df-orchestrate blocks target auto-merge setup failures before worker dispa
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   const blockIndex = source.indexOf("await blockIssueBeforeDispatch");
-  const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
+  const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches", blockIndex);
   assert.notEqual(blockIndex, -1);
   assert.notEqual(dispatchIndex, -1);
   assert.ok(blockIndex < dispatchIndex);

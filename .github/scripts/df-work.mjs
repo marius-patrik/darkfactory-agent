@@ -38,6 +38,9 @@ const CONTROL_REPO = parseRepo(requiredEnv("DF_CONTROL_REPO"));
 const TARGET_REPO = parseRepo(requiredEnv("DF_TARGET_REPO"));
 const TARGET_ISSUE_NUMBER = Number(requiredEnv("DF_TARGET_ISSUE_NUMBER"));
 const TARGET_BASE_REF = process.env.DF_TARGET_BASE_REF?.trim() || "";
+const RESUME_BRANCH = process.env.DF_RESUME_BRANCH?.trim() || "";
+const RESUME_PR_NUMBER = Number(process.env.DF_RESUME_PR_NUMBER || 0);
+const IS_RESUME = Boolean(RESUME_BRANCH);
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
 const DATA_REPO = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
 const GIT_BASIC_AUTH = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
@@ -98,7 +101,7 @@ async function main() {
   }
   await ensureLabels(gh, TARGET_REPO, WORK_LABELS);
 
-  const existingPullRequest = await findOpenWorkerPullRequestForIssue(gh, TARGET_REPO, TARGET_ISSUE_NUMBER);
+  const existingPullRequest = IS_RESUME ? null : await findOpenWorkerPullRequestForIssue(gh, TARGET_REPO, TARGET_ISSUE_NUMBER);
   if (existingPullRequest) {
     ledger.status = "success";
     ledger.pull_request = existingPullRequest.url;
@@ -126,6 +129,8 @@ async function main() {
 
   const mergePolicy = await preflightMergePolicy(gh, TARGET_REPO, workBaseBranch, repo);
   ledger.actions.push({ action: "preflight-merge-policy", result: mergePolicy });
+  const workBranch = IS_RESUME ? RESUME_BRANCH : branch;
+  ledger.branch = workBranch;
   if (mergePolicy.blocked) {
     ledger.status = "blocked";
     ledger.error = mergePolicy.reason;
@@ -145,9 +150,11 @@ async function main() {
       TARGET_REPO,
       TARGET_ISSUE_NUMBER,
       [
-        `DarkFactory worker started for \`${target}\` from \`${TRIGGER}\`.`,
+        IS_RESUME
+          ? `DarkFactory worker resumed \`${target}\` from \`${TRIGGER}\`.`
+          : `DarkFactory worker started for \`${target}\` from \`${TRIGGER}\`.`,
         "",
-        `Branch: \`${branch}\``,
+        `Branch: \`${workBranch}\``,
         `Task class: \`${taskRouting.taskClass}\``,
         `Reasoning effort: \`${codeEffort}\``,
         `Provider order: \`${providerOrder}\``,
@@ -163,14 +170,18 @@ async function main() {
     const worktree = path.join(tempRoot, "repo");
 
     await cloneRepository(TARGET_REPO, worktree, workBaseBranch);
-    if (await remoteBranchExists(TARGET_REPO, branch)) {
-      const staleBranchResult = await blockStaleWorkerBranch(branch);
-      ledger.status = "blocked";
-      ledger.error = staleBranchResult.message;
-      ledger.actions.push(staleBranchResult);
-      return;
+    if (IS_RESUME) {
+      await checkoutResumeBranch(worktree, workBranch);
+    } else {
+      if (await remoteBranchExists(TARGET_REPO, branch)) {
+        const staleBranchResult = await blockStaleWorkerBranch(branch);
+        ledger.status = "blocked";
+        ledger.error = staleBranchResult.message;
+        ledger.actions.push(staleBranchResult);
+        return;
+      }
+      runGit(["checkout", "-b", branch], worktree);
     }
-    runGit(["checkout", "-b", branch], worktree);
 
     const briefInfo = await writeTaskBrief(worktree, issue, workBaseBranch, taskRouting);
     ledger.token_usage.input_brief_characters = briefInfo.characters;
@@ -219,8 +230,13 @@ async function main() {
       throw new Error("Worker completed without producing a commit.");
     }
 
-    runGit(["push", "origin", `HEAD:refs/heads/${branch}`], worktree);
-    pullRequest = await createPullRequest(TARGET_REPO, workBaseBranch, branch, issue, summary);
+    runGit(["push", "origin", `HEAD:refs/heads/${workBranch}`], worktree);
+
+    if (RESUME_PR_NUMBER) {
+      pullRequest = await getPullRequest(TARGET_REPO, RESUME_PR_NUMBER);
+    } else {
+      pullRequest = await createPullRequest(TARGET_REPO, workBaseBranch, workBranch, issue, summary, workerResult.provider, workerResult.model);
+    }
     ledger.pull_request = pullRequest.html_url;
 
     let automerge;
@@ -235,12 +251,17 @@ async function main() {
       };
     }
 
+    const openedPrLine = IS_RESUME
+      ? (RESUME_PR_NUMBER
+        ? `DarkFactory worker resumed ${pullRequest.html_url}.`
+        : `DarkFactory worker resumed and opened ${pullRequest.html_url}.`)
+      : `DarkFactory worker opened ${pullRequest.html_url}.`;
     await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:done"], ["df:ready", "df:running", "df:blocked"]);
     await createIssueComment(
       TARGET_REPO,
       TARGET_ISSUE_NUMBER,
       [
-        `DarkFactory worker opened ${pullRequest.html_url}.`,
+        openedPrLine,
         "",
         `Provider: \`${workerResult.provider}\` (${workerResult.model})`,
         `Automerge: ${automerge.enabled ? "enabled" : `not enabled (${automerge.reason})`}.`,
@@ -251,7 +272,7 @@ async function main() {
       ].join("\n")
     );
     ledger.status = "success";
-    ledger.actions.push({ action: "open-pr", url: pullRequest.html_url, automerge, provider: workerResult.provider, model: workerResult.model });
+    ledger.actions.push({ action: RESUME_PR_NUMBER ? "resume-pr" : "open-pr", url: pullRequest.html_url, automerge, provider: workerResult.provider, model: workerResult.model });
   } catch (error) {
     ledger.status = "blocked";
     const baseError = sanitize(error.stack || error.message || String(error), TOKEN);
@@ -365,6 +386,25 @@ async function remoteBranchExists(repository, branch) {
     `/repos/${repoName(repository)}/git/matching-refs/heads/${encodeURIComponent(branch)}`
   );
   return Array.isArray(refs) && refs.some((ref) => ref.ref === `refs/heads/${branch}`);
+}
+
+async function checkoutResumeBranch(worktree, resumeBranch) {
+  try {
+    runGit(["remote", "set-branches", "origin", resumeBranch], worktree);
+    runGit(["fetch", "--depth", "1", "origin", resumeBranch], worktree);
+  } catch (error) {
+    throw new Error(`Could not fetch resume branch \`${resumeBranch}\`: ${error.message || String(error)}`);
+  }
+  runGit(["checkout", "-B", resumeBranch, `origin/${resumeBranch}`], worktree);
+}
+
+async function getPullRequest(repository, pullNumber) {
+  const pr = await gh.request("GET", `/repos/${repoName(repository)}/pulls/${pullNumber}`);
+  return {
+    node_id: pr.node_id,
+    number: pr.number,
+    html_url: pr.html_url
+  };
 }
 
 async function blockStaleWorkerBranch(branch) {
@@ -502,6 +542,14 @@ async function writeTaskBrief(worktree, issue, defaultBranch, taskRouting) {
     "",
     extractAcceptanceCriteria(issue.body || "") || "Use the issue body as the acceptance criteria.",
     "",
+    ...(IS_RESUME ? [
+      "## Resume Context",
+      "",
+      `This is a resumed worker run. Existing branch: \`${RESUME_BRANCH}\`.`,
+      RESUME_PR_NUMBER ? `Existing PR: #${RESUME_PR_NUMBER}.` : "No existing PR was found; this run should open one if the branch does not already have a PR.",
+      "Narrow scope to the smallest merge-first task: resolve current review findings, address check failures, or get the existing PR green. Do not start a fresh implementation or create a duplicate branch/PR.",
+      ""
+    ] : []),
     "## Root AGENTS.md",
     "",
     agentsContext || "(AGENTS.md not present)",
@@ -525,7 +573,7 @@ async function removeWorkerScratch(worktree) {
   await rm(path.join(worktree, ".darkfactory", "df-worker-summary.md"), { force: true });
 }
 
-async function createPullRequest(repository, base, branch, issue, summary) {
+async function createPullRequest(repository, base, branch, issue, summary, provider, model) {
   return await gh.request("POST", `/repos/${repoName(repository)}/pulls`, {
     title: issue.title,
     head: branch,
@@ -536,7 +584,7 @@ async function createPullRequest(repository, base, branch, issue, summary) {
       "",
       truncate(summary, 10000),
       "",
-      `Executed by provider \`${workerResult.provider}\` with model \`${workerResult.model}\`.`,
+      `Executed by provider \`${provider}\` with model \`${model}\`.`,
       "",
       `Closes #${TARGET_ISSUE_NUMBER}`
     ].join("\n")
