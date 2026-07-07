@@ -94,16 +94,30 @@ export async function prepareProviderAuth(provider, authJson, homeDir) {
     const credentialsDir = path.join(kimiHome, "credentials");
     await mkdir(credentialsDir, { recursive: true });
     await writeFile(path.join(credentialsDir, "kimi-code.json"), authJson, { mode: 0o600 });
-    // kimi-code refuses --model ids that are not declared in config.toml.
+    // kimi-code refuses --model ids that are not declared in config.toml, and a
+    // declared model must reference a fully configured provider (oauth file
+    // storage resolves to the credentials file written above).
     const model = provider.models?.default || "kimi-code/kimi-for-coding";
     const configToml = [
       `default_model = "${model}"`,
+      "",
+      '[providers."managed:kimi-code"]',
+      'type = "kimi"',
+      'api_key = ""',
+      'base_url = "https://api.kimi.com/coding/v1"',
+      "",
+      '[providers."managed:kimi-code".oauth]',
+      'storage = "file"',
+      'key = "oauth/kimi-code"',
       "",
       `[models."${model}"]`,
       'provider = "managed:kimi-code"',
       `model = "${model.split("/").pop()}"`,
       "max_context_size = 262144",
       'capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]',
+      "",
+      "[thinking]",
+      "enabled = true",
       "",
     ].join("\n");
     await writeFile(path.join(kimiHome, "config.toml"), configToml, { mode: 0o600 });

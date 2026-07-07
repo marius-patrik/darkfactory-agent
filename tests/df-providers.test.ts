@@ -226,6 +226,8 @@ test("prepareProviderAuth writes kimi credentials to expected path", async () =>
     assert.ok(config.includes('default_model = "kimi-code/kimi-for-coding"'));
     assert.ok(config.includes('[models."kimi-code/kimi-for-coding"]'));
     assert.ok(config.includes("max_context_size"));
+    assert.ok(config.includes('[providers."managed:kimi-code"]'));
+    assert.ok(config.includes('storage = "file"'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
