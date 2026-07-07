@@ -583,7 +583,8 @@ test("df-audit script performs deterministic repo audits and files findings as i
   assert.match(source, /df:audit/);
   assert.match(source, /writeRunLedger/);
   assert.match(source, /codex_calls:\s*0/);
-  assert.match(source, /listActiveManagedRepos\(gh, CONTROL_REPO, \{ registry \}\)/);
+  assert.match(source, /listActiveManagedRepos\(gh, controlRepo, \{ registry \}\)/);
+  assert.match(source, /auditSubmoduleState/);
   assert.doesNotMatch(source, /\bcodex\s+exec\b|CODEX_AUTH_JSON|DF_WORKER_IMAGE|docker\s+run/);
 });
 
