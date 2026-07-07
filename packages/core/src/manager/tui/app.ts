@@ -1,16 +1,14 @@
 import readline from "node:readline";
 import type { SharedState } from "../state";
-import type { SessionDescriptor, SessionMode, SessionTranscript, TranscriptMessage, TurnChunk } from "../../harness/session";
-import {
-  loadTranscript,
-  runSessionTurn,
-  streamSessionTurn,
-  switchSessionProvider,
-} from "../../harness/session";
+import type { SessionDescriptor, SessionMode, SessionTranscript, TranscriptMessage } from "../../harness/session";
+import { loadTranscript, switchSessionProvider } from "../../harness/session";
+import { createTuiTools, runSessionTurnWithTools, type AgentToolContext, type ProviderListing } from "../../harness/tools";
 import { providerSessionAdapter } from "../session-adapters";
+import { doctorAdapter, type CliId } from "../adapters";
 import { createStatusBarState, currentModel, currentProvider, statusBarLabel, statusBarReducer } from "./reducer";
 import type { KeyAction } from "./input";
 import { ANSI, moveCursor, padOrTruncate, restoreScreen, saveScreen, visibleLength, wrapText } from "./ansi";
+import { configuredProviderModels } from "./providers";
 
 export interface TuiAppOptions {
   state: SharedState;
@@ -40,6 +38,7 @@ export class TuiApp {
   private onResize: () => void;
   private onKeypress: (str: string, key: readline.Key) => void;
   private resolveExit?: () => void;
+  private tools = createTuiTools();
 
   constructor(options: TuiAppOptions) {
     this.state = options.state;
@@ -219,12 +218,7 @@ export class TuiApp {
     this.render();
 
     try {
-      const adapter = providerSessionAdapter(this.descriptor.provider);
-      if (adapter.supportsStreaming) {
-        await this.runStreamingTurn(adapter, prompt);
-      } else {
-        await this.runBatchTurn(adapter, prompt);
-      }
+      await this.runToolTurn(prompt);
       this.statusState = statusBarReducer(this.statusState, { type: "set-status", status: "idle" });
     } catch (error) {
       this.messages = [
@@ -243,43 +237,65 @@ export class TuiApp {
     }
   }
 
-  private async runBatchTurn(adapter: ReturnType<typeof providerSessionAdapter>, prompt: string): Promise<void> {
-    const result = await runSessionTurn(this.state, adapter, this.descriptor, { prompt });
+  private buildToolContext(): AgentToolContext {
+    const ctx: AgentToolContext = {
+      state: this.state,
+      descriptor: this.descriptor,
+      status: (message) => {
+        this.statusState = statusBarReducer(this.statusState, { type: "set-status", status: "idle", message });
+        this.render();
+      },
+      listProviders: async () => {
+        const { providers, modelsByProvider } = configuredProviderModels();
+        const listings: ProviderListing[] = [];
+        for (const id of providers) {
+          const result = await doctorAdapter(this.state, id as CliId);
+          listings.push({
+            id,
+            displayName: result.id,
+            available: result.ok,
+            models: modelsByProvider[id] ?? [],
+            notes: result.notes,
+          });
+        }
+        return listings;
+      },
+      switchProvider: async (provider, model) => {
+        const switched = await switchSessionProvider(
+          this.state,
+          this.descriptor.sessionId,
+          provider,
+          model ?? "default",
+        );
+        this.descriptor = switched;
+        ctx.descriptor = switched;
+      },
+    };
+    return ctx;
+  }
+
+  private async runToolTurn(prompt: string): Promise<void> {
+    const ctx = this.buildToolContext();
+    const { result } = await runSessionTurnWithTools(this.state, this.descriptor, { prompt }, {
+      tools: this.tools,
+      ctx,
+      resolveAdapter: (descriptor) => providerSessionAdapter(descriptor.provider),
+    });
+    this.descriptor = ctx.descriptor;
+    this.statusState = statusBarReducer(this.statusState, { type: "set-provider", provider: this.descriptor.provider });
+    this.statusState = statusBarReducer(this.statusState, { type: "set-model", model: this.descriptor.model });
     if (result.usage) {
       this.statusState = statusBarReducer(this.statusState, { type: "update-usage", usage: result.usage });
     }
-    const transcript = await loadTranscript(this.state, this.descriptor.sessionId);
-    if (transcript) this.messages = transcript.messages;
-  }
-
-  private async runStreamingTurn(adapter: ReturnType<typeof providerSessionAdapter>, prompt: string): Promise<void> {
-    let content = "";
-    let usage: { tokensIn?: number; tokensOut?: number; totalTokens?: number } | undefined;
-
-    for await (const chunk of streamSessionTurn(this.state, adapter, this.descriptor, { prompt })) {
-      if (chunk.type === "text" && chunk.delta) {
-        content += chunk.delta;
-        this.updateStreamingAssistantMessage(content);
-        this.scrollToBottom();
-        this.render();
-      }
-      if (chunk.type === "usage") usage = chunk.usage;
-    }
-
-    if (usage) {
-      this.statusState = statusBarReducer(this.statusState, { type: "update-usage", usage });
+    if (result.error) {
+      this.statusState = statusBarReducer(this.statusState, {
+        type: "set-status",
+        status: "error",
+        message: result.error,
+      });
     }
     const transcript = await loadTranscript(this.state, this.descriptor.sessionId);
     if (transcript) this.messages = transcript.messages;
-  }
-
-  private updateStreamingAssistantMessage(content: string): void {
-    const last = this.messages[this.messages.length - 1];
-    if (last && last.role === "assistant" && !last.metadata?.error) {
-      last.content = content;
-    } else {
-      this.messages = [...this.messages, { role: "assistant", content }];
-    }
   }
 
   private scrollToBottom(): void {
