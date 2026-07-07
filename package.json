@@ -1,14 +1,14 @@
 {
   "name": "@marius-patrik/agents-mono",
   "version": "0.1.0",
-  "description": "Root aggregator workspace for the agents-mono topology. Exposes the `agents` CLI and validates the `packages/agents-manager` TypeScript test surface.",
+  "description": "Root aggregator workspace for the agents-mono topology. Exposes the `agents` CLI and validates the `packages/core` TypeScript test surface.",
   "type": "module",
   "bin": {
-    "agents": "./packages/agents-manager/src/cli.ts"
+    "agents": "./packages/core/src/manager/cli.ts"
   },
   "scripts": {
     "check": "bunx tsc --noEmit",
-    "test": "bun test packages/agents-manager/test/gitmodules.test.ts packages/agents-manager/test/adapters.test.ts packages/agents-manager/test/packages.test.ts packages/agents-manager/test/data-repos.test.ts packages/agents-manager/test/harness-cli.test.ts packages/agents-manager/test/secrets.test.ts packages/agents-manager/test/state.test.ts",
+    "test": "bun test packages/core/test/manager/*.test.ts",
     "ci": "bun run check && bun run test",
     "smoke:release": "bash install/smoke-release.sh"
   },
