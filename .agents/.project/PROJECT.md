@@ -1,14 +1,14 @@
 # Project
 
 `agents-mono` is the root repository and aggregator for the agents-mono topology.
-The root package exposes the `agents` CLI and validates the `packages/agents-manager`
+The root package exposes the `agents` CLI and validates the `packages/core`
 TypeScript test surface.
 
 ## Naming contract
 
 - `agents-mono` — the root aggregator repository and workspace.
-- `agents` — the unified management CLI implemented in `packages/agents-manager` (a normal folder since the packages/ restructure; no longer a submodule).
-- `os/agents-*` — OS/platform packages (`agents-core`, `agents-manager`, `agents-harness`).
+- `agents` — the unified management CLI implemented in `packages/core/src/manager`.
+- `packages/core` — consolidated core package; legacy `packages/agents-*` names are retained only where they identify an existing repo, env var, or historical concept.
 - `agentos-data` — retained as the compatibility name for the default git-backed data repository and its env var (`AGENTOS_DATA_ROOT`).
 - `Agentos`, `Andromeda`, `Rommie`, and other legacy names are intentionally retained only where they identify an existing repo, env var, or historical concept; new docs use the current names above.
 

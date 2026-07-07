@@ -1,19 +1,7 @@
-[submodule "packages/agents-plugin"]
-	path = packages/agents-plugin
-	url = https://github.com/marius-patrik/agents-plugin.git
-	branch = main
 [submodule "packages/darkfactory"]
 	path = packages/darkfactory
 	url = https://github.com/marius-patrik/agent-darkfactory.git
 	branch = main
-[submodule "packages/dream"]
-	path = packages/dream
-	url = https://github.com/marius-patrik/dream.git
-	branch = dev
-[submodule "packages/fabrica"]
-	path = packages/fabrica
-	url = https://github.com/marius-patrik/Fabrica.git
-	branch = dev
 [submodule "packages/life-support"]
 	path = packages/life-support
 	url = https://github.com/marius-patrik/life-support.git

@@ -23,10 +23,9 @@ binaries are available. The supported install path is:
 curl -fsSL https://raw.githubusercontent.com/marius-patrik/agents-mono/dev/install/install.sh | bash
 ```
 
-The install script clones the repo into `~/.agents-mono`, initializes the
-required `packages/agents-manager` submodule, installs dependencies, links the
-`agents` CLI, and smoke-tests with fast commands (`agents state init` and
-`agents list`). It does not initialize every git submodule, so `agents doctor`
+The install script clones the repo into `~/.agents-mono`, installs dependencies,
+links the `agents` CLI, and smoke-tests with fast commands (`agents state init`
+and `agents list`). It does not initialize every git submodule, so `agents doctor`
 may report missing checkouts until you run `agents sync`.
 
 ### Updating
@@ -53,24 +52,24 @@ agents list
 agents state init
 agents state env
 agents cli doctor
-agents packages register packages/agents-harness
-agents harness doctor agents-harness
+agents packages register packages/core/src/harness
+agents harness doctor harness
 agents data repo list
 agents doctor
 ```
 
 ## Layout
 
-- `packages/agents-core` contains shared proto contracts, generated clients, schemas, and contract docs.
-- `packages/agents-manager` contains the `agents` CLI source and tests.
-- `packages/agents-harness` contains the managed Agents runtime harness.
-- `packages/llm-gateway` contains the OpenAI-format LLM gateway, model registry routing, fallback, switchers, quota, OAuth seams, and tests.
-- `packages/inference-engine` contains the Python agent loop, Go runtime services, engine work, deploy assets, and inference architecture.
-- `packages/agents-plugin` is the Rommie Codex plugin submodule.
-- `packages/dream` is the Dream plugin submodule.
+- `packages/core` is the consolidated core package containing all domain trees under `src/<domain>/`:
+  - `src/core/` — shared proto contracts, generated clients, schemas, and contract docs.
+  - `src/manager/` — the `agents` CLI source and tests.
+  - `src/harness/` — the managed Agents runtime harness.
+  - `src/gateway/` — the OpenAI-format LLM gateway, model registry routing, fallback, switchers, quota, OAuth seams, and tests.
+  - `src/inference/` — the Python agent loop, Go runtime services, engine work, deploy assets, and inference architecture.
+  - `src/plugin/` — the Rommie Codex plugin tree.
+  - `src/dream/` — the Dream plugin tree.
 - `packages/darkfactory`, `packages/life-support`, and `packages/skyblock-agent` are managed agent submodules.
 - `packages/singularity` contains the managed Singularity app.
-- `packages/fabrica` contains the managed Fabrica app workspace.
 - `data` is the consolidated private DarkFactory + AgentOS data submodule.
 
 ## Naming contract
@@ -79,8 +78,8 @@ This repository uses the following names consistently. Legacy names are retained
 only where they identify an existing repo, env var, or historical concept.
 
 - `agents-mono` — the root aggregator repository and workspace (this repo).
-- `agents` — the unified management CLI implemented in `packages/agents-manager`.
-- `packages/agents-*` — OS/platform packages (`agents-core`, `agents-manager`, `agents-harness`).
+- `agents` — the unified management CLI implemented in `packages/core/src/manager`.
+- `packages/core` — consolidated core package; legacy `packages/agents-*` names are retained only where they identify an existing repo, env var, or historical concept.
 - `agentos-data` — retained compatibility name for the default git-backed data repository and its env var (`AGENTOS_DATA_ROOT`).
 - `Agentos`, `Andromeda`, `Rommie`, and similar legacy names are intentionally scoped; new docs and metadata use the current names above.
 

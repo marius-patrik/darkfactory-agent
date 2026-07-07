@@ -10,8 +10,8 @@ Root docs and metadata use the following names. Legacy names are retained only
 where they identify an existing repo, env var, or historical concept.
 
 - `agents-mono` — the root aggregator repository and workspace.
-- `agents` — the unified management CLI implemented in `packages/agents-manager`.
-- `packages/agents-*` — OS/platform packages (`agents-core`, `agents-manager`, `agents-harness`).
+- `agents` — the unified management CLI implemented in `packages/core/src/manager`.
+- `packages/core` — consolidated core package; legacy `packages/agents-*` names are retained only where they identify an existing repo, env var, or historical concept.
 - `agentos-data` — retained compatibility name for the default git-backed data repository and its env var (`AGENTOS_DATA_ROOT`).
 - `Agentos`, `Andromeda`, `Rommie`, and similar legacy names are intentionally scoped; new docs and metadata use the current names above.
 
@@ -20,7 +20,7 @@ where they identify an existing repo, env var, or historical concept.
 - Manage git-backed agent packages from one workspace.
 - Keep CLI-specific metadata under `.agents/clis`.
 - Keep user-installed skills and plugins under `.agents/skills` and `.agents/plugins`.
-- Keep harness packages under `packages/agents-harness` and launch them with shared state.
+- Keep harness packages under `packages/core/src/harness` and launch them with shared state.
 - Configure git-backed data repositories such as `agentos-data`; workspace packages such as `workspace-darkfactory` can point at those data repos.
 - Expose one shared state root to every CLI through `.agents/env`.
 - Maintain a shared credit store at `.agents/credits.json`.
@@ -46,10 +46,10 @@ where they identify an existing repo, env var, or historical concept.
 - Data repo: a git-backed managed data package with an optional managed root and exported env var.
 - CLI adapter: the shared rooting and credential contract for a vendor CLI.
 - Shared state: the root `.agents` directory.
-- Core package: shared contracts and generated clients under `packages/agents-core`.
-- Gateway package: OpenAI-format model gateway and registry routing under `packages/llm-gateway`.
-- Inferer package: agent loop, runtime services, engine work, and deploy assets under `packages/inference-engine`.
-- Manager package: the CLI implementation and tests under `packages/agents-manager`.
+- Core domain: shared contracts and generated clients under `packages/core/src/core`.
+- Gateway domain: OpenAI-format model gateway and registry routing under `packages/core/src/gateway`.
+- Inferer domain: agent loop, runtime services, engine work, and deploy assets under `packages/core/src/inference`.
+- Manager domain: the CLI implementation and tests under `packages/core/src/manager`.
 - Managed checkout: a git-backed package under `packages/<name>`. Agents, apps, harnesses, templates, data repositories, and workspace repositories are organized under a single `packages/` root.
 - Data submodule: consolidated DarkFactory workspace and AgentOS data under `data`.
 - CLI metadata: per-CLI data under `.agents/clis/<name>`.
@@ -192,9 +192,8 @@ Supported install paths:
   verify with `agents doctor`.
 - **Source install** — this root remains developer/source-install only until
   release-backed binaries are available. `install/install.sh` clones the repo
-  into `~/.agents-mono`, initializes the required `packages/agents-manager` submodule,
-  installs dependencies, links the CLI, and smoke-tests with fast commands
-  (`agents state init` and `agents list`).
+  into `~/.agents-mono`, installs dependencies, links the CLI, and smoke-tests
+  with fast commands (`agents state init` and `agents list`).
 
 Update path for source installs:
 
@@ -212,7 +211,7 @@ validate all submodule packages.
 Release automation runs `bun run smoke:release` during the DarkFactory release
 workflow. The release smoke test performs an isolated source install into a
 temporary directory and then verifies that the linked `agents` command resolves
-to `packages/agents-manager/src/cli.ts` (on symlink platforms) and that fast commands
+to `packages/core/src/manager/cli.ts` (on symlink platforms) and that fast commands
 (`agents state init` and `agents list`) succeed.
 
 Release-backed binary installers, a Windows PowerShell installer, and an

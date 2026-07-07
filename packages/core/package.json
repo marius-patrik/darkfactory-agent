@@ -1,0 +1,26 @@
+{
+  "name": "@marius-patrik/core",
+  "version": "0.3.0",
+  "description": "Consolidated core package for the agents-mono topology. Exposes the agents CLI and aggregates manager, core, harness, inference, gateway, plugin, and dream domains.",
+  "type": "module",
+  "bin": {
+    "agents": "./src/manager/cli.ts"
+  },
+  "scripts": {
+    "check": "bunx tsc --noEmit",
+    "test": "bun test test/manager/*.test.ts",
+    "ci": "bun run check && bun run test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.12.0",
+    "@connectrpc/connect": "^2.1.1"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "license": "MIT"
+}
