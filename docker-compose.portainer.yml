@@ -1,0 +1,28 @@
+# Portainer stack — pulls the prebuilt image from GHCR (no build step).
+# Point Portainer at this file (Stacks → Add stack → Repository) and set
+# the LLM env vars in the stack's environment variables UI.
+services:
+  okf-agent:
+    image: ghcr.io/thecodacus/okf-agent:latest
+    ports:
+      - "3800:3800"
+    volumes:
+      # Persistent OKF bundle. Swap for a bind mount (e.g. /srv/okf-bundle:/bundle)
+      # if you want to edit the markdown from the host / sync it with git.
+      - okf-bundle:/bundle
+    environment:
+      BUNDLE_ROOT: /bundle
+      # anthropic | openrouter | llamacpp | local
+      LLM_PROVIDER: ${LLM_PROVIDER:-llamacpp}
+      LLM_MODEL: ${LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Homelab llama-server / llama-swap (model auto-discovered):
+      LLAMACPP_BASE_URL: ${LLAMACPP_BASE_URL:-http://192.168.1.101:8080}
+      LLAMACPP_API_KEY: ${LLAMACPP_API_KEY:-}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
+      GIT_AUTOCOMMIT: ${GIT_AUTOCOMMIT:-false}
+    restart: unless-stopped
+
+volumes:
+  okf-bundle:
