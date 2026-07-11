@@ -94,13 +94,20 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>) {
           .describe("Frontmatter keys to merge; set a key to null to remove it"),
         replace_section: z
           .object({
-            heading: z.string().describe("Top-level heading name, e.g. 'Schema'"),
+            heading: z
+              .string()
+              .min(1)
+              .describe("Top-level heading name, e.g. 'Schema'. Must be non-empty — to replace the whole body use replace_body instead."),
             content: z.string().describe("New content for that section"),
           })
           .optional(),
+        replace_body: z
+          .string()
+          .optional()
+          .describe("Replace the entire markdown body (frontmatter untouched). Use for restructuring; prefer replace_section for targeted edits."),
         log_summary: logSummary,
       }),
-      execute: async ({ path, frontmatter, replace_section, log_summary }) => {
+      execute: async ({ path, frontmatter, replace_section, replace_body, log_summary }) => {
         const c = await kb.patchConcept(
           path,
           {
@@ -108,6 +115,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>) {
             replaceSection: replace_section
               ? { heading: replace_section.heading, content: replace_section.content }
               : undefined,
+            replaceBody: replace_body,
           },
           log_summary
         );

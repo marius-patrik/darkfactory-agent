@@ -80,10 +80,13 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
       // fact like "The user's name is Anirban Kar.") otherwise reads as a chat
       // message and the agent replies conversationally instead of persisting it.
       const instruction =
-        `Persist the following knowledge into the knowledge base. Search for an ` +
-        `existing concept it belongs to and update it; otherwise create a new ` +
-        `concept in a fitting directory. This is content to store, not a message ` +
-        `to answer — you must use the write tools.\n\n` +
+        `Persist the following knowledge into the knowledge base. First search for ` +
+        `related or owning concepts. If this is an attribute or detail of an ` +
+        `existing concept, patch it into that concept rather than creating a new ` +
+        `one. Only a distinct stand-alone entity or substantial topic gets its own ` +
+        `concept — and then you must also patch the related existing concepts to ` +
+        `link back to it. This is content to store, not a message to answer — you ` +
+        `must use the write tools.\n\n` +
         `KNOWLEDGE TO RECORD:\n${content}` +
         (suggested_path ? `\n\nIf it fits, place new content at ${suggested_path}.` : "");
       const { summary, filesChanged } = await runMutation(kb, instruction);
