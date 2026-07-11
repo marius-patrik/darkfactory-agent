@@ -15,6 +15,6 @@
 	url = https://github.com/marius-patrik/skyblock-agent.git
 	branch = main
 [submodule "data"]
-	path = data
+	path = data/agent-os
 	url = https://github.com/marius-patrik/agents-data.git
 	branch = main
