@@ -16,63 +16,11 @@
     },
     "marius-patrik/agents-manager": {
       "state": "active",
-      "note": "Renamed from agents-mono; contains the folded packages/ directory (agents-core, agents-harness, agents-manager, llm-gateway, inference-engine)."
-    },
-    "marius-patrik/agents-manager-legacy": {
-      "state": "archived",
-      "note": "Original agents-manager repo; content folded into agents-manager packages/agents-manager and repo renamed/archived."
-    },
-    "marius-patrik/agents-harness": {
-      "state": "archived",
-      "note": "Folded into agents-manager packages/agents-harness via Phase B restructure."
-    },
-    "marius-patrik/agents-core": {
-      "state": "archived",
-      "note": "Folded into agents-manager packages/agents-core via Phase B restructure."
-    },
-    "marius-patrik/llm-gateway": {
-      "state": "archived",
-      "note": "Folded into agents-manager packages/llm-gateway via Phase B restructure."
-    },
-    "marius-patrik/inference-engine": {
-      "state": "archived",
-      "note": "Folded into agents-manager packages/inference-engine via Phase B restructure."
-    },
-    "marius-patrik/darkfactory-templates": {
-      "state": "archived",
-      "note": "Folded into agent-darkfactory/templates/ via Phase D restructure."
-    },
-    "marius-patrik/template-bot": {
-      "state": "archived",
-      "note": "Folded into agent-darkfactory/templates/templates/template-bot via Phase D restructure."
-    },
-    "marius-patrik/template-cli": {
-      "state": "archived",
-      "note": "Folded into agent-darkfactory/templates/templates/template-cli via Phase D restructure."
-    },
-    "marius-patrik/template-repo": {
-      "state": "archived",
-      "note": "Folded into agent-darkfactory/templates/templates/template-repo via Phase D restructure."
-    },
-    "marius-patrik/template-web": {
-      "state": "archived",
-      "note": "Folded into agent-darkfactory/templates/templates/template-web via Phase D restructure."
-    },
-    "marius-patrik/workspace-darkfactory": {
-      "state": "archived",
-      "note": "Consolidated into private agents-data repo via Phase A restructure."
-    },
-    "marius-patrik/workspace-agents": {
-      "state": "active",
-      "note": "Agents workspace package repository."
-    },
-    "marius-patrik/data-agentos": {
-      "state": "archived",
-      "note": "Consolidated into private agents-data repo via Phase A restructure."
+      "note": "Canonical Agent OS source repository and product integration root."
     },
     "marius-patrik/agents-data": {
-      "state": "parked",
-      "note": "Private consolidated data repo (workspace-darkfactory + data-agentos)."
+      "state": "active",
+      "note": "Canonical private Agent OS data and managed repository policy source."
     },
     "marius-patrik/skyblock-agent": {
       "state": "parked",
@@ -89,26 +37,6 @@
     "marius-patrik/life-support": {
       "state": "parked",
       "note": "Owner-directed exclusion."
-    },
-    "marius-patrik/citizen": {
-      "state": "archived",
-      "note": "GitHub archived/read-only."
-    },
-    "marius-patrik/experience": {
-      "state": "archived",
-      "note": "GitHub archived/read-only."
-    },
-    "marius-patrik/mmo": {
-      "state": "archived",
-      "note": "GitHub archived/read-only."
-    },
-    "marius-patrik/rscode": {
-      "state": "archived",
-      "note": "GitHub archived/read-only."
-    },
-    "marius-patrik/wrkspace": {
-      "state": "archived",
-      "note": "GitHub archived/read-only."
     }
   }
 }

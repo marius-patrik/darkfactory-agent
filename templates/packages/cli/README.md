@@ -1,4 +1,4 @@
-# @template/cli
+# @agent-os/template-cli
 
 Bun and TypeScript command-line package template.
 

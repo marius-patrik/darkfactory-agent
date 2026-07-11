@@ -1,15 +1,15 @@
 {
-  "name": "@template/cli",
-  "version": "0.1.1",
+  "name": "@agent-os/template-cli",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "template-cli": "./dist/index.js"
+    "agent-os-template-cli": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "bun run src/index.ts",
-    "test": "bun test",
+    "test": "bun test src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }

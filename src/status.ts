@@ -1,6 +1,6 @@
 export const CONTROL_OWNER = "marius-patrik";
 export const CONTROL_REPO = "agent-darkfactory";
-export const DATA_REPO = "data-agentos";
+export const AGENT_OS_DATA_REPO = "agents-data";
 
 export interface GitHubRequester {
   request(route: string, parameters: Record<string, unknown>): Promise<{ data: unknown; headers?: Record<string, string> }>;
@@ -72,12 +72,6 @@ export interface StatusReport {
   backlogCoverage: BacklogCoverage[];
 }
 
-export interface StatusOptions {
-  controlOwner?: string;
-  controlRepo?: string;
-  dataRepo?: string;
-}
-
 const MANAGED_REPOS_PATH = ".darkfactory/managed-repos.json";
 
 export function parseManagedReposJson(raw: unknown, owner: string): ManagedRepo[] {
@@ -126,12 +120,11 @@ export async function fetchManagedRepos(
 }
 
 export async function buildStatusReport(
-  github: GitHubRequester,
-  options: StatusOptions = {}
+  github: GitHubRequester
 ): Promise<StatusReport> {
-  const owner = options.controlOwner ?? CONTROL_OWNER;
-  const controlRepo = options.controlRepo ?? CONTROL_REPO;
-  const dataRepo = options.dataRepo ?? DATA_REPO;
+  const owner = CONTROL_OWNER;
+  const controlRepo = CONTROL_REPO;
+  const dataRepo = AGENT_OS_DATA_REPO;
 
   const managedRepos = await fetchManagedRepos(github, { owner, repo: controlRepo }, owner);
   const [loopState, recentRuns, latestLedger, blocked, prdCoverage, backlogCoverage] = await Promise.all([

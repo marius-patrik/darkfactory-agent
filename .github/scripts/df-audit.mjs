@@ -1,5 +1,5 @@
 import {
-  DEFAULT_DATA_REPO,
+  AGENT_OS_DATA_REPO,
   PLANNING_LABELS,
   WORK_LABELS,
   assertAllowedRepo,
@@ -49,7 +49,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 async function main() {
   const token = requiredEnv("DARK_FACTORY_TOKEN");
   const controlRepo = parseRepo(requiredEnv("DF_CONTROL_REPO"));
-  const dataRepo = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
+  const dataRepo = AGENT_OS_DATA_REPO;
   const trigger = process.env.DF_TRIGGER ?? "unknown";
   const auditAll = process.env.DF_AUDIT_ALL === "true";
   gh = createGithubClient(token, "darkfactory-audit");
@@ -261,8 +261,8 @@ export function resolveSubmoduleRepo(parentRepo, url) {
   if (httpsMatch) return { owner: httpsMatch[1], repo: httpsMatch[2] };
 
   if (trimmed.startsWith("github.com:")) {
-    const legacy = trimmed.match(/^github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/);
-    if (legacy) return { owner: legacy[1], repo: legacy[2] };
+    const scpLike = trimmed.match(/^github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/);
+    if (scpLike) return { owner: scpLike[1], repo: scpLike[2] };
   }
 
   if (trimmed.startsWith("./") || trimmed.startsWith("../")) {

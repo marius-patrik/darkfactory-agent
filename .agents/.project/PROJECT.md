@@ -1,27 +1,14 @@
 # Project
 
-## Identity
-
-- Name: `vibe-bot`
-- GitHub: `marius-patrik/vibe-bot`
-- Visibility: public
-
-## Purpose
-
-Run a GitHub App bot that responds to GitHub webhooks and enforces shared repository setup conventions.
-
-## Stack
-
-- Runtime: Node.js 22
+- Name: DarkFactory
+- Repository: `marius-patrik/agent-darkfactory`
+- Product role: GitHub control plane for Agent OS
+- Runtime: Node.js 22, TypeScript, ESM
 - Package manager: npm
-- Language: TypeScript
-- Module format: ESM
-- Webhook framework: `@octokit/app`
 - Test runner: Node test runner with `tsx`
-- CI: GitHub Actions
 
-## Managed Setup Policy
-
-- Version-enforce `.agents/.global/VERSION` against `vibe-bot@<package version>`.
-- Bootstrap-enforce `.github/workflows/ci.yml`.
-- Comment on pull requests when installed repositories are missing or behind these conventions.
+DarkFactory receives GitHub App events, synchronizes repository-local policy
+from the `managed-repository` child of the canonical `agent-os-data` checkout,
+and drives deterministic planning,
+orchestration, enforcement, and follow-through. Shared Agent OS state lives only
+under `$AGENTS_HOME`.

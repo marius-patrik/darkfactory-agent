@@ -2,12 +2,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const AGENTS_GLOBAL_VERSION_PATH = ".agents/.global/VERSION";
 export const AGENTS_ENTRYPOINT_PATH = "AGENTS.md";
 export const CI_WORKFLOW_PATH = ".github/workflows/ci.yml";
 export const GITHUB_BOOTSTRAP_WORKFLOW_PATH = ".github/workflows/dark-factory-bootstrap.yml";
 export const DARK_FACTORY_AUTOUPDATE_WORKFLOW_PATH = ".github/workflows/dark-factory-autoupdate.yml";
-export const DARK_FACTORY_RELEASE_WORKFLOW_PATH = ".github/workflows/dark-factory-release.yml";
 export const DARK_FACTORY_PLAN_WORKFLOW_PATH = ".github/workflows/df-plan.yml";
 export const DARK_FACTORY_FOLLOW_THROUGH_WORKFLOW_PATH = ".github/workflows/df-follow-through.yml";
 export const DARK_FACTORY_ORCHESTRATE_WORKFLOW_PATH = ".github/workflows/df-orchestrate.yml";
@@ -16,8 +14,7 @@ export const CODEX_REVIEW_WORKFLOW_PATH = ".github/workflows/codex-review.yml";
 export const CODEX_REVIEW_DOCKERFILE_PATH = ".github/codex-review.Dockerfile";
 export const CODEX_REVIEW_SCHEMA_PATH = ".github/codex-review.schema.json";
 export const CODEX_REVIEW_SCRIPT_PATH = ".github/scripts/run-codex-review.sh";
-export const CODEX_REVIEW_VALIDATE_SCRIPT_PATH = ".github/scripts/validate-codex-review.mjs";
-export const DARK_FACTORY_RELEASE_CHECK_SCRIPT_PATH = ".github/scripts/dark-factory-release-check.mjs";
+export const DARK_FACTORY_MANAGED_CHECK_SCRIPT_PATH = ".github/scripts/dark-factory-managed-check.mjs";
 export const DARK_FACTORY_SCRIPT_LIB_PATH = ".github/scripts/df-lib.mjs";
 export const DARK_FACTORY_ENFORCEMENT_SCRIPT_PATH = ".github/scripts/df-enforcement.mjs";
 export const DARK_FACTORY_PLAN_SCRIPT_PATH = ".github/scripts/df-plan.mjs";
@@ -26,11 +23,9 @@ export const DARK_FACTORY_SWEEP_SCRIPT_PATH = ".github/scripts/df-sweep.mjs";
 export const DARK_FACTORY_WORK_SCRIPT_PATH = ".github/scripts/df-work.mjs";
 export const DARK_FACTORY_MANAGED_CONFIG_PATH = ".darkfactory/managed-repository.json";
 export const DARK_FACTORY_INSTALLER_POLICY_PATH = ".darkfactory/installer-policy.json";
-export const DARK_FACTORY_RELEASE_POLICY_PATH = ".darkfactory/release-policy.json";
 export const DARK_FACTORY_BRANCHING_POLICY_PATH = ".darkfactory/branching-policy.md";
 export const DARK_FACTORY_ENFORCEMENT_RULES_PATH = ".darkfactory/enforcement-rules.json";
 export const DARK_FACTORY_LABELS_PATH = ".darkfactory/labels.json";
-export const DARK_FACTORY_RELEASE_CONVENTIONS_PATH = ".darkfactory/release-conventions.md";
 
 export interface ManagedFile {
   path: string;
@@ -42,7 +37,7 @@ export interface ManagedRepositoryRef {
   repo: string;
 }
 
-const MANAGED_COMMON_DIRS = [".agents/.global", ".github", ".darkfactory"] as const;
+const MANAGED_COMMON_DIRS = [".github", ".darkfactory"] as const;
 const MANAGED_COMMON_FILES = [AGENTS_ENTRYPOINT_PATH] as const;
 const EXCLUDED_MANAGED_FILE_PATHS = new Set([".github/workflows/df-event-forward.yml"]);
 const PACKAGE_MANAGED_FILES = [
@@ -57,39 +52,38 @@ const PACKAGE_MANAGED_FILES = [
   DARK_FACTORY_SWEEP_SCRIPT_PATH,
   DARK_FACTORY_WORK_SCRIPT_PATH
 ] as const;
-const DATA_REPO_PATH_SEGMENTS = ["data", "data-agentos"] as const;
-const WORKSPACE_PATH_SEGMENTS = ["workspaces", "workspace-darkfactory"] as const;
-
-export function readManagedFiles(repository?: ManagedRepositoryRef, root = resolveManagedWorkspaceRoot()): ManagedFile[] {
+export function readManagedFiles(repository?: ManagedRepositoryRef): ManagedFile[] {
+  const managedRoot = resolveManagedContentRoot();
   const files = new Map<string, ManagedFile>();
 
   for (const dir of MANAGED_COMMON_DIRS) {
-    for (const file of readManagedTree(root, dir)) {
+    for (const file of readManagedTree(managedRoot, dir)) {
       files.set(file.path, file);
     }
   }
 
   for (const filePath of MANAGED_COMMON_FILES) {
-    const file = readManagedFile(root, filePath);
+    const file = readManagedFile(managedRoot, filePath);
     if (file) {
       files.set(file.path, file);
     }
   }
 
   for (const filePath of PACKAGE_MANAGED_FILES) {
-    if (files.has(filePath)) continue;
-    const file = readManagedFile(resolveProjectRoot(), filePath);
-    if (file) {
-      files.set(file.path, file);
+    if (files.has(filePath)) {
+      throw new Error(`Managed data duplicates package-owned payload: ${filePath}`);
     }
+    const file = readManagedFile(resolveProjectRoot(), filePath);
+    if (!file) throw new Error(`Package-owned managed payload is missing: ${filePath}`);
+    files.set(file.path, file);
   }
 
   if (repository) {
     const overlayPrefix = `repositories/${repository.owner}/${repository.repo}/`;
-    const overlayRoot = resolve(root, overlayPrefix, ".agents", ".project");
+    const overlayRoot = resolve(managedRoot, overlayPrefix, ".agents", ".project");
 
     if (existsSync(overlayRoot)) {
-      for (const file of readManagedTree(root, `${overlayPrefix}.agents/.project`)) {
+      for (const file of readManagedTree(managedRoot, `${overlayPrefix}.agents/.project`)) {
         files.set(file.path.slice(overlayPrefix.length), {
           ...file,
           path: file.path.slice(overlayPrefix.length)
@@ -101,8 +95,16 @@ export function readManagedFiles(repository?: ManagedRepositoryRef, root = resol
   for (const filePath of EXCLUDED_MANAGED_FILE_PATHS) {
     files.delete(filePath);
   }
+  for (const filePath of removedManagedFilePaths([...files.values()])) {
+    files.delete(filePath);
+  }
 
-  const missingRequired = requiredManagedFilePaths(root).filter((filePath) => !files.has(filePath));
+  const requiredPaths = requiredManagedFilePaths([...files.values()]);
+  const undeclaredPackagePayloads = PACKAGE_MANAGED_FILES.filter((filePath) => !requiredPaths.includes(filePath));
+  if (undeclaredPackagePayloads.length > 0) {
+    throw new Error(`Managed config omits package-owned payloads: ${undeclaredPackagePayloads.join(", ")}`);
+  }
+  const missingRequired = requiredPaths.filter((filePath) => !files.has(filePath));
   if (missingRequired.length > 0) {
     throw new Error(`Managed file source is missing required payloads: ${missingRequired.join(", ")}`);
   }
@@ -110,33 +112,43 @@ export function readManagedFiles(repository?: ManagedRepositoryRef, root = resol
   return [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export function requiredManagedFilePaths(_root = resolveManagedWorkspaceRoot()): string[] {
-  // Package-managed workflow/script payloads are required unconditionally.
-  // readManagedFiles() falls back to the package root when a workspace overlay
-  // does not provide them, and throws if neither source exists. This keeps CI
-  // from silently omitting generated payloads when a source generator is missing.
-  return [
-    AGENTS_ENTRYPOINT_PATH,
-    AGENTS_GLOBAL_VERSION_PATH,
-    CI_WORKFLOW_PATH,
-    GITHUB_BOOTSTRAP_WORKFLOW_PATH,
-    DARK_FACTORY_AUTOUPDATE_WORKFLOW_PATH,
-    DARK_FACTORY_RELEASE_WORKFLOW_PATH,
-    ...PACKAGE_MANAGED_FILES,
-    CODEX_REVIEW_WORKFLOW_PATH,
-    CODEX_REVIEW_DOCKERFILE_PATH,
-    CODEX_REVIEW_SCHEMA_PATH,
-    CODEX_REVIEW_SCRIPT_PATH,
-    CODEX_REVIEW_VALIDATE_SCRIPT_PATH,
-    DARK_FACTORY_RELEASE_CHECK_SCRIPT_PATH,
-    DARK_FACTORY_BRANCHING_POLICY_PATH,
-    DARK_FACTORY_ENFORCEMENT_RULES_PATH,
-    DARK_FACTORY_LABELS_PATH,
-    DARK_FACTORY_MANAGED_CONFIG_PATH,
-    DARK_FACTORY_INSTALLER_POLICY_PATH,
-    DARK_FACTORY_RELEASE_CONVENTIONS_PATH,
-    DARK_FACTORY_RELEASE_POLICY_PATH
-  ];
+export function removedManagedFilePaths(files: readonly ManagedFile[]): Set<string> {
+  return new Set(readManagedConfig(files).removedFiles);
+}
+
+export function requiredManagedFilePaths(files?: readonly ManagedFile[]): string[] {
+  return readManagedConfig(files).requiredFiles;
+}
+
+function readManagedConfig(files?: readonly ManagedFile[]): { requiredFiles: string[]; removedFiles: string[] } {
+  const config = files?.find((file) => file.path === DARK_FACTORY_MANAGED_CONFIG_PATH)
+    ?? readManagedFile(resolveProjectRoot(), DARK_FACTORY_MANAGED_CONFIG_PATH);
+  if (!config) throw new Error(`Managed file source is missing ${DARK_FACTORY_MANAGED_CONFIG_PATH}`);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(config.content);
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${DARK_FACTORY_MANAGED_CONFIG_PATH}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (
+    !isRecord(parsed) ||
+    parsed.schemaVersion !== 1 ||
+    !isPathArray(parsed.requiredFiles) ||
+    !isPathArray(parsed.removedFiles)
+  ) {
+    throw new Error(
+      `${DARK_FACTORY_MANAGED_CONFIG_PATH} must define schemaVersion 1 with requiredFiles and removedFiles path arrays`
+    );
+  }
+  return {
+    requiredFiles: [...new Set(parsed.requiredFiles)],
+    removedFiles: [...new Set(parsed.removedFiles)]
+  };
+}
+
+function isPathArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim().length > 0);
 }
 
 function readManagedFile(root: string, relativePath: string): ManagedFile | null {
@@ -186,110 +198,56 @@ function toPosix(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
 
-function resolveManagedWorkspaceRoot(): string {
-  const configured = process.env.DARK_FACTORY_WORKSPACE_ROOT?.trim();
-  if (configured) {
-    return resolveManagedRepositoryRoot(configured);
-  }
-
-  const dataRepoRoot = resolveAgentosDataRepoRoot();
-  if (dataRepoRoot) {
-    return dataRepoRoot;
-  }
-
-  const projectRoot = resolveProjectRoot();
-  const siblingDataRepo = resolve(projectRoot, "..", ...DATA_REPO_PATH_SEGMENTS, "managed-repository");
-  if (existsSync(siblingDataRepo)) {
-    return siblingDataRepo;
-  }
-
-  const legacySiblingDataRepo = resolve(projectRoot, "..", "agentos-data", "managed-repository");
-  if (existsSync(legacySiblingDataRepo)) {
-    return legacySiblingDataRepo;
-  }
-
-  const siblingWorkspace = resolve(projectRoot, "..", ...WORKSPACE_PATH_SEGMENTS, "managed-repository");
-  if (existsSync(siblingWorkspace)) {
-    return siblingWorkspace;
-  }
-
-  const legacySiblingWorkspace = resolve(projectRoot, "..", "darkfactory-workspace", "managed-repository");
-  if (existsSync(legacySiblingWorkspace)) {
-    return legacySiblingWorkspace;
-  }
-
-  const bundledDataRepo = resolve(projectRoot, ...DATA_REPO_PATH_SEGMENTS, "managed-repository");
-  if (existsSync(bundledDataRepo)) {
-    return bundledDataRepo;
-  }
-
-  const legacyBundledDataRepo = resolve(projectRoot, "agentos-data", "managed-repository");
-  if (existsSync(legacyBundledDataRepo)) {
-    return legacyBundledDataRepo;
-  }
-
-  const bundledWorkspace = resolve(projectRoot, ...WORKSPACE_PATH_SEGMENTS, "managed-repository");
-  if (existsSync(bundledWorkspace)) {
-    return bundledWorkspace;
-  }
-
-  const legacyBundledWorkspace = resolve(projectRoot, "darkfactory-workspace", "managed-repository");
-  if (existsSync(legacyBundledWorkspace)) {
-    return legacyBundledWorkspace;
-  }
-
-  return resolve(projectRoot, "managed-repository");
+function resolveManagedContentRoot(): string {
+  const dataRepoRoot = resolveCanonicalDataRepoRoot();
+  return resolve(dataRepoRoot, "managed-repository");
 }
 
 function resolveProjectRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
-function resolveAgentosDataRepoRoot(): string | null {
+function resolveCanonicalDataRepoRoot(): string {
   const dataReposFile = process.env.AGENTS_DATA_REPOS?.trim();
-  if (!dataReposFile || !existsSync(dataReposFile)) {
-    return null;
-  }
+  if (!dataReposFile) throw new Error("DarkFactory requires AGENTS_DATA_REPOS from Agent OS");
+  if (!existsSync(dataReposFile)) throw new Error(`Agent OS data repository registry does not exist: ${dataReposFile}`);
+
+  const agentsRoot = process.env.AGENTS_ROOT?.trim();
+  if (!agentsRoot) throw new Error("DarkFactory requires AGENTS_ROOT from Agent OS");
+  const expectedPath = resolve(agentsRoot, "data", "agent-os");
 
   try {
     const parsed = JSON.parse(readFileSync(dataReposFile, "utf8")) as unknown;
-    if (!Array.isArray(parsed)) {
-      return null;
-    }
+    if (!Array.isArray(parsed)) throw new Error(`Invalid Agent OS data repository registry: ${dataReposFile}`);
 
-    const agentosRoot = process.env.AGENTS_ROOT?.trim() ?? resolve(dirname(dataReposFile), "..");
-    const dataRepo = parsed.find((item) => {
-      return (
-        isRecord(item) &&
-        (item.id === "workspace-darkfactory" ||
-          item.id === "darkfactory-workspace" ||
-          item.repo === "marius-patrik/data-agentos" ||
-          item.repo === "marius-patrik/agentos-data")
-      );
-    });
-    if (!isRecord(dataRepo) || typeof dataRepo.path !== "string") {
-      return null;
+    if (parsed.length !== 1 || !isRecord(parsed[0]) || parsed[0].id !== "agent-os-data") {
+      throw new Error(`Agent OS data repository registry must contain only the agent-os-data record: ${dataReposFile}`);
     }
-
-    const managedPath = typeof dataRepo.managedPath === "string" ? dataRepo.managedPath : "managed-repository";
-    return resolveManagedRepositoryRoot(resolve(agentosRoot, dataRepo.path, managedPath));
-  } catch {
-    return null;
+    const dataRepo = parsed[0];
+    if (dataRepo.repo !== "marius-patrik/agents-data") {
+      throw new Error(`agent-os-data must use repository marius-patrik/agents-data in ${dataReposFile}`);
+    }
+    if (typeof dataRepo.path !== "string" || !dataRepo.path.trim()) {
+      throw new Error(`Invalid agent-os-data path in ${dataReposFile}`);
+    }
+    const registeredPath = resolve(dataRepo.path);
+    if (registeredPath !== expectedPath) {
+      throw new Error(`agent-os-data path must be ${expectedPath}, received ${registeredPath}`);
+    }
+    if (dataRepo.managedPath !== undefined) {
+      throw new Error(`agent-os-data must register its checkout root without managedPath in ${dataReposFile}`);
+    }
+    return registeredPath;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`Invalid JSON in Agent OS data repository registry: ${dataReposFile}`);
+    }
+    throw error;
   }
 }
 
 function resolveManagedRepositoryRoot(candidate: string): string {
-  const root = resolve(candidate);
-  if (existsSync(resolve(root, ".agents")) || existsSync(resolve(root, ".github")) || existsSync(resolve(root, ".darkfactory"))) {
-    return root;
-  }
-
-  const nested = resolve(root, "managed-repository");
-  if (existsSync(nested)) {
-    return nested;
-  }
-
-  return root;
+  return resolve(candidate);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

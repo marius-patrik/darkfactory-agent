@@ -13,8 +13,11 @@ import type { ManagedFile } from "../src/managed-files.js";
 
 const MANAGED_FILES: ManagedFile[] = [
   { path: "AGENTS.md", content: "# Agent Entry Point\n" },
-  { path: ".agents/.global/VERSION", content: "agent-darkfactory@1.0.0\n" },
-  { path: ".github/workflows/ci.yml", content: "name: CI\n" }
+  { path: ".github/workflows/ci.yml", content: "name: CI\n" },
+  {
+    path: ".darkfactory/managed-repository.json",
+    content: JSON.stringify({ schemaVersion: 1, requiredFiles: [], removedFiles: [] })
+  }
 ];
 
 test("syncRepositories processes DarkFactory control repository first", async () => {
@@ -213,6 +216,10 @@ function createRequester(hooks: RequesterHooks): GitHubRequester {
 
       if (route === "GET /repos/{owner}/{repo}/git/commits/{commit_sha}") {
         return { data: { tree: { sha: "tree-sha" } } };
+      }
+
+      if (route === "GET /repos/{owner}/{repo}/git/trees/{tree_sha}") {
+        return { data: { tree: [], truncated: false } };
       }
 
       if (route === "POST /repos/{owner}/{repo}/git/trees") {

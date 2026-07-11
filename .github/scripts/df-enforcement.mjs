@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -6,6 +5,7 @@ import {
   checksSummary,
   isParkedRepo,
   normalizedRepoName,
+  readRequiredJson,
   readManagedRepoRegistry,
   repoName
 } from "./df-lib.mjs";
@@ -48,24 +48,37 @@ function defaultRuleDescription(id) {
 
 export async function loadEnforcementRules(root = process.cwd()) {
   try {
-    const raw = JSON.parse(await readFile(path.join(root, ENFORCEMENT_RULES_PATH), "utf8"));
+    const raw = await readRequiredJson(path.join(root, ENFORCEMENT_RULES_PATH));
+    assertEnforcementRulesConfig(raw);
     return normalizeEnforcementRules(raw);
   } catch (error) {
-    if (error?.code === "ENOENT") {
-      return defaultEnforcementRules();
-    }
     throw new Error(`Failed to load ${ENFORCEMENT_RULES_PATH}: ${error.message || String(error)}`);
   }
 }
 
+function assertEnforcementRulesConfig(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || raw.schemaVersion !== 1) {
+    throw new Error("enforcement rules must be an object using schemaVersion 1");
+  }
+  if (!Array.isArray(raw.rules)) {
+    throw new Error("enforcement rules must define a rules array");
+  }
+  for (const rule of raw.rules) {
+    if (!rule || typeof rule !== "object" || Array.isArray(rule) || typeof rule.id !== "string" || !rule.id.trim()) {
+      throw new Error("each enforcement rule must define a non-empty id");
+    }
+    if (rule.severity !== undefined && rule.severity !== "block" && rule.severity !== "warn") {
+      throw new Error(`enforcement rule '${rule.id}' has invalid severity`);
+    }
+  }
+}
+
 export function normalizeEnforcementRules(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return defaultEnforcementRules();
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Array.isArray(raw.rules)) {
+    throw new Error("enforcement rules must define a rules array");
   }
 
-  const rules = Array.isArray(raw.rules)
-    ? raw.rules.filter((rule) => rule && typeof rule === "object" && typeof rule.id === "string")
-    : [];
+  const rules = raw.rules.filter((rule) => rule && typeof rule === "object" && typeof rule.id === "string");
 
   return {
     schemaVersion: typeof raw.schemaVersion === "number" ? raw.schemaVersion : 1,

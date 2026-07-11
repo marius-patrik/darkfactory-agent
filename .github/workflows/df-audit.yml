@@ -17,7 +17,7 @@ permissions:
 jobs:
   df-audit:
     name: Audit managed repositories
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       ${{
         github.repository == 'marius-patrik/agent-darkfactory' &&
@@ -95,5 +95,4 @@ jobs:
           DF_TARGET_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.repo || github.repository }}
           DF_AUDIT_ALL: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.repo)) && 'true' || 'false' }}
           DF_TRIGGER: ${{ github.event_name }}
-          DF_DATA_REPO: marius-patrik/darkfactory-data
         run: node ${{ steps.script-path.outputs.path }}

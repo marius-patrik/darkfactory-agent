@@ -1,6 +1,6 @@
 import {
   CODEX_REVIEW_REQUIRED_CONTEXT,
-  DEFAULT_DATA_REPO,
+  AGENT_OS_DATA_REPO,
   assertAllowedRepo,
   checksAreGreen,
   checksSummary,
@@ -36,12 +36,11 @@ const NO_CHECK_ALLOWLIST = new Set(
 const EMPTY_CHECK_SETTLE_MS = 10 * 60 * 1000;
 let gh;
 let CONTROL_REPO;
-let DATA_REPO = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
+const DATA_REPO = AGENT_OS_DATA_REPO;
 
 export function configureSweepRuntime(options) {
   gh = options.gh;
   CONTROL_REPO = options.controlRepo;
-  DATA_REPO = options.dataRepo ?? DEFAULT_DATA_REPO;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -56,8 +55,7 @@ async function main() {
   const token = requiredEnv("DARK_FACTORY_TOKEN");
   configureSweepRuntime({
     gh: createGithubClient(token, "darkfactory-sweep"),
-    controlRepo: parseRepo(requiredEnv("DF_CONTROL_REPO")),
-    dataRepo: process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO
+    controlRepo: parseRepo(requiredEnv("DF_CONTROL_REPO"))
   });
 
   if (MODE === "dev-merge") {
@@ -301,7 +299,7 @@ export async function considerPullRequest(repository, pull, enforcementRules = n
       action: "merge",
       sha: merged.sha,
       base: pull.baseRefName,
-      fallback_from_automerge: enabled.reason,
+      direct_merge_reason: enabled.reason,
       checks: checksSummary(mergeGate.statusCheckRollup),
       ...codexReviewLedgerGap(codexReview)
     };
@@ -523,7 +521,7 @@ async function closeIssuesIfDevMerge(repository, pull) {
       continue;
     }
     await gh.request("POST", `/repos/${repoName(repository)}/issues/${issue_number}/comments`, {
-      body: `merged to dev in ${pull.url}, releases with the next dev→main PR`
+      body: `merged to dev in ${pull.url}, enters canonical main through the next Agent OS integration PR`
     });
     await gh.request("PATCH", `/repos/${repoName(repository)}/issues/${issue_number}`, { state: "closed" });
     closed.push(issue_number);

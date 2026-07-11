@@ -15,7 +15,7 @@ concurrency:
 jobs:
   fix:
     name: Fix red worker PRs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       ${{
         github.repository == 'marius-patrik/agent-darkfactory' &&
@@ -69,6 +69,5 @@ jobs:
           DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
           DF_CONTROL_REPO: marius-patrik/agent-darkfactory
           DF_TRIGGER: ${{ github.event_name }}
-          DF_DATA_REPO: marius-patrik/darkfactory-data
           DF_MAX_FIX_ROUNDS: ${{ vars.DF_MAX_FIX_ROUNDS }}
         run: node darkfactory-control/.github/scripts/df-fix.mjs

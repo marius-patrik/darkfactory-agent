@@ -1,28 +1,30 @@
 # DarkFactory PRD
 
-> This file at the repository root is the **source of truth** for DarkFactory. DarkFactory itself enforces this convention on every repo it manages: the root `PRD.md` defines the product; the backlog, branches, PRs, and releases are derived from it. Edits to this file are the primary way to steer the product.
+> This file defines the DarkFactory component contract. The root Agent OS PRD
+> owns product scope, versioning, and publication. DarkFactory enforces each
+> managed repository's own `PRD.md` as the source for that repository's backlog.
 
 ## Vision
 
-DarkFactory is a GitHub-native autonomous engineering system. **GitHub is the only user control plane**: the owner steers by editing PRDs, filing/labeling issues, and commenting on PRs — nothing else. DarkFactory turns PRDs into sequenced backlogs, backlog into branches and PRs built by AI workers, PRs through enforced review gates into merged code and releases. It fully replaces the local dev-terminal workflow (interactive agent sessions driving repos by hand) with durable, observable, resumable automation.
+DarkFactory is the GitHub-native control-plane component of Agent OS. **GitHub is the remote user control plane**: the owner steers managed repository work by editing PRDs, filing or labeling issues, and commenting on PRs. DarkFactory turns PRDs into sequenced backlogs, backlog into Agent OS work turns, and reviewed work into merged code. Local execution, identity, memory, models, and state remain exclusively owned by Agent OS.
 
-The system it replaces looks like this (the manual workflow it must absorb): a human-driven orchestrator fans out AI workers to deep-audit every package of a monorepo, synthesizes a master roadmap, queues ~100 sequenced issues across 16 repos, runs parallel hygiene/enforcement/implementation streams, and closes the loop with review gates and releases. DarkFactory v2 makes that a product — **including the orchestrator itself**. The interactive AI orchestrator session coordinating this work today is replaced completely by DarkFactory's orchestrator loop: no terminal session, no chat thread, no human-in-the-loop except through GitHub.
+The manual workflow it absorbs is a human-driven orchestrator fanning out workers to audit packages, synthesize a roadmap, sequence issues across repositories, run parallel streams, and close the loop with review gates. DarkFactory makes that durable and reconstructible from GitHub state while delegating every model-backed turn to the canonical Agent OS runtime.
 
-## Identity & current state (v0.1)
+## Identity and current state
 
 - GitHub App **mp-agents** (App ID 3827239), installed account-wide (`repository_selection: all`, contents + PRs write). Secrets `DARK_FACTORY_APP_ID` / `DARK_FACTORY_PRIVATE_KEY` configured; `CODEX_AUTH_JSON` available for worker auth.
-- Existing assets: webhook server scaffold (`src/bot.ts`, `src/server.ts`), managed-file sync (`src/managed-sync.ts`, `src/managed-files.ts` reading `data/data-agentos/managed-repository`), Docker Codex reviewer, release workflow, repo-setup enforcement.
-- Runtime strategy: **GitHub Actions first** (schedule + `workflow_dispatch` + control-repository issue/PR events). Managed repository `df:ready` labels and `/df run` comments are picked up on the next orchestrator tick or workflow-run chain, so managed repos do not need control-repository app secrets. The always-on webhook server is a later optimization, not a prerequisite. Workers are `codex exec` runs in Docker on Actions runners; later they dispatch to self-hosted runners/cluster via agents-manager + inference-engine.
+- Existing assets: webhook server (`src/bot.ts`, `src/server.ts`), managed-file sync (`src/managed-sync.ts`, `src/managed-files.ts` reading the canonical `agent-os-data/managed-repository` child), isolated CI Codex reviewer, and repository-setup enforcement.
+- Runtime strategy: GitHub Actions owns deterministic schedule, dispatch, and control-repository events. Managed repository `df:ready` labels and `/df run` comments are picked up by the orchestrator or webhook path without exposing control-repository secrets. Model-backed workers run only on trusted `df-local` self-hosted runners through the canonical `agents` launcher and Agent OS state.
 
 ## One system (integration principle)
 
-DarkFactory is NOT a standalone product — it is the **GitHub control-plane adapter of one integrated system** rooted in agents-mono. The layering:
+DarkFactory is not a standalone product. It is the **GitHub control-plane adapter of Agent OS**, whose integration root is `agents-manager`. The layering:
 
-- **os/agents-harness** = the orchestration engine. The Andromeda project (migrated into the harness; its VS2–VS6 roadmap lives in harness issues #1263–#1343: cloud dispatch, cluster runtime, concurrent brain, memory, subagents, autolearn) was an attempt to implement this entire system at once — its concepts are the long-term home of orchestration: brains, workers, streams, scheduling, memory, non-progress detection.
-- **DarkFactory** = the thin GitHub-native adapter: control-plane translation (issues/labels/PRs/comments ↔ work units), enforcement sync, review gates. M1–M3 ship Actions-based loops standalone so automation exists NOW, but every loop is built so its internals migrate onto harness services as the harness matures (L0 deterministic tick → harness scheduler; L3 workers → harness-managed workers/cluster; audit loop → harness observers). DarkFactory grows no second brain.
-- **os/inference-engine + os/llm-gateway** = model/execution substrate; **os/agents-manager** = package/state/secrets substrate; **agents-mono root PRD** = the system-level source of truth that binds all package PRDs into one program.
+- `packages/core/src/harness` is the canonical managed runtime for Agent OS sessions, orchestration, memory injection, and worker execution.
+- **DarkFactory** is the thin GitHub-native adapter: control-plane translation (issues/labels/PRs/comments ↔ work units), enforcement sync, and review gates. Deterministic GitHub loops stay in this component; every local model turn is delegated through the Agent OS manager. DarkFactory grows no second brain or state authority.
+- `packages/core/src/inference` and `packages/core/src/gateway` provide the model/execution substrate; `packages/core/src/manager` owns package, state, memory, sessions, providers, and secrets; the Agent OS root PRD binds the components into one program.
 
-Every DarkFactory milestone must state its harness-migration path. The end state is one complete project, not a bundle of separate tools.
+Every DarkFactory milestone must preserve the manager/harness boundary. The end state is one complete product, not a bundle of separate tools.
 
 ## Token economy (first-class design principle)
 
@@ -37,14 +39,15 @@ DarkFactory **automates** the orchestration work style; it does not replicate it
 ## Architecture
 
 - **Control plane**: GitHub — PRD.md (product truth), issues (work units, sequenced via labels + `Blocked-by: #N` body headers), labels (`P0|P1|P2`, `df:ready`, `df:running`, `df:blocked`, `stream:<name>`), PR checks (CI + Codex Review), comments (slash commands), Actions (execution triggers).
-- **Execution plane**: containerized `codex exec` workers with the repo checked out, the issue as the task brief, and repo `AGENTS.md` + PRD as context. One worker = one issue = one branch = one PR.
-- **State**: the repos themselves plus `.darkfactory/` metadata (policies, stream definitions, run ledgers). No external database.
-- **Policy**: `.darkfactory/policy.json` per repo — what may run automatically, worker limits, protected paths, merge rules, release rules.
+- **Execution plane**: trusted `df-local` workers invoke `agents run` with the issue as the task brief and repository `AGENTS.md` + PRD as context. One worker = one issue = one branch = one PR. The isolated Codex review container remains an external CI boundary only.
+- **State**: GitHub repositories and `.darkfactory/` control metadata plus the single Agent OS state authority under `$AGENTS_HOME`; no DarkFactory-owned database, model state, or memory.
+- **Managed data**: exactly one `agent-os-data` registration at `$AGENTS_ROOT/data/agent-os`; DarkFactory reads only its `managed-repository` child and accepts no alternate path.
+- **Policy**: the managed `.darkfactory/` files define orchestration, enforcement, labels, branching, and installer expectations.
 
 ## Core loops
 
 - [x] **L0 Orchestrator** (NEW — replaces the orchestrator session): a scheduled brain run, with additional control-repository triggers, using a synthesized global-state brief: all installed repos' git/CI/backlog/PRD state, stream ledgers, open blockers. Managed repository pickup is schedule-driven through cron orchestrate ticks and workflow-run chaining. Each run does exactly what the human-driven orchestrator session does today: assess state, plan/replan waves, sequence and ready issues, dispatch L3 workers within concurrency caps, unstick blocked lanes, post a status digest to the dashboard, and escalate genuinely owner-only decisions as labeled question issues (`df:ask-owner`) instead of blocking. The orchestrator holds no memory outside GitHub — every run reconstructs state from repos, ledgers in `.darkfactory/`, and issue history, so it is fully resumable and replaceable.
-- [x] **L1 Sync** (exists — harden): managed baseline files pushed to every installed repo via PRs. Baseline source: `data-agentos/managed-repository`. Must become self-applying (DarkFactory manages itself first).
+- [x] **L1 Sync** (exists — harden): managed repository-local baseline files pushed to every installed repo via PRs. Executable DarkFactory workflow/script payloads come from this package; shared policy and repository context come from `$AGENTS_ROOT/data/agent-os/managed-repository`; duplicate ownership fails closed. DarkFactory manages itself first.
 - [x] **L2 Review** (exists on some repos — universalize): Codex Review gate on every PR, Docker-isolated, schema-validated verdicts; merge blocked until green.
 - [x] **L3 Work** (NEW — the heart): pick next `df:ready` issue respecting priority + `Blocked-by` + stream lane → create branch `df/<issue>-<slug>` → worker implements with validation → push → open PR referencing the issue → gates run → automerge on green → issue closes. Failure paths: worker comments its blocker on the issue, labels `df:blocked`, releases the lane.
 - [x] **L4 Planning** (NEW): scheduled + on-PRD-change reconciliation — parse PRD.md, diff against open backlog, file/update/close issues so backlog ≡ PRD, maintain sequencing labels and `Blocked-by` graphs. This is the PRD-as-source-of-truth enforcement.
@@ -55,7 +58,7 @@ DarkFactory **automates** the orchestration work style; it does not replicate it
 
 - Edit `PRD.md` → L4 replans the backlog (PRD-edit triggers run in the edited repository with the repository token).
 - Label an issue `df:ready` (or let L4 auto-ready sequenced work) → the issue is queued for L3 dispatch on the next scheduled orchestrator tick or workflow-run chain.
-- Comment `/df plan`, `/df audit`, `/df pause`, `/df release` on issues/PRs → the request is scoped to that repo/issue where a control-repository bridge exists.
+- Comment `/df plan`, `/df audit`, or `/df pause` on issues/PRs → the request is scoped to that repo/issue where a control-repository bridge exists.
 - `workflow_dispatch` for manual wave starts; until the webhook server is deployed, `/df run` in managed repositories is represented by `df:ready` and picked up on the next scheduled orchestrator tick, while the control-repository orchestrator dispatches L3 workers across managed repositories via `workflow_dispatch` so app/Codex secrets stay out of managed-repo workflows.
 - Merge/close/comment exactly as on any repo — the bot treats human actions as authoritative.
 
@@ -63,9 +66,9 @@ DarkFactory **automates** the orchestration work style; it does not replicate it
 
 - [x] **M1 — Minimum work loop (dogfood ASAP)**: Actions workflow in agent-darkfactory that spawns a codex worker for one scheduled `df:ready` issue, with control-repository event triggers as a low-latency path only where control secrets are present → branch → PR → existing review gate → automerge. Acceptance: one issue in a target repo goes label-to-merged after scheduled pickup with zero terminal use. First dogfood targets: `dream` (small), then `agents-plugin`.
 - [x] **M2 — Planning loop / PRD enforcement**: PRD→backlog reconciliation for one repo, then all. Acceptance: editing PRD.md files/updates sequenced issues automatically; drift report issue when code contradicts PRD.
-- [x] **M3 — Orchestrator loop & streams**: L0 shipped — sequencing engine (priorities, Blocked-by graph, stream lanes, concurrency caps), cross-repo waves, scheduled orchestrator runs dispatching workers, dashboard, `df:ask-owner` escalation. Acceptance: the agents-mono backlog (113 issues) drains through DarkFactory in parallel lanes **with zero orchestrator terminal sessions** — the session that built this system is retired.
+- [x] **M3 — Orchestrator loop & streams**: L0 shipped — sequencing engine (priorities, Blocked-by graph, stream lanes, concurrency caps), cross-repo waves, scheduled orchestrator runs dispatching workers, dashboard, and `df:ask-owner` escalation. Local worker execution is delegated to the canonical Agent OS manager rather than a DarkFactory-owned provider stack.
 - [x] **M4 — Audit loop**: scheduled per-repo deep audits filing findings-as-issues feeding L4 sequencing. Acceptance: a regression (dirty submodule, red CI, stale doc) is detected and issued within one schedule period.
-- [x] **M5 — Full replacement**: releases, managed-baseline evolution, self-improvement PRs (DarkFactory files and implements issues against its own PRD), webhook server deployment for low latency. Acceptance: a month of repo work with GitHub as the only interface.
+- [x] **M5 — Full replacement**: Agent OS integration, managed-baseline evolution, self-improvement PRs, and webhook service operation through Agent OS for low latency. Acceptance: a month of managed repository work with GitHub as the remote interface and one Agent OS runtime/state authority.
 
 ## Non-goals (now)
 

@@ -229,7 +229,7 @@ test("fetchRecentRuns returns latest plan, orchestrate, and in-flight work runs"
 });
 
 test("fetchLatestLedger reads the most recent df-orchestrate ledger", async () => {
-  const dataRepo: RepositoryRef = { owner: "marius-patrik", repo: "data-agentos" };
+  const dataRepo: RepositoryRef = { owner: "marius-patrik", repo: "agents-data" };
   const controlRepo: RepositoryRef = { owner: "marius-patrik", repo: "agent-darkfactory" };
   const github = createRequester({
     "GET /repos/{owner}/{repo}/contents/{path}": (parameters) => {

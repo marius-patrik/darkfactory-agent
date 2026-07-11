@@ -62,7 +62,7 @@ export function loadAppCredentials(env: NodeJS.ProcessEnv = process.env): AppCre
 }
 
 function requiredEnv(env: NodeJS.ProcessEnv, name: string): string {
-  const value = env[name]?.trim() ?? readAgentosSecret(env, name)?.trim();
+  const value = env[name]?.trim() ?? readAgentOsSecret(env, name)?.trim();
 
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
@@ -71,7 +71,7 @@ function requiredEnv(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-function readAgentosSecret(env: NodeJS.ProcessEnv, name: string): string | null {
+function readAgentOsSecret(env: NodeJS.ProcessEnv, name: string): string | null {
   const secretsDir = env.AGENTS_SECRETS?.trim();
   if (!secretsDir) return null;
   const file = join(secretsDir, `${name}.secret`);

@@ -9,8 +9,6 @@ SCHEMA_PATH="${SCHEMA_PATH:-/opt/codex-review/schema.json}"
 REVIEW_CONTEXT_DIR="${REVIEW_CONTEXT_DIR:-/review-context}"
 PR_TITLE="${PR_TITLE:-}"
 PR_BODY="${PR_BODY:-}"
-CODEX_REVIEW_MODEL="${CODEX_REVIEW_MODEL:-gpt-5.5}"
-CODEX_REVIEW_EFFORT="${CODEX_REVIEW_EFFORT:-low}"
 MAX_PROMPT_BYTES="${MAX_PROMPT_BYTES:-700000}"
 
 write_blocked_review() {
@@ -244,8 +242,6 @@ fi
 CODEX_EXIT=0
 codex exec \
   --cd /workspace \
-  --model "${CODEX_REVIEW_MODEL}" \
-  -c "model_reasoning_effort=\"${CODEX_REVIEW_EFFORT}\"" \
   --sandbox read-only \
   --ephemeral \
   --output-last-message "${REVIEW_OUTPUT}" \

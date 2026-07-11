@@ -5,3 +5,7 @@ dist
 .DS_Store
 *.log
 *.tsbuildinfo
+
+.agents/*
+!.agents/.project/
+!.agents/.project/**

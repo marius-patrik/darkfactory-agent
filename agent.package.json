@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "agent-darkfactory",
-  "name": "darkfactory",
-  "kind": "agent",
-  "description": "DarkFactory GitHub App automation agent CLI.",
+  "id": "darkfactory",
+  "name": "DarkFactory",
+  "kind": "package",
+  "description": "Agent OS GitHub control-plane component and automation CLI.",
   "entry": "node dist/cli.js",
   "requires": {
     "state": [
@@ -15,16 +15,7 @@
       "credits"
     ]
   },
-  "dataRepo": {
-    "id": "workspace-darkfactory",
-    "repo": "marius-patrik/data-agentos",
-    "path": "data/data-agentos",
-    "branch": "main",
-    "managedPath": "managed-repository",
-    "env": "DARK_FACTORY_WORKSPACE_ROOT"
-  },
   "provides": [
     "cli:darkfactory"
   ]
 }
-

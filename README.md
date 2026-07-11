@@ -1,6 +1,8 @@
-# agent-darkfactory
+# DarkFactory
 
-TypeScript GitHub App bot that receives GitHub webhooks, verifies signatures, and responds to basic repository activity.
+Agent OS GitHub control-plane component. It receives GitHub webhooks, verifies
+signatures, synchronizes repository policy, and runs deterministic planning and
+orchestration loops.
 
 ## What it does
 
@@ -9,19 +11,20 @@ TypeScript GitHub App bot that receives GitHub webhooks, verifies signatures, an
 - Logs GitHub App `ping` events.
 - Comments on newly opened issues.
 - Comments on newly opened pull requests.
-- Checks pull requests in installed repositories for shared repository setup:
-  - `.agents/.global/VERSION` must match the current Dark Factory version.
-  - DarkFactory installer, auto-update, release, and review workflows should exist as the baseline GitHub Actions scaffold.
+- Checks pull requests in installed repositories for the current DarkFactory
+  policy and workflow scaffold.
 - Dispatches the orchestrator workflow immediately when an issue is labeled `df:ready` or when an owner/member/collaborator comments `/df run`, providing a low-latency path for managed repositories.
 - Installs the managed Codex Review workflow, Dockerfile, runner script, and output schema used to run `codex exec` in a container for pull request review.
-- Reads managed `.agents`, `.darkfactory`, and `.github` files from the `agentos-data` repository.
+- Reads repository-local agent context, `.darkfactory`, and `.github` policy
+  files from `marius-patrik/agents-data`.
 - Opens managed setup PRs when the app is installed on a repository or when repositories are added to an installation.
 - Can sync all installed repositories from the `Sync Managed Repositories` workflow.
 
 ## Requirements
 
 - Node.js 22 or newer.
-- Agentos shared state for managed secrets and workspace paths.
+- A healthy Agent OS installation for local secrets, managed data, and worker
+  execution.
 - A GitHub App installed on the target repositories.
 - For label-to-merged dogfood runs, target repositories with protected worker branches must have GitHub repository auto-merge enabled before `df:ready` dispatch.
 - A public HTTPS URL for local webhook testing, such as an ngrok or Cloudflare Tunnel URL.
@@ -50,17 +53,16 @@ Generate a private key for the app and install the app on the repositories where
 
 To install the app on every repository, use the GitHub App installation UI and choose all repositories. The user token used by `gh` cannot grant GitHub App repository access by itself.
 
-## Agentos setup
+## Agent OS setup
 
 ```powershell
 npm ci
 npm run build
-agents packages register workspaces/workspace-darkfactory
-agents packages register agents/agent-darkfactory
-agents data repo path workspace-darkfactory
+agents packages register packages/darkfactory
+agents data repo path agent-os-data
 ```
 
-Store local secrets through Agentos. Secret values are not printed by the manager:
+Store local secrets through Agent OS. Secret values are not printed by the manager:
 
 ```powershell
 agents secrets set GITHUB_APP_ID
@@ -69,10 +71,10 @@ agents secrets set GITHUB_WEBHOOK_SECRET
 agents secrets set CODEX_AUTH_JSON --from-file "$env:USERPROFILE\.codex\auth.json"
 ```
 
-Run DarkFactory through Agentos so it receives `AGENTS_SECRETS` and the other shared state paths:
+Run DarkFactory through Agent OS so it receives the canonical state paths:
 
 ```powershell
-agents packages run agent-darkfactory -- serve
+agents packages run darkfactory -- serve
 ```
 
 The bot listens on `http://localhost:3000/webhook`. Point the GitHub App webhook URL at your tunnel URL, for example `https://example.ngrok.app/webhook`.
@@ -83,74 +85,53 @@ The bot listens on `http://localhost:3000/webhook`. Point the GitHub App webhook
 npm run typecheck
 npm test
 npm run build
-df runners status
 darkfactory serve
 darkfactory install-url
 darkfactory sync-managed
 ```
 
-## Self-hosted runner manager
+`df-work.yml` runs only on a trusted self-hosted runner labeled `df-local`. It
+requires `agents state doctor --json` to pass, then delegates the worker turn to
+`agents run` without provider or model flags. Provider selection, identity,
+memory, and session state therefore come exclusively from `$AGENTS_HOME`.
 
-DarkFactory can install and supervise per-repository GitHub Actions runners on the local Windows host. The manager uses per-repo runners because personal GitHub accounts cannot attach one runner to every repository. Each runner is named `df-<repo>`, receives the `df-local` label, and is configured without `--runasservice` so it does not require elevation.
+`codex-review.yml` is the one external CI execution boundary. It uses an
+ephemeral Codex container and repository secret because GitHub-hosted CI cannot
+access personal Agent OS state. It does not define a repository model or serve
+as local provider authority.
 
-The default root is:
+## Self-hosted runner ownership
 
-```text
-C:/Users/patrik/.darkfactory/runners
-```
+The `df-local` runner is provisioned and supervised by Agent OS, outside this
+component. Its service environment must expose the canonical `agents` launcher
+and `$AGENTS_HOME`. DarkFactory intentionally carries no host runner installer,
+PID registry, alternate state root, or platform-specific process manager.
 
-Override it per command with `--root <path>` or by setting `DF_RUNNER_ROOT`. Runtime state is stored in `state.json` under that root. Registration and removal tokens are fetched from GitHub when needed and are not written to state.
+## Service operation
 
-```powershell
-df runners setup marius-patrik/agent-darkfactory
-df runners setup marius-patrik/dream
-df runners status
-df runners stop marius-patrik/dream
-df runners start marius-patrik/dream
-df runners remove marius-patrik/dream
-```
-
-`setup` downloads the latest Windows x64 `actions/runner` package into the shared `_cache` directory, extracts it to the per-repo runner directory, runs `config.cmd` unattended with `--labels df-local`, starts `run.cmd` as a detached background process, and records the PID. `status` combines local PID state with `gh api repos/<owner>/<repo>/actions/runners` so online/offline evidence comes from GitHub.
-
-Do not run the manager from an elevated prompt and do not add `--runasservice`; service installation requires UAC and is intentionally out of scope for the local pilot.
-
-## Deployment
-
-Build and run with Docker:
+Run the webhook service through Agent OS. DarkFactory does not carry an
+independent container, deployment, or data checkout:
 
 ```powershell
-git clone https://github.com/marius-patrik/data-agentos.git data-agentos
-docker build -t agent-darkfactory .
-docker run --rm -p 3000:3000 --env-file .env agent-darkfactory
+agents state doctor
+agents packages run darkfactory -- serve
 ```
 
-Production hosts must provide these environment variables:
+The service uses the sole `agent-os-data` registration from
+`$AGENTS_HOME/data-repos.json`, verifies that it points to
+`$AGENTS_ROOT/data/agent-os`, and reads managed policy from its
+`managed-repository` child. There is no DarkFactory-specific data root or path
+override.
+
+The service requires these settings or Agent OS-managed secrets:
 
 - `GITHUB_APP_ID`
 - `GITHUB_PRIVATE_KEY`
 - `GITHUB_WEBHOOK_SECRET`
 - `DARK_FACTORY_CONTROL_REPO`, optional and defaults to `marius-patrik/agent-darkfactory`
-- `DARK_FACTORY_WORKSPACE_ROOT`, optional when the image bundles `data-agentos/managed-repository`
 - `PORT`, optional and defaults to `3000`
 
 Use `GET /healthz` as the health check endpoint.
-
-### Fly.io deployment
-
-A `fly.toml` is included for deployment to Fly.io. The image is built and published to GitHub Container Registry by the release workflow, then deployed by the `Deploy Webhook Server` workflow.
-
-Required repository secrets:
-
-- `FLY_API_TOKEN`
-
-Deploy manually:
-
-```powershell
-flyctl auth login
-flyctl deploy --image ghcr.io/marius-patrik/agent-darkfactory:v0.2.0
-```
-
-After deploying, set the GitHub App webhook URL to `https://agent-darkfactory.fly.dev/webhook`.
 
 ## Managed repository setup
 
@@ -158,14 +139,11 @@ Dark Factory manages shared setup through pull requests. It does not write direc
 
 Managed files:
 
-- `.agents/.global/**`
-- `.agents/.project/**`, only when `data-agentos/managed-repository/repositories/<owner>/<repo>/.agents/.project/**` exists
+- `.agents/.project/**`, only when `$AGENTS_ROOT/data/agent-os/managed-repository/repositories/<owner>/<repo>/.agents/.project/**` exists
 - `.darkfactory/managed-repository.json`
 - `.darkfactory/installer-policy.json`
-- `.darkfactory/release-policy.json`
 - `.github/workflows/dark-factory-bootstrap.yml`
 - `.github/workflows/dark-factory-autoupdate.yml`
-- `.github/workflows/dark-factory-release.yml`
 - `.github/workflows/df-plan.yml`
 - `.github/workflows/df-follow-through.yml`
 - `.github/workflows/df-orchestrate.yml`
@@ -174,25 +152,29 @@ Managed files:
 - `.github/codex-review.Dockerfile`
 - `.github/codex-review.schema.json`
 - `.github/scripts/run-codex-review.sh`
-- `.github/scripts/validate-codex-review.mjs`
-- `.github/scripts/dark-factory-release-check.mjs`
+- `.github/scripts/dark-factory-managed-check.mjs`
 
 Managed setup does not ship `.github/workflows/df-event-forward.yml`. That workflow uses control-repository app secrets and is kept only in `marius-patrik/agent-darkfactory`.
 
 When the DarkFactory webhook server is deployed, `df:ready` labels and `/df run` comments in any installed repository are dispatched immediately to the orchestrator workflow, eliminating the wait for the next scheduled tick. If the webhook server is not deployed or the dispatch fails, the schedule and workflow-run chaining still pick up the issue.
 
-The `agentos-data` repository is the single source of truth for managed setup. Keep reusable policy in `managed-repository/.agents/.global/` and `managed-repository/.darkfactory/`, and per-repository context in `managed-repository/repositories/<owner>/<repo>/.agents/.project/`.
+Managed publication has path-level ownership: this package owns executable
+DarkFactory workflows and scripts, while the sole `agent-os-data` checkout owns
+shared repository policy and context. Duplicate paths fail closed. Keep reusable
+repository policy in `managed-repository/.darkfactory/` and
+per-repository context in
+`managed-repository/repositories/<owner>/<repo>/.agents/.project/`. Shared Agent
+OS state remains under `$AGENTS_HOME` and is never copied by DarkFactory.
 
 Managed sync runs automatically when:
 
 - the GitHub App is installed on repositories
 - repositories are added to an existing GitHub App installation
 - the scheduled `Sync Managed Repositories` workflow runs
-- a DarkFactory release is published
 
 Managed sync can also be run manually from the `Sync Managed Repositories` workflow.
 
-GitHub Actions still consumes repository secrets, but those secrets should be written by Agentos Manager:
+GitHub Actions still consumes repository secrets, but those secrets should be written by Agent OS:
 
 ```powershell
 agents secrets github sync GITHUB_APP_ID --repo marius-patrik/agent-darkfactory --as DARK_FACTORY_APP_ID
@@ -212,7 +194,7 @@ Every managed repository that should enforce Codex Review also needs this reposi
 The local equivalent is:
 
 ```powershell
-agents packages run agent-darkfactory -- sync-managed
+agents packages run darkfactory -- sync-managed
 ```
 
 To print the GitHub App installation URL from local credentials:
@@ -221,27 +203,17 @@ To print the GitHub App installation URL from local credentials:
 npm run install:url
 ```
 
-## Release
+## Version ownership
 
-Releases are tag-driven. To publish a release:
-
-```powershell
-npm version patch
-git push origin main --follow-tags
-```
-
-Pushing a `v*.*.*` tag runs the release workflow. It validates the repo, builds the Docker image, publishes it to GitHub Container Registry, and creates a GitHub release. After the release workflow succeeds, the `Deploy Webhook Server` workflow deploys the published image to Fly.io.
-
-Image tags are published under:
-
-```text
-ghcr.io/marius-patrik/agent-darkfactory
-```
+DarkFactory is versioned and shipped only as part of Agent OS. Its package and
+template metadata align with the root Agent OS version (`0.1.0`); this component
+defines no tag workflow, GitHub release, image tag, or independent deployment
+authority.
 
 ## Development notes
 
 - Keep webhook handlers registered in `src/bot.ts`.
-- Keep managed file templates in `data-agentos/managed-repository/`.
+- Keep managed file templates in `$AGENTS_ROOT/data/agent-os/managed-repository/`.
 - Keep managed sync logic in `src/managed-sync.ts`.
 - Keep installed-repository setup enforcement in `src/repository-setup.ts`.
 - Keep HTTP routing and signature handoff behavior in `src/server.ts`.

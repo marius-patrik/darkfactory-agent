@@ -16,7 +16,7 @@ permissions:
 jobs:
   codex-review:
     name: Codex Review
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ !github.event.pull_request.draft }}
 
     steps:
@@ -47,11 +47,6 @@ jobs:
 
             const contextFiles = [
               "AGENTS.md",
-              ".agents/AGENTS.md",
-              ".agents/.global/AGENT_PROTOCOL.md",
-              ".agents/.global/WORKFLOW.md",
-              ".agents/.global/VALIDATION.md",
-              ".agents/.global/DOCS_AND_MEMORY.md",
               ".agents/.project/AGENTS.md",
               ".agents/.project/PROJECT.md",
               ".agents/.project/COMMANDS.md",
@@ -98,11 +93,10 @@ jobs:
 
       - name: Run Codex review
         id: review
+        # This is an isolated CI reviewer, not a local provider/model authority.
+        # It deliberately uses the Codex CLI default instead of pinning a repo model.
         env:
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-          KIMI_AUTH_JSON: ${{ secrets.KIMI_AUTH_JSON }}
-          CODEX_REVIEW_MODEL: kimi
-          CODEX_REVIEW_EFFORT: low
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -134,12 +128,9 @@ jobs:
               -e BASE_BRANCH \
               -e BASE_REF=origin/${BASE_BRANCH} \
               -e REVIEW_OUTPUT=codex-review.json \
-              -e CODEX_REVIEW_MODEL \
-              -e CODEX_REVIEW_EFFORT \
               -e REVIEW_CONTEXT_DIR=/review-context \
               -e PR_TITLE \
               -e PR_BODY \
-              -e KIMI_AUTH_JSON \
               -v "${PWD}/pr-workspace:/workspace" \
               -v "${PWD}/review-context:/review-context:ro" \
               -v "${CODEX_HOME_DIR}:/codex-home" \

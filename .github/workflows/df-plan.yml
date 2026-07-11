@@ -28,7 +28,7 @@ permissions:
 jobs:
   df-plan:
     name: Reconcile PRD backlog
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # PRD-edit triggers run in every managed repo using the repository token.
     # Scheduled and manual cross-repo sweeps need the DarkFactory app secrets
     # and therefore run only in the control repository.
@@ -94,7 +94,7 @@ jobs:
           esac
 
       # PRD-edit triggers in managed repos run from that repository's installed,
-      # version-enforced payload. Scheduled and manual cross-repo sweeps run from
+      # managed payload. Scheduled and manual cross-repo sweeps run from
       # the control repository at the exact SHA that triggered the workflow.
       - name: Resolve DarkFactory script path
         id: script-path
@@ -144,5 +144,4 @@ jobs:
           DF_TARGET_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || (github.event_name == 'push' && github.sha || '') }}
           DF_PLAN_ALL: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
           DF_TRIGGER: ${{ github.event_name }}
-          DF_DATA_REPO: marius-patrik/darkfactory-data
         run: node ${{ steps.script-path.outputs.path }}

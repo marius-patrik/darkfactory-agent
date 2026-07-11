@@ -5,8 +5,7 @@ import { load as loadYaml } from "js-yaml";
 
 const root = process.cwd();
 const checkDirs = [
-  { scripts: path.join(root, ".github", "scripts"), workflows: path.join(root, ".github", "workflows") },
-  { scripts: path.join(root, "templates", ".github", "scripts"), workflows: path.join(root, "templates", ".github", "workflows") }
+  { scripts: path.join(root, ".github", "scripts"), workflows: path.join(root, ".github", "workflows") }
 ];
 
 for (const { scripts, workflows } of checkDirs) {

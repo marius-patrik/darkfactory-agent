@@ -1,4 +1,4 @@
-# @template/web
+# @agent-os/template-web
 
 Bun and TypeScript web package template.
 

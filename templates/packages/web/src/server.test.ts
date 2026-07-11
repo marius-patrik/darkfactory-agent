@@ -7,7 +7,7 @@ test("serves index.html at /", async () => {
   const response = await fetch(`${baseUrl}/`);
   expect(response.status).toBe(200);
   const body = await response.text();
-  expect(body).toContain("template-web");
+  expect(body).toContain("Agent OS web template");
 });
 
 test("serves index.html at /index.html", async () => {
@@ -19,7 +19,7 @@ test("serves client.ts source", async () => {
   const response = await fetch(`${baseUrl}/client.ts`);
   expect(response.status).toBe(200);
   const body = await response.text();
-  expect(body).toContain("template-web is running");
+  expect(body).toContain("Agent OS web template is running");
 });
 
 test("returns 404 for unknown paths", async () => {

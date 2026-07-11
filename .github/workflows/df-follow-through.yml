@@ -26,7 +26,7 @@ permissions:
 jobs:
   sweep:
     name: Green PR sweep
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       ${{
         github.repository == 'marius-patrik/agent-darkfactory' &&
@@ -99,7 +99,6 @@ jobs:
           DF_SWEEP_EXCLUDE_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.exclude_repos || '' }}
           DF_ALLOW_NO_CHECK_REPOS: ${{ vars.DF_ALLOW_NO_CHECK_REPOS }}
           DF_TRIGGER: ${{ github.event_name }}
-          DF_DATA_REPO: marius-patrik/darkfactory-data
         shell: bash
         run: |
           export GITHUB_EVENT_PAYLOAD="$(cat "$GITHUB_EVENT_PATH")"

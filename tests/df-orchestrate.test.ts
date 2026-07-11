@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 function blockedComment(createdAt: string) {
@@ -15,6 +18,32 @@ function labeledEvent(label: string, createdAt: string) {
     created_at: createdAt
   };
 }
+
+test("orchestration policy loading fails closed and accepts only the canonical schema", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { readOrchestrationPolicy } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-policy-test");
+  const root = await mkdtemp(join(tmpdir(), "df-orchestration-policy-"));
+  const policyPath = join(root, ".darkfactory", "orchestration.json");
+  try {
+    await assert.rejects(readOrchestrationPolicy(root), /Failed to read required JSON file/);
+    await mkdir(join(root, ".darkfactory"), { recursive: true });
+    await writeFile(policyPath, "{");
+    await assert.rejects(readOrchestrationPolicy(root), /Invalid JSON/);
+    await writeFile(policyPath, JSON.stringify({ schemaVersion: 2 }));
+    await assert.rejects(readOrchestrationPolicy(root), /schemaVersion 1/);
+
+    const policy = {
+      schemaVersion: 1,
+      concurrency: { global: 2, perRepository: 1, perStream: 1 },
+      waves: [{ name: "features", streams: ["features", "default"] }],
+      dashboard: { enabled: true, issueTitle: "Dashboard" }
+    };
+    await writeFile(policyPath, JSON.stringify(policy));
+    assert.deepEqual(await readOrchestrationPolicy(root), policy);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("orchestrator dispatches open df:ready issues in active managed repos", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
@@ -426,13 +455,14 @@ test("orchestration plan applies wave gates and cross-repo concurrency caps", as
   const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-l6-plan-test");
 
   const policy = {
+    schemaVersion: 1,
     concurrency: { global: 2, perRepository: 1, perStream: 1 },
     waves: [
       { name: "hygiene", streams: ["hygiene"] },
       { name: "enforcement", streams: ["enforcement"] },
       { name: "features", streams: ["features", "default"] }
     ],
-    dashboard: { enabled: true }
+    dashboard: { enabled: true, issueTitle: "Dashboard" }
   };
   const plan = buildOrchestrationPlan([
     {
@@ -486,9 +516,10 @@ test("orchestration plan enforces stream caps without single-lane prefiltering",
   const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-stream-cap-test");
 
   const policy = {
+    schemaVersion: 1,
     concurrency: { global: 5, perRepository: 5, perStream: 3 },
     waves: [{ name: "features", streams: ["features", "default"] }],
-    dashboard: { enabled: true }
+    dashboard: { enabled: true, issueTitle: "Dashboard" }
   };
 
   const plan = buildOrchestrationPlan([
@@ -514,9 +545,10 @@ test("orchestration plan counts running stream occupancy against stream caps", a
   const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-running-stream-cap-test");
 
   const policy = {
+    schemaVersion: 1,
     concurrency: { global: 5, perRepository: 5, perStream: 2 },
     waves: [{ name: "features", streams: ["features", "default"] }],
-    dashboard: { enabled: true }
+    dashboard: { enabled: true, issueTitle: "Dashboard" }
   };
 
   const plan = buildOrchestrationPlan([
@@ -542,9 +574,10 @@ test("orchestration plan still lets repository and global caps bind", async () =
   const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-global-repo-cap-test");
 
   const policy = {
+    schemaVersion: 1,
     concurrency: { global: 2, perRepository: 1, perStream: 3 },
     waves: [{ name: "features", streams: ["features", "default"] }],
-    dashboard: { enabled: true }
+    dashboard: { enabled: true, issueTitle: "Dashboard" }
   };
 
   const plan = buildOrchestrationPlan([
@@ -587,13 +620,14 @@ test("orchestration wave gate ignores parked owner and blocked issues", async ()
   const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-parked-wave-gate-test");
 
   const policy = {
+    schemaVersion: 1,
     concurrency: { global: 3, perRepository: 2, perStream: 2 },
     waves: [
       { name: "hygiene", streams: ["hygiene"] },
       { name: "enforcement", streams: ["enforcement"] },
       { name: "features", streams: ["features", "default"] }
     ],
-    dashboard: { enabled: true }
+    dashboard: { enabled: true, issueTitle: "Dashboard" }
   };
 
   const parkedPlan = buildOrchestrationPlan([
@@ -682,6 +716,7 @@ test("orchestrator updates the L6 dashboard issue after dispatch", async () => {
     registry: { repositories: { "marius-patrik/example": { state: "active" } } },
     repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
     policy: {
+      schemaVersion: 1,
       concurrency: { global: 2, perRepository: 1, perStream: 1 },
       waves: [{ name: "features", streams: ["features", "default"] }],
       dashboard: { enabled: true, issueTitle: "Dashboard" }
@@ -1241,9 +1276,10 @@ test("orchestrator resumes interrupted run against existing open worker PR", asy
     registry: { repositories: { "marius-patrik/example": { state: "active" } } },
     repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
     policy: {
+      schemaVersion: 1,
       concurrency: { global: 2, perRepository: 1, perStream: 1 },
       waves: [{ name: "features", streams: ["features", "default"] }],
-      dashboard: { enabled: false }
+      dashboard: { enabled: false, issueTitle: "Dashboard" }
     },
     writeLedger: false,
     updateDashboard: false,
@@ -1319,9 +1355,10 @@ test("orchestrator resumes interrupted run from pushed branch when no PR exists"
     registry: { repositories: { "marius-patrik/example": { state: "active" } } },
     repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
     policy: {
+      schemaVersion: 1,
       concurrency: { global: 2, perRepository: 1, perStream: 1 },
       waves: [{ name: "features", streams: ["features", "default"] }],
-      dashboard: { enabled: false }
+      dashboard: { enabled: false, issueTitle: "Dashboard" }
     },
     writeLedger: false,
     updateDashboard: false,
@@ -1387,9 +1424,10 @@ test("orchestrator requeues interrupted run with no usable branch", async () => 
     registry: { repositories: { "marius-patrik/example": { state: "active" } } },
     repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
     policy: {
+      schemaVersion: 1,
       concurrency: { global: 2, perRepository: 1, perStream: 1 },
       waves: [{ name: "features", streams: ["features", "default"] }],
-      dashboard: { enabled: false }
+      dashboard: { enabled: false, issueTitle: "Dashboard" }
     },
     writeLedger: false,
     updateDashboard: false,
@@ -1450,9 +1488,10 @@ test("orchestrator does not resume running issue with terminal comment", async (
     registry: { repositories: { "marius-patrik/example": { state: "active" } } },
     repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
     policy: {
+      schemaVersion: 1,
       concurrency: { global: 2, perRepository: 1, perStream: 1 },
       waves: [{ name: "features", streams: ["features", "default"] }],
-      dashboard: { enabled: false }
+      dashboard: { enabled: false, issueTitle: "Dashboard" }
     },
     writeLedger: false,
     updateDashboard: false,
@@ -1515,6 +1554,7 @@ test("orchestrator surfaces recovery decisions in ledger and dashboard", async (
     registry: { repositories: { "marius-patrik/example": { state: "active" } } },
     repositories: [{ full_name: "marius-patrik/example", archived: false, disabled: false }],
     policy: {
+      schemaVersion: 1,
       concurrency: { global: 2, perRepository: 1, perStream: 1 },
       waves: [{ name: "features", streams: ["features", "default"] }],
       dashboard: { enabled: true, issueTitle: "Dashboard" }

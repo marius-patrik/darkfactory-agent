@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  DEFAULT_DATA_REPO,
+  AGENT_OS_DATA_REPO,
   PLANNING_LABELS,
   WORK_LABELS,
   assertAllowedRepo,
@@ -13,7 +13,7 @@ import {
   normalizedRepoName,
   parseRepo,
   preflightMergePolicy,
-  readLocalJson,
+  readRequiredJson,
   repoName,
   requiredEnv,
   warnReadOnlyRepository,
@@ -26,32 +26,6 @@ export const DASHBOARD_MARKER = "df-dashboard:orchestration";
 export const ASK_OWNER_MARKER = "dark-factory:orchestrator-ask-owner";
 export const RESUME_MARKER = "dark-factory:worker-resume";
 export const REPEATED_FAILURE_THRESHOLD = 3;
-export const DEFAULT_ORCHESTRATION_POLICY = {
-  schemaVersion: 1,
-  concurrency: {
-    global: 6,
-    perRepository: 2,
-    perStream: 3
-  },
-  waves: [
-    {
-      name: "hygiene",
-      streams: ["hygiene", "setup", "bootstrap", "sync", "audit", "docs"]
-    },
-    {
-      name: "enforcement",
-      streams: ["enforcement", "review", "gate", "gates", "ci", "release"]
-    },
-    {
-      name: "features",
-      streams: ["feature", "features", "core", "work", "default"]
-    }
-  ],
-  dashboard: {
-    enabled: true,
-    issueTitle: "DarkFactory L6 Orchestration Dashboard"
-  }
-};
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
@@ -65,7 +39,6 @@ async function main() {
   // every managed repository; the orchestrator must use the app installation token.
   const appInstallationToken = requiredEnv("DARK_FACTORY_TOKEN");
   const controlRepo = parseRepo(requiredEnv("DF_CONTROL_REPO"));
-  const dataRepo = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
   const trigger = process.env.DF_TRIGGER ?? "unknown";
   const dispatchRequest = parseWorkflowDispatchRequest(
     process.env.DF_TARGET_REPO,
@@ -75,14 +48,13 @@ async function main() {
   );
   const gh = createGithubClient(appInstallationToken, "darkfactory-orchestrate");
 
-  await orchestrate({ gh, controlRepo, dataRepo, trigger, root: CONTROL_ROOT, dispatchRequest });
+  await orchestrate({ gh, controlRepo, trigger, root: CONTROL_ROOT, dispatchRequest });
 }
 
 export async function orchestrate(options) {
   const {
     gh,
     controlRepo,
-    dataRepo = DEFAULT_DATA_REPO,
     trigger = "unknown",
     root = CONTROL_ROOT,
     registry,
@@ -105,7 +77,7 @@ export async function orchestrate(options) {
       process.env.DF_SOURCE_EVENT,
       warn
     );
-  const policy = normalizeOrchestrationPolicy(policyInput ?? await readOrchestrationPolicy(root, warn));
+  const policy = normalizeOrchestrationPolicy(policyInput ?? await readOrchestrationPolicy(root));
   let targets = [];
   if (eventRequest) {
     const activeTargets = await targetRepositories(gh, controlRepo, { root, registry, repositories, warn });
@@ -187,7 +159,7 @@ export async function orchestrate(options) {
   };
 
   if (shouldWriteLedger) {
-    await writeLedger(gh, dataRepo, controlRepo, ledger, warn, log);
+    await writeLedger(gh, controlRepo, ledger, warn, log);
   }
   if (shouldUpdateDashboard && policy.dashboard.enabled) {
     await updateDashboardIssue(gh, controlRepo, policy, plan, dispatched, escalated, recoveries, trigger, warn, log);
@@ -583,48 +555,68 @@ function blockedByRefsResolved(issue, options = {}) {
   });
 }
 
-export async function readOrchestrationPolicy(root = CONTROL_ROOT, warn = console.warn) {
-  try {
-    return await readLocalJson(path.join(root, ORCHESTRATION_POLICY_PATH), DEFAULT_ORCHESTRATION_POLICY);
-  } catch (error) {
-    warn(`DarkFactory orchestration policy warning: ${error.message || String(error)}`);
-    return DEFAULT_ORCHESTRATION_POLICY;
+export async function readOrchestrationPolicy(root = CONTROL_ROOT) {
+  const policy = await readRequiredJson(path.join(root, ORCHESTRATION_POLICY_PATH));
+  assertOrchestrationPolicy(policy);
+  return policy;
+}
+
+function assertOrchestrationPolicy(policy) {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy) || policy.schemaVersion !== 1) {
+    throw new Error("orchestration policy must be an object using schemaVersion 1");
+  }
+  if (!policy.concurrency || typeof policy.concurrency !== "object" || Array.isArray(policy.concurrency)) {
+    throw new Error("orchestration policy must define concurrency");
+  }
+  for (const key of ["global", "perRepository", "perStream"]) {
+    if (!Number.isInteger(policy.concurrency[key]) || policy.concurrency[key] < 1) {
+      throw new Error(`orchestration concurrency.${key} must be a positive integer`);
+    }
+  }
+  if (!Array.isArray(policy.waves) || policy.waves.length === 0) {
+    throw new Error("orchestration policy must define at least one wave");
+  }
+  for (const wave of policy.waves) {
+    if (!wave || typeof wave !== "object" || typeof wave.name !== "string" || !wave.name.trim()) {
+      throw new Error("each orchestration wave must define a non-empty name");
+    }
+    if (!Array.isArray(wave.streams) || wave.streams.length === 0 || !wave.streams.every((stream) => typeof stream === "string" && stream.trim())) {
+      throw new Error(`orchestration wave '${wave.name}' must define non-empty streams`);
+    }
+  }
+  if (!policy.dashboard || typeof policy.dashboard !== "object" || Array.isArray(policy.dashboard)) {
+    throw new Error("orchestration policy must define dashboard settings");
+  }
+  if (typeof policy.dashboard.enabled !== "boolean" || typeof policy.dashboard.issueTitle !== "string" || !policy.dashboard.issueTitle.trim()) {
+    throw new Error("orchestration dashboard settings are invalid");
   }
 }
 
-export function normalizeOrchestrationPolicy(policy = DEFAULT_ORCHESTRATION_POLICY) {
-  const source = policy && typeof policy === "object" ? policy : {};
-  const defaultPolicy = DEFAULT_ORCHESTRATION_POLICY;
-  const sourceConcurrency = source.concurrency && typeof source.concurrency === "object" ? source.concurrency : {};
-  const waves = Array.isArray(source.waves) && source.waves.length
-    ? source.waves
-    : defaultPolicy.waves;
-  const normalizedWaves = waves
+export function normalizeOrchestrationPolicy(policy) {
+  assertOrchestrationPolicy(policy);
+  const normalizedWaves = policy.waves
     .map((wave) => ({
-      name: String(wave?.name || "").trim().toLowerCase(),
-      streams: Array.isArray(wave?.streams)
-        ? wave.streams.map((stream) => String(stream).trim().toLowerCase()).filter(Boolean)
-        : []
+      name: wave.name.trim().toLowerCase(),
+      streams: wave.streams.map((stream) => stream.trim().toLowerCase())
     }))
     .filter((wave) => wave.name);
 
   return {
-    schemaVersion: Number.isInteger(source.schemaVersion) ? source.schemaVersion : defaultPolicy.schemaVersion,
+    schemaVersion: policy.schemaVersion,
     concurrency: {
-      global: positiveInteger(sourceConcurrency.global, defaultPolicy.concurrency.global),
-      perRepository: positiveInteger(sourceConcurrency.perRepository, defaultPolicy.concurrency.perRepository),
-      perStream: positiveInteger(sourceConcurrency.perStream, defaultPolicy.concurrency.perStream)
+      global: policy.concurrency.global,
+      perRepository: policy.concurrency.perRepository,
+      perStream: policy.concurrency.perStream
     },
-    waves: normalizedWaves.length ? normalizedWaves : defaultPolicy.waves,
+    waves: normalizedWaves,
     dashboard: {
-      enabled: source.dashboard?.enabled !== false,
-      issueTitle: String(source.dashboard?.issueTitle || defaultPolicy.dashboard.issueTitle).trim()
-        || defaultPolicy.dashboard.issueTitle
+      enabled: policy.dashboard.enabled,
+      issueTitle: policy.dashboard.issueTitle.trim()
     }
   };
 }
 
-export function buildOrchestrationPlan(snapshots, policyInput = DEFAULT_ORCHESTRATION_POLICY, options = {}) {
+export function buildOrchestrationPlan(snapshots, policyInput, options = {}) {
   const policy = normalizeOrchestrationPolicy(policyInput);
   const counts = activeConcurrencyCounts(snapshots);
   const gateWave = globalGateWave(snapshots, policy);
@@ -694,7 +686,7 @@ export function buildOrchestrationPlan(snapshots, policyInput = DEFAULT_ORCHESTR
   };
 }
 
-export function globalGateWave(snapshots, policyInput = DEFAULT_ORCHESTRATION_POLICY) {
+export function globalGateWave(snapshots, policyInput) {
   const policy = normalizeOrchestrationPolicy(policyInput);
   let gate = null;
   for (const snapshot of snapshots) {
@@ -704,7 +696,7 @@ export function globalGateWave(snapshots, policyInput = DEFAULT_ORCHESTRATION_PO
   return gate;
 }
 
-export function repositoryGateWave(openIssues, policyInput = DEFAULT_ORCHESTRATION_POLICY) {
+export function repositoryGateWave(openIssues, policyInput) {
   const policy = normalizeOrchestrationPolicy(policyInput);
   let gate = null;
   for (const issue of openIssues.filter(isWaveGateIssue)) {
@@ -714,7 +706,7 @@ export function repositoryGateWave(openIssues, policyInput = DEFAULT_ORCHESTRATI
   return gate;
 }
 
-export function issueWave(issue, policyInput = DEFAULT_ORCHESTRATION_POLICY) {
+export function issueWave(issue, policyInput) {
   const policy = normalizeOrchestrationPolicy(policyInput);
   const names = issueLabelNames(issue);
   const waveLabel = [...names].find((label) => /^wave:[^:\s]+$/i.test(label));
@@ -1061,7 +1053,7 @@ function dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, tri
     "## Notes",
     "",
     "- Cross-repo waves, stream lanes, and concurrency caps are deterministic; AI tokens: 0.",
-    "- Harness migration path: this GitHub-native scheduler state becomes harness scheduler input when L0/L6 move onto the harness runtime."
+    "- Execution boundary: this is deterministic GitHub control-plane state; local worker turns run only through Agent OS."
   ].join("\n");
 }
 
@@ -1213,11 +1205,6 @@ function waveRank(name, policy) {
   return index === -1 ? policy.waves.length : index;
 }
 
-function positiveInteger(value, fallback) {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 ? number : fallback;
-}
-
 export async function dispatchWorker(gh, controlRepo, repository, issueNumber) {
   const existingPullRequest = await findOpenWorkerPullRequestForIssue(gh, repository, issueNumber);
   if (existingPullRequest) {
@@ -1323,9 +1310,9 @@ async function createIssueComment(gh, repository, issueNumber, body) {
   await gh.request("POST", `/repos/${repoName(repository)}/issues/${issueNumber}/comments`, { body });
 }
 
-async function writeLedger(gh, dataRepo, controlRepo, ledger, warn = console.warn, log = console.log) {
+async function writeLedger(gh, controlRepo, ledger, warn = console.warn, log = console.log) {
   try {
-    const written = await writeRunLedger(gh, dataRepo, "df-orchestrate", repoName(controlRepo), ledger);
+    const written = await writeRunLedger(gh, AGENT_OS_DATA_REPO, "df-orchestrate", repoName(controlRepo), ledger);
     log(`DarkFactory ledger written to ${written.repository}/${written.path}`);
   } catch (error) {
     warn(`DarkFactory ledger warning: ${error.message || String(error)}`);

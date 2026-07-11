@@ -3,28 +3,28 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "darkfactory-templates",
+      "name": "@agent-os/templates",
       "devDependencies": {
-        "bun-types": "^1.3.14",
-        "typescript": "^5.8.3",
+        "bun-types": "1.3.14",
+        "typescript": "5.9.3",
       },
     },
     "packages/cli": {
-      "name": "@template/cli",
+      "name": "@agent-os/template-cli",
       "version": "0.1.0",
       "bin": {
-        "template-cli": "./dist/index.js",
+        "agent-os-template-cli": "./dist/index.js",
       },
     },
     "packages/web": {
-      "name": "@template/web",
+      "name": "@agent-os/template-web",
       "version": "0.1.0",
     },
   },
   "packages": {
-    "@template/cli": ["@template/cli@workspace:packages/cli"],
+    "@agent-os/template-cli": ["@agent-os/template-cli@workspace:packages/cli"],
 
-    "@template/web": ["@template/web@workspace:packages/web"],
+    "@agent-os/template-web": ["@agent-os/template-web@workspace:packages/web"],
 
     "@types/node": ["@types/node@26.1.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw=="],
 

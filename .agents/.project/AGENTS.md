@@ -1,23 +1,16 @@
-# Project Agent Rules
+# DarkFactory project rules
 
-These rules are specific to `agent-darkfactory`.
+DarkFactory is the GitHub control-plane component of Agent OS.
 
-## Scope
-
-This repository builds a TypeScript GitHub App bot that receives GitHub webhooks and comments on repository activity.
-
-## Managed Repository Setup
-
-- `.agents/.global/` is version-enforced by DarkFactory from `workspace-darkfactory`.
-- `.agents/.project/` is version-enforced only when a repo-specific workspace overlay exists.
-- `.github` is bootstrap-enforced by DarkFactory in installed repositories.
-- Open managed setup PRs instead of writing directly to default branches.
-- Keep runtime-generated `.agents` metadata out of git.
-
-## Bot Boundary
-
-- Keep webhook handlers registered in `src/bot.ts`.
-- Keep managed setup checks in `src/repository-setup.ts`.
-- Keep HTTP routing and signature handoff behavior in `src/server.ts`.
-- Keep environment parsing in `src/config.ts`.
-- Add tests under `tests/` for new config, webhook, and setup-check behavior.
+- Keep webhook handlers in `src/bot.ts` and HTTP routing in `src/server.ts`.
+- Keep managed-file discovery in `src/managed-files.ts` and fail closed unless
+  the sole `agent-os-data` registration resolves to
+  `$AGENTS_ROOT/data/agent-os`.
+- Keep repository setup checks in `src/repository-setup.ts`.
+- Open managed setup pull requests; never write directly to default branches.
+- Keep only repository-local context in `.agents/.project/`.
+- Route local model work through `agents`; do not add provider homes, model
+  registries, fallback executors, or copied shared memory to this repository.
+- The isolated Codex PR-review job is CI infrastructure, not local provider or
+  model authority, and must not pin a repository model.
+- Add tests under `tests/` for every changed runtime or policy branch.

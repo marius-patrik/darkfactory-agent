@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
-  DEFAULT_DATA_REPO,
+  AGENT_OS_DATA_REPO,
   WORK_LABELS,
   assertAllowedRepo,
   cleanupTempRoot,
@@ -25,15 +25,6 @@ import {
   taskClassFromLabels,
   writeRunLedger
 } from "./df-lib.mjs";
-import {
-  availableProviders,
-  buildProviderImage,
-  loadProviderRegistry,
-  prepareProviderAuth,
-  resolveModel,
-  runProviderWorker,
-  runWithFailover
-} from "./df-providers.mjs";
 import { evaluateEnforcementRules, loadEnforcementRules } from "./df-enforcement.mjs";
 
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -46,7 +37,7 @@ const RESUME_PR_NUMBER = process.env.DF_RESUME_PR?.trim() ? Number(process.env.D
 const RESUME_BRANCH = process.env.DF_RESUME_BRANCH?.trim() || "";
 const IS_RESUME = (Number.isInteger(RESUME_PR_NUMBER) && RESUME_PR_NUMBER > 0) || RESUME_BRANCH.length > 0;
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
-const DATA_REPO = process.env.DF_DATA_REPO ?? DEFAULT_DATA_REPO;
+const DATA_REPO = AGENT_OS_DATA_REPO;
 const GIT_BASIC_AUTH = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
 const gh = createGithubClient(TOKEN, "darkfactory-worker");
 
@@ -64,12 +55,9 @@ async function main() {
 
   const issue = await getIssue(TARGET_REPO, TARGET_ISSUE_NUMBER);
   const taskRouting = taskClassFromLabels(issue.labels);
-  const codeEffort = taskRouting.effort;
   const target = `${repoName(TARGET_REPO)}#${TARGET_ISSUE_NUMBER}`;
   const resumeInfo = await buildResumeInfo(TARGET_REPO, TARGET_ISSUE_NUMBER);
   const branch = resumeInfo?.branch || `df/${TARGET_ISSUE_NUMBER}-${slug(issue.title)}`;
-  const providerRegistry = await loadProviderRegistry(CONTROL_ROOT);
-  const candidateProviders = availableProviders(providerRegistry, process.env);
 
   const ledger = {
     trigger: TRIGGER,
@@ -77,15 +65,9 @@ async function main() {
     branch,
     status: "started",
     actions: [],
-    provider_attempts: [],
-    token_usage: {
-      total_calls: 0,
-      provider: "",
-      model: "",
-      model_reasoning_effort: codeEffort,
-      input_tokens: null,
-      output_tokens: null,
-      note: "provider token counters are not exposed to this script yet"
+    agent_os: {
+      turns: 0,
+      note: "Provider, model, identity, memory, and session state are resolved only by the canonical agents launcher."
     }
   };
 
@@ -172,17 +154,13 @@ async function main() {
   }
 
   try {
-    const providerOrder = candidateProviders.map((provider) => provider.id).join(", ") || "none";
+    verifyAgentOs();
     await replaceIssueLabels(TARGET_REPO, TARGET_ISSUE_NUMBER, ["df:running"], ["df:ready", "df:blocked", "df:done"]);
     await createIssueComment(
       TARGET_REPO,
       TARGET_ISSUE_NUMBER,
-      workerStartedComment(target, branch, taskRouting, codeEffort, providerOrder, mergePolicy.summary, resumeInfo)
+      workerStartedComment(target, branch, taskRouting, mergePolicy.summary, resumeInfo)
     );
-
-    if (candidateProviders.length === 0) {
-      throw new Error("all providers quota-limited (no enabled providers with configured secrets)");
-    }
 
     tempRoot = await mkdtemp(path.join(tmpdir(), "df-work-"));
     const worktree = path.join(tempRoot, "repo");
@@ -206,35 +184,10 @@ async function main() {
     }
 
     const briefInfo = await writeTaskBrief(worktree, issue, workBaseBranch, taskRouting, resumeInfo);
-    ledger.token_usage.input_brief_characters = briefInfo.characters;
+    ledger.agent_os.input_brief_characters = briefInfo.characters;
 
-    const workerResult = await runWithFailover(
-      candidateProviders,
-      async (provider, model) => {
-        const providerHome = path.join(tempRoot, `${provider.id}-home`);
-        const authJson = process.env[provider.secret] ?? "";
-        await prepareProviderAuth(provider, authJson, providerHome);
-        buildProviderImage(provider, CONTROL_ROOT);
-        return runProviderWorker(provider, {
-          worktree,
-          homeDir: providerHome,
-          model,
-          codeEffort,
-          controlRoot: CONTROL_ROOT
-        });
-      },
-      {
-        taskClass: taskRouting.taskClass,
-        onAttempt: (attempt) => {
-          ledger.provider_attempts.push(attempt);
-          if (attempt.result === "success" || attempt.result === "provider-failure") {
-            ledger.token_usage.total_calls += 1;
-          }
-        }
-      }
-    );
-    ledger.token_usage.provider = workerResult.provider;
-    ledger.token_usage.model = workerResult.model;
+    await runAgentWorker(worktree);
+    ledger.agent_os.turns = 1;
 
     const summary = await readWorkerSummary(worktree);
     await removeWorkerScratch(worktree);
@@ -253,7 +206,7 @@ async function main() {
     }
 
     runGit(["push", "origin", `HEAD:refs/heads/${branch}`], worktree);
-    pullRequest = await openOrReusePullRequest(TARGET_REPO, workBaseBranch, branch, issue, summary, workerResult, resumeInfo);
+    pullRequest = await openOrReusePullRequest(TARGET_REPO, workBaseBranch, branch, issue, summary, resumeInfo);
     ledger.pull_request = pullRequest.html_url;
 
     let automerge;
@@ -272,21 +225,20 @@ async function main() {
     await createIssueComment(
       TARGET_REPO,
       TARGET_ISSUE_NUMBER,
-      workerSuccessComment(pullRequest, workerResult, summary, automerge, resumeInfo)
+      workerSuccessComment(pullRequest, summary, automerge, resumeInfo)
     );
     ledger.status = "success";
     ledger.actions.push({
       action: resumeInfo ? "resume-pr" : "open-pr",
       url: pullRequest.html_url,
       automerge,
-      provider: workerResult.provider,
-      model: workerResult.model,
+      execution: "agent-os",
       resumed: !!resumeInfo
     });
   } catch (error) {
     ledger.status = "blocked";
     const baseError = sanitize(error.stack || error.message || String(error), TOKEN);
-    ledger.error = error.providerExhausted ? `all providers quota-limited\n\n${baseError}` : baseError;
+    ledger.error = baseError;
     if (pullRequest) {
       ledger.pull_request = pullRequest.html_url;
     }
@@ -303,7 +255,7 @@ async function main() {
   }
 }
 
-function workerStartedComment(target, branch, taskRouting, codeEffort, providerOrder, mergePolicySummary, resumeInfo) {
+function workerStartedComment(target, branch, taskRouting, mergePolicySummary, resumeInfo) {
   const lines = resumeInfo
     ? [
         `DarkFactory worker resumed for \`${target}\` from \`${TRIGGER}\`.`,
@@ -313,8 +265,7 @@ function workerStartedComment(target, branch, taskRouting, codeEffort, providerO
           : `Resuming from pushed branch: \`${resumeInfo.branch}\``,
         `Branch: \`${branch}\``,
         `Task class: \`${taskRouting.taskClass}\``,
-        `Reasoning effort: \`${codeEffort}\``,
-        `Provider order: \`${providerOrder}\``,
+        "Execution authority: canonical Agent OS manager state.",
         `Merge policy: ${mergePolicySummary}`
       ]
     : [
@@ -322,8 +273,7 @@ function workerStartedComment(target, branch, taskRouting, codeEffort, providerO
         "",
         `Branch: \`${branch}\``,
         `Task class: \`${taskRouting.taskClass}\``,
-        `Reasoning effort: \`${codeEffort}\``,
-        `Provider order: \`${providerOrder}\``,
+        "Execution authority: canonical Agent OS manager state.",
         `Merge policy: ${mergePolicySummary}`
       ];
   return lines.join("\n");
@@ -443,7 +393,7 @@ async function fetchResumePullRequest(repository, pullNumber) {
   };
 }
 
-async function openOrReusePullRequest(repository, base, branch, issue, summary, workerResult, resumeInfo) {
+async function openOrReusePullRequest(repository, base, branch, issue, summary, resumeInfo) {
   if (resumeInfo?.type === "pr") {
     return resumeInfo.pr;
   }
@@ -451,15 +401,15 @@ async function openOrReusePullRequest(repository, base, branch, issue, summary, 
   const existing = await findOpenWorkerPullRequestForIssue(gh, repository, TARGET_ISSUE_NUMBER);
   if (existing) return existing;
 
-  return createPullRequest(repository, base, branch, issue, summary, workerResult);
+  return createPullRequest(repository, base, branch, issue, summary);
 }
 
-function workerSuccessComment(pullRequest, workerResult, summary, automerge, resumeInfo) {
+function workerSuccessComment(pullRequest, summary, automerge, resumeInfo) {
   const action = resumeInfo ? "updated" : "opened";
   return [
     `DarkFactory worker ${action} ${pullRequest.html_url}.`,
     "",
-    `Provider: \`${workerResult.provider}\` (${workerResult.model})`,
+    "Execution authority: canonical Agent OS manager state.",
     `Automerge: ${automerge.enabled ? "enabled" : `not enabled (${automerge.reason})`}.`,
     "",
     "Worker summary:",
@@ -528,7 +478,7 @@ async function blockStaleWorkerBranch(branch) {
     TARGET_REPO,
     TARGET_ISSUE_NUMBER,
     [
-      "DarkFactory blocked this worker before running a provider.",
+      "DarkFactory blocked this worker before starting Agent OS execution.",
       "",
       "Blocker:",
       "",
@@ -658,7 +608,6 @@ async function writeTaskBrief(worktree, issue, defaultBranch, taskRouting, resum
     `Title: ${issue.title}`,
     `Labels: ${issueLabels || "(none)"}`,
     `Task class: ${taskRouting.taskClass}`,
-    `Reasoning effort: ${taskRouting.effort}`,
     "",
     "## Contract",
     "",
@@ -699,7 +648,34 @@ async function removeWorkerScratch(worktree) {
   await rm(path.join(worktree, ".darkfactory", "df-worker-summary.md"), { force: true });
 }
 
-async function createPullRequest(repository, base, branch, issue, summary, workerResult) {
+function verifyAgentOs() {
+  runCommand("agents", ["state", "doctor", "--json"], CONTROL_ROOT, agentOsEnvironment());
+}
+
+async function runAgentWorker(worktree) {
+  const prompt = [
+    "Read .darkfactory/df-task-brief.md and implement that task in the current repository.",
+    "Use the repository guidance and run its authoritative verification gates.",
+    "Do not push, open a pull request, merge, or modify Agent OS state.",
+    "Write a concise final summary to .darkfactory/df-worker-summary.md before finishing."
+  ].join(" ");
+  const output = runCommand("agents", ["run", "--mode", "default", prompt], worktree, agentOsEnvironment()).trim();
+  const summaryPath = path.join(worktree, ".darkfactory", "df-worker-summary.md");
+  if (!existsSync(summaryPath)) {
+    await writeFile(summaryPath, `${output || "Agent OS worker completed without a written summary."}\n`);
+  }
+}
+
+function agentOsEnvironment() {
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (/TOKEN|SECRET|AUTH_JSON|PRIVATE_KEY/i.test(name)) continue;
+    env[name] = value;
+  }
+  return env;
+}
+
+async function createPullRequest(repository, base, branch, issue, summary) {
   return await gh.request("POST", `/repos/${repoName(repository)}/pulls`, {
     title: issue.title,
     head: branch,
@@ -710,7 +686,7 @@ async function createPullRequest(repository, base, branch, issue, summary, worke
       "",
       truncate(summary, 10000),
       "",
-      `Executed by provider \`${workerResult.provider}\` with model \`${workerResult.model}\`.`,
+      "Executed through the canonical Agent OS manager state.",
       "",
       `Closes #${TARGET_ISSUE_NUMBER}`
     ].join("\n")
@@ -753,12 +729,12 @@ function encodeRefPath(ref) {
   return String(ref || "").split("/").map(encodeURIComponent).join("/");
 }
 
-function runCommand(command, args, cwd) {
+function runCommand(command, args, cwd, env = process.env) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
-    env: process.env
+    env
   });
   if (result.status !== 0) {
     throw new Error(`${command} failed with exit ${result.status}\n${sanitize(result.stdout || "", TOKEN)}\n${sanitize(result.stderr || "", TOKEN)}`.trim());

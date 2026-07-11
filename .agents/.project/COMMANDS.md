@@ -37,9 +37,7 @@ npm run install:url
 npm run sync:managed
 ```
 
-## Release
+## Product integration
 
-```powershell
-npm version patch
-git push origin main --follow-tags
-```
+DarkFactory has no component release command. Agent OS root integration owns
+versioning and publication.

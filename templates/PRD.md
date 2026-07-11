@@ -1,6 +1,6 @@
 # templates PRD
 
-> This file is the **source of truth** for templates. The backlog, branches, PRs, and releases are derived from it. Edits to this file are the primary way to steer the product.
+> This file is the source of truth for the templates component backlog. Agent OS root owns product versioning and publication.
 
 ## Vision
 

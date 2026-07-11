@@ -31,7 +31,7 @@ permissions:
 jobs:
   orchestrate:
     name: Dispatch ready work
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       ${{
         github.repository == 'marius-patrik/agent-darkfactory' &&
@@ -107,7 +107,6 @@ jobs:
           DF_TARGET_REPO: ${{ inputs.repo }}
           DF_TARGET_ISSUE_NUMBER: ${{ inputs.issue_number }}
           DF_SOURCE_EVENT: ${{ inputs.source_event }}
-          DF_DATA_REPO: marius-patrik/darkfactory-data
         shell: bash
         run: |
           export GITHUB_EVENT_PAYLOAD="$(cat "$GITHUB_EVENT_PATH")"

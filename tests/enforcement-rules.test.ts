@@ -38,11 +38,24 @@ test("default enforcement rules include all built-in rules", () => {
   }
 });
 
-test("loadEnforcementRules falls back to defaults when file is missing", async () => {
+test("loadEnforcementRules fails closed when file is missing", async () => {
   const root = await mkdtemp(join(tmpdir(), "df-enforcement-"));
   try {
-    const rules = await loadEnforcementRules(root);
-    assert.deepEqual(rules.rules.map((rule: { id: string }) => rule.id), BUILTIN_RULES);
+    await assert.rejects(loadEnforcementRules(root), /Failed to read required JSON file/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loadEnforcementRules fails closed on malformed JSON and schema", async () => {
+  const root = await mkdtemp(join(tmpdir(), "df-enforcement-"));
+  try {
+    await mkdir(join(root, ".darkfactory"), { recursive: true });
+    await writeFile(join(root, ENFORCEMENT_RULES_PATH), "{");
+    await assert.rejects(loadEnforcementRules(root), /Invalid JSON/);
+
+    await writeFile(join(root, ENFORCEMENT_RULES_PATH), JSON.stringify({ schemaVersion: 2, rules: [] }));
+    await assert.rejects(loadEnforcementRules(root), /schemaVersion 1/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -70,9 +83,8 @@ test("loadEnforcementRules reads a custom rules file", async () => {
   }
 });
 
-test("normalizeEnforcementRules fills defaults for malformed input", () => {
-  const rules = normalizeEnforcementRules(null);
-  assert.deepEqual(rules.rules.map((rule: { id: string }) => rule.id), BUILTIN_RULES);
+test("normalizeEnforcementRules rejects malformed input", () => {
+  assert.throws(() => normalizeEnforcementRules(null), /rules array/);
 });
 
 test("parked-repos-untouched blocks parked repositories", async () => {

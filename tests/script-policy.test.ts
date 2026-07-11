@@ -8,8 +8,6 @@ const dfLib: any = await import("../.github/scripts/df-lib.mjs");
 const dfFix: any = await import("../.github/scripts/df-fix.mjs");
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
 const dfSweep: any = await import("../.github/scripts/df-sweep.mjs");
-// @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-const codexReviewValidator: any = await import("../.github/scripts/validate-codex-review.mjs");
 // @ts-ignore js-yaml does not ship types in this package; tests only need load().
 const { load: loadYaml }: any = await import("js-yaml");
 
@@ -52,10 +50,6 @@ const {
   configureSweepRuntime,
   considerPullRequest: considerSweepPullRequest
 } = dfSweep;
-const {
-  validateReviewAgainstSchema
-} = codexReviewValidator;
-
 test("parsePrdItems creates stable df-prd markers from PRD milestones and loops", () => {
   const items = parsePrdItems([
     "## Core loops",
@@ -133,18 +127,15 @@ test("prdScaffoldPullRequestBody includes the scaffold marker and file list", ()
   assert.match(body, /- `packages\/core\/PRD.md`/);
 });
 
-test("task class labels map to Codex reasoning effort", () => {
+test("task class labels classify work without selecting model settings", () => {
   assert.deepEqual(taskClassFromLabels([{ name: "df:class:mechanical" }]), {
-    taskClass: "mechanical",
-    effort: "low"
+    taskClass: "mechanical"
   });
   assert.deepEqual(taskClassFromLabels([{ name: "df:class:hard" }]), {
-    taskClass: "hard",
-    effort: "high"
+    taskClass: "hard"
   });
   assert.deepEqual(taskClassFromLabels([]), {
-    taskClass: "standard",
-    effort: "medium"
+    taskClass: "standard"
   });
 });
 
@@ -297,58 +288,6 @@ test("Codex Review is added to required contexts only after provisioning is dete
   );
 });
 
-test("Codex Review verdict validator enforces the managed schema shape", () => {
-  const schema = {
-    additionalProperties: false,
-    properties: {
-      approved: { type: "boolean" },
-      summary: { type: "string" },
-      blocking_findings: { type: "array", items: { type: "string" } },
-      non_blocking_notes: { type: "array", items: { type: "string" } }
-    },
-    required: ["approved", "summary", "blocking_findings", "non_blocking_notes"]
-  };
-
-  assert.deepEqual(
-    validateReviewAgainstSchema(
-      { approved: true, summary: "ok", blocking_findings: [], non_blocking_notes: ["note"] },
-      schema
-    ),
-    []
-  );
-  assert.deepEqual(
-    validateReviewAgainstSchema(
-      { approved: "yes", summary: "bad", blocking_findings: [false], non_blocking_notes: [], extra: true },
-      schema
-    ),
-    [
-      "unexpected property 'extra'",
-      "property 'approved' must be boolean",
-      "property 'blocking_findings[0]' must be string"
-    ]
-  );
-});
-
-test("Codex Review verdict validator recognizes the infra failure marker against the managed schema", async () => {
-  const schema = JSON.parse(await readFile(new URL("../.github/codex-review.schema.json", import.meta.url), "utf8"));
-
-  assert.deepEqual(
-    validateReviewAgainstSchema(
-      { approved: false, _infra_failure: true, summary: "quota", blocking_findings: ["quota exhausted"], non_blocking_notes: [] },
-      schema
-    ),
-    []
-  );
-
-  assert.deepEqual(
-    validateReviewAgainstSchema(
-      { approved: false, _infra_failure: "yes", summary: "bad", blocking_findings: [], non_blocking_notes: [] },
-      schema
-    ),
-    ["property '_infra_failure' must be boolean"]
-  );
-});
-
 test("getRequiredStatusCheckContexts treats inaccessible branch protection as no native requirements", async () => {
   const error: Error & { status?: number } = new Error("Resource not accessible by integration");
   error.status = 403;
@@ -477,8 +416,6 @@ test("df-sweep recognizes worker PRs from managed and app-token paths", () => {
 
   assert.equal(isDarkFactoryWorkerPullRequest(workerPull, repository), true);
   assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, author: { login: "mp-agents[bot]" } }, repository), true);
-  assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, author: { login: "app/darkfactory-agent" } }, repository), true);
-  assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, author: { login: "darkfactory-agent" } }, repository), true);
   assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, author: { login: "marius-patrik" } }, repository), false);
   assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, headRefName: "feature/23-add-worker" }, repository), false);
   assert.equal(isDarkFactoryWorkerPullRequest({ ...workerPull, body: "<!-- dark-factory:worker-pr issue=23 -->" }, repository), false);
@@ -681,7 +618,7 @@ test("df-audit workflow schedules trusted managed-repo audits", async () => {
   assert.match(workflow, /permission-issues:\s+write/);
   assert.doesNotMatch(workflow, /permission-pull-requests:\s+write/);
   assert.match(workflow, /DF_AUDIT_ALL/);
-  assert.match(workflow, /DF_DATA_REPO/);
+  assert.doesNotMatch(workflow, /DF_DATA_REPO/);
 });
 
 test("df-follow-through workflow validates trusted refs before privileged tokens", async () => {
@@ -847,12 +784,12 @@ test("df-work merge-policy preflight uses direct sweep when branch protection ha
   assert.match(policy.summary, /green-PR sweep will squash-merge directly after checks/);
 });
 
-test("df-work blocks target auto-merge setup failures before clone or provider worker", async () => {
+test("df-work blocks target auto-merge setup failures before clone or Agent OS worker", async () => {
   const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
 
   const blockIndex = source.indexOf("if (mergePolicy.blocked)");
   const cloneIndex = source.indexOf("await cloneRepository");
-  const workerIndex = source.indexOf("await runWithFailover");
+  const workerIndex = source.indexOf("await runAgentWorker");
   assert.notEqual(blockIndex, -1);
   assert.notEqual(cloneIndex, -1);
   assert.notEqual(workerIndex, -1);
@@ -860,6 +797,18 @@ test("df-work blocks target auto-merge setup failures before clone or provider w
   assert.ok(blockIndex < workerIndex);
   assert.match(source, /before cloning or running/);
   assert.match(source, /not a code implementation failure/);
+});
+
+test("df-work delegates local model execution exclusively to canonical Agent OS state", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+
+  assert.match(workflow, /runs-on: \[self-hosted, df-local\]/);
+  assert.match(workflow, /agents state doctor --json/);
+  assert.doesNotMatch(workflow, /CODEX_AUTH_JSON|KIMI_AUTH_JSON|AGY_AUTH_JSON/);
+  assert.match(source, /runCommand\("agents", \["run", "--mode", "default", prompt\]/);
+  assert.doesNotMatch(source, /--provider|--model|runWithFailover|loadProviderRegistry/);
+  assert.match(source, /TOKEN\|SECRET\|AUTH_JSON\|PRIVATE_KEY/);
 });
 
 test("df-work failure path comments blocker, marks blocked, and releases the lane", async () => {
@@ -1190,51 +1139,9 @@ test("Codex Review workflow validates verdicts before comments and enforcement",
   assert.match(workflow, /inline trusted schema/);
   assert.match(workflow, /approved: \{ type: "boolean" \}/);
   assert.match(workflow, /blocking_findings: \{ type: "array", items: \{ type: "string" \} \}/);
-  assert.doesNotMatch(workflow, /node \.github\/scripts\/validate-codex-review\.mjs/);
-});
-
-test("managed repository template Codex Review workflow matches control repo gate", async () => {
-  const templateWorkflow = await readFile(new URL("../templates/.github/workflows/codex-review.yml", import.meta.url), "utf8");
-  const parsedTemplateWorkflow = loadYaml(templateWorkflow);
-  const codexReviewJob = parsedTemplateWorkflow.jobs["codex-review"];
-  const validate = templateWorkflow.indexOf("Validate Codex verdict");
-  const comment = templateWorkflow.indexOf("Comment review");
-  const enforce = templateWorkflow.indexOf("Enforce Codex verdict");
-
-  assert.equal(codexReviewJob.name, CODEX_REVIEW_REQUIRED_CONTEXT);
-  assert.notEqual(validate, -1);
-  assert.notEqual(comment, -1);
-  assert.notEqual(enforce, -1);
-  assert.ok(validate < comment);
-  assert.ok(validate < enforce);
-  assert.match(templateWorkflow, /inline trusted schema/);
-  assert.match(templateWorkflow, /approved: \{ type: "boolean" \}/);
-  assert.match(templateWorkflow, /blocking_findings: \{ type: "array", items: \{ type: "string" \} \}/);
-  assert.doesNotMatch(templateWorkflow, /node \.github\/scripts\/validate-codex-review\.mjs/);
-});
-
-test("managed repository template ships the Codex Review verdict validator", async () => {
-  // @ts-ignore Template scripts are native ESM workflow files, not built TypeScript modules.
-  const templateValidator: any = await import("../templates/.github/scripts/validate-codex-review.mjs");
-  const schema = JSON.parse(await readFile(new URL("../templates/.github/codex-review.schema.json", import.meta.url), "utf8"));
-
-  assert.equal(typeof templateValidator.validateReviewAgainstSchema, "function");
-  assert.equal(typeof templateValidator.validateReviewFile, "function");
-  assert.deepEqual(
-    templateValidator.validateReviewAgainstSchema(
-      { approved: true, summary: "ok", blocking_findings: [], non_blocking_notes: [] },
-      schema
-    ),
-    []
-  );
-});
-
-test("managed repository template requires the Codex Review validator", async () => {
-  const config = JSON.parse(await readFile(new URL("../templates/.darkfactory/managed-repository.json", import.meta.url), "utf8"));
-
-  assert.ok(Array.isArray(config.requiredFiles));
-  assert.ok(config.requiredFiles.includes(".github/workflows/codex-review.yml"));
-  assert.ok(config.requiredFiles.includes(".github/scripts/validate-codex-review.mjs"));
+  assert.doesNotMatch(workflow, /validate-codex-review\.mjs/);
+  assert.doesNotMatch(workflow, /CODEX_REVIEW_MODEL|KIMI_AUTH_JSON|\.agents\/\.global/);
+  assert.match(workflow, /isolated CI reviewer, not a local provider\/model authority/);
 });
 
 test("df-sweep requires explicit allowlist before merging PRs with no checks", async () => {
@@ -1312,13 +1219,13 @@ test("df-sweep does not skip green worker PRs solely because the issue is blocke
 
 test("df-sweep merges green app-authored dev worker PRs and blocks red ones", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
-  const green = workerPull({ number: 40, checkConclusion: "SUCCESS", author: "app/darkfactory-agent" });
-  const red = workerPull({ number: 41, checkConclusion: "FAILURE", author: "app/darkfactory-agent" });
+  const green = workerPull({ number: 40, checkConclusion: "SUCCESS", author: "mp-agents[bot]" });
+  const red = workerPull({ number: 41, checkConclusion: "FAILURE", author: "mp-agents[bot]" });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
 
   configureSweepRuntime({
     controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-    dataRepo: "marius-patrik/darkfactory-data",
+    dataRepo: "marius-patrik/agents-data",
     gh: {
       graphql: async (_query: string, variables: { number: number }) => ({
         repository: {
@@ -1377,13 +1284,13 @@ test("df-sweep holds worker PRs when the Codex Review context is present and red
     number: 42,
     checkConclusion: "SUCCESS",
     codexReviewConclusion: "FAILURE",
-    author: "app/darkfactory-agent"
+    author: "mp-agents[bot]"
   });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
 
   configureSweepRuntime({
     controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-    dataRepo: "marius-patrik/darkfactory-data",
+    dataRepo: "marius-patrik/agents-data",
     gh: {
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
@@ -1416,7 +1323,7 @@ test("df-sweep falls back to branch-protection checks when Codex Review is not p
     number: 43,
     checkConclusion: "SUCCESS",
     includeCodexReview: false,
-    author: "app/darkfactory-agent"
+    author: "mp-agents[bot]"
   });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
   const warnings: string[] = [];
@@ -1426,7 +1333,7 @@ test("df-sweep falls back to branch-protection checks when Codex Review is not p
   try {
     configureSweepRuntime({
       controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-      dataRepo: "marius-patrik/darkfactory-data",
+      dataRepo: "marius-patrik/agents-data",
       gh: {
         graphql: async () => ({
           repository: {
@@ -1479,7 +1386,7 @@ test("df-sweep holds worker PRs when managed config declares Codex Review but th
     number: 44,
     checkConclusion: "SUCCESS",
     includeCodexReview: false,
-    author: "app/darkfactory-agent"
+    author: "mp-agents[bot]"
   });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
   const managedConfig = {
@@ -1489,7 +1396,7 @@ test("df-sweep holds worker PRs when managed config declares Codex Review but th
 
   configureSweepRuntime({
     controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-    dataRepo: "marius-patrik/darkfactory-data",
+    dataRepo: "marius-patrik/agents-data",
     gh: {
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
@@ -1524,12 +1431,12 @@ test("df-sweep holds worker PRs when managed config declares Codex Review but th
 
 test("df-sweep merges green app-authored dev worker PRs even when the worker issue is done", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
-  const pull = workerPull({ number: 1349, checkConclusion: "SUCCESS", author: "app/darkfactory-agent" });
+  const pull = workerPull({ number: 1349, checkConclusion: "SUCCESS", author: "mp-agents[bot]" });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
 
   configureSweepRuntime({
     controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-    dataRepo: "marius-patrik/darkfactory-data",
+    dataRepo: "marius-patrik/agents-data",
     gh: {
       graphql: async () => ({
         repository: {
@@ -1579,12 +1486,12 @@ test("df-sweep merges green app-authored dev worker PRs even when the worker iss
 
 test("df-sweep merges green app-authored worker PRs even when the worker issue is blocked", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
-  const pull = workerPull({ number: 8, checkConclusion: "SUCCESS", author: "app/darkfactory-agent" });
+  const pull = workerPull({ number: 8, checkConclusion: "SUCCESS", author: "mp-agents[bot]" });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
 
   configureSweepRuntime({
     controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-    dataRepo: "marius-patrik/darkfactory-data",
+    dataRepo: "marius-patrik/agents-data",
     gh: {
       graphql: async () => ({
         repository: {
@@ -1638,14 +1545,14 @@ test("df-sweep direct-merges protected branch with no required checks instead of
     number: 50,
     checkConclusion: "SUCCESS",
     includeCodexReview: false,
-    author: "app/darkfactory-agent"
+    author: "mp-agents[bot]"
   });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
   const graphqlCalls: string[] = [];
 
   configureSweepRuntime({
     controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-    dataRepo: "marius-patrik/darkfactory-data",
+    dataRepo: "marius-patrik/agents-data",
     gh: {
       graphql: async (query: string, variables: { number: number }) => {
         graphqlCalls.push(query);
@@ -1855,7 +1762,7 @@ test("df-orchestrate restores df:ready when workflow dispatch fails", async () =
 
 test("df-sweep evaluates enforcement rules before merge", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
-  const pull = workerPull({ number: 200, checkConclusion: "SUCCESS", author: "app/darkfactory-agent" });
+  const pull = workerPull({ number: 200, checkConclusion: "SUCCESS", author: "mp-agents[bot]" });
   const enforcementRules = {
     schemaVersion: 1,
     rules: [{ id: "work-PRs-target-dev", enabled: true, severity: "block", parameters: { defaultBranch: "main" } }]
@@ -1864,7 +1771,7 @@ test("df-sweep evaluates enforcement rules before merge", async () => {
 
   configureSweepRuntime({
     controlRepo: { owner: "marius-patrik", repo: "agent-darkfactory" },
-    dataRepo: "marius-patrik/darkfactory-data",
+    dataRepo: "marius-patrik/agents-data",
     gh: {
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
@@ -1890,7 +1797,7 @@ test("df-sweep evaluates enforcement rules before merge", async () => {
   assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/200/merge"), false);
 });
 
-test("df-work loads and evaluates enforcement rules before clone or provider", async () => {
+test("df-work loads and evaluates enforcement rules before clone or Agent OS execution", async () => {
   const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.match(source, /import \{ evaluateEnforcementRules, loadEnforcementRules \} from "\.\/df-enforcement\.mjs"/);

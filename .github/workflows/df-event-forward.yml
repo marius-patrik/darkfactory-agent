@@ -13,7 +13,7 @@ permissions: {}
 jobs:
   forward:
     name: Forward control event to orchestrator
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       ${{
         github.repository == 'marius-patrik/agent-darkfactory' &&

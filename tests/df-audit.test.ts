@@ -46,12 +46,12 @@ test("parseGitmodules returns empty array for empty content", () => {
 });
 
 test("parseGitmodules parses a single submodule", () => {
-  const content = `[submodule "agents-mono"]
-  path = agents-mono
-  url = https://github.com/marius-patrik/agents-mono.git
+  const content = `[submodule "packages/darkfactory"]
+  path = packages/darkfactory
+  url = https://github.com/marius-patrik/agent-darkfactory.git
 `;
   assert.deepEqual(parseGitmodules(content), [
-    { name: "agents-mono", path: "agents-mono", url: "https://github.com/marius-patrik/agents-mono.git" }
+    { name: "packages/darkfactory", path: "packages/darkfactory", url: "https://github.com/marius-patrik/agent-darkfactory.git" }
   ]);
 });
 
@@ -61,18 +61,18 @@ test("parseGitmodules parses multiple submodules and ignores comments", () => {
   path = packages/shared
   url = ../shared.git
 
-; deprecated
-[submodule "legacy"]
-  path = legacy
-  url = git@github.com:marius-patrik/legacy.git
+; additional component
+[submodule "tools"]
+  path = tools
+  url = git@github.com:marius-patrik/tools.git
 `;
   assert.deepEqual(parseGitmodules(content), [
     { name: "shared", path: "packages/shared", url: "../shared.git" },
-    { name: "legacy", path: "legacy", url: "git@github.com:marius-patrik/legacy.git" }
+    { name: "tools", path: "tools", url: "git@github.com:marius-patrik/tools.git" }
   ]);
 });
 
-test("resolveSubmoduleRepo handles GitHub HTTPS, SSH, and legacy URLs", () => {
+test("resolveSubmoduleRepo handles GitHub HTTPS, SSH, and SCP-like URLs", () => {
   assert.deepEqual(resolveSubmoduleRepo(parentRepo, "https://github.com/marius-patrik/foo.git"), {
     owner: "marius-patrik",
     repo: "foo"

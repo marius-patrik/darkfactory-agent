@@ -1,11 +1,13 @@
 import {
   GITHUB_BOOTSTRAP_WORKFLOW_PATH,
   readManagedFiles,
+  removedManagedFilePaths,
   type ManagedFile
 } from "./managed-files.js";
 
 export const MANAGED_SETUP_BRANCH = "dark-factory/managed-repository-setup";
 export const MANAGED_SETUP_COMMENT_MARKER = "<!-- dark-factory:managed-setup-pr -->";
+const FORBIDDEN_MANAGED_ROOTS = [".agents/.global"] as const;
 export const DARK_FACTORY_CONTROL_REPOSITORY = {
   owner: "marius-patrik",
   repo: "agent-darkfactory"
@@ -76,13 +78,20 @@ export async function ensureManagedRepositorySetup(
   const setupRef = await getOptionalRef(github, repository, `heads/${MANAGED_SETUP_BRANCH}`);
   const sourceSha = setupRef?.sha ?? baseRef.sha;
   const changedFiles = await changedManagedFiles(github, repository, sourceSha, managedFiles);
+  const sourceCommit = await getCommit(github, repository, sourceSha);
+  const forbiddenFiles = await findForbiddenManagedFiles(
+    github,
+    repository,
+    sourceCommit.treeSha,
+    removedManagedFilePaths(managedFiles)
+  );
 
-  if (changedFiles.length === 0) {
+  if (changedFiles.length === 0 && forbiddenFiles.length === 0) {
     return baseResult(repository, "current", []);
   }
 
-  const sourceCommit = await getCommit(github, repository, sourceSha);
-  const tree = await createTree(github, repository, sourceCommit.treeSha, changedFiles);
+  const changedPaths = [...changedFiles.map((file) => file.path), ...forbiddenFiles.map((file) => file.path)];
+  const tree = await createTree(github, repository, sourceCommit.treeSha, changedFiles, forbiddenFiles);
   const commit = await createCommit(github, repository, sourceSha, tree.sha);
 
   if (setupRef) {
@@ -106,7 +115,7 @@ export async function ensureManagedRepositorySetup(
 
   if (existingPr) {
     return {
-      ...baseResult(repository, "updated", changedFiles.map((file) => file.path)),
+      ...baseResult(repository, "updated", changedPaths),
       pullRequestUrl: existingPr.url
     };
   }
@@ -115,11 +124,11 @@ export async function ensureManagedRepositorySetup(
     github,
     repository,
     repoInfo.defaultBranch,
-    changedFiles.map((file) => file.path)
+    changedPaths
   );
 
   return {
-    ...baseResult(repository, "created", changedFiles.map((file) => file.path)),
+    ...baseResult(repository, "created", changedPaths),
     pullRequestUrl: pullRequest.url
   };
 }
@@ -268,22 +277,72 @@ async function getCommit(
   return { treeSha: response.data.tree.sha };
 }
 
+interface ForbiddenManagedFile {
+  path: string;
+  mode: string;
+  type: "blob";
+}
+
+async function findForbiddenManagedFiles(
+  github: GitHubRequester,
+  repository: ManagedRepository,
+  treeSha: string,
+  removedFiles: ReadonlySet<string>
+): Promise<ForbiddenManagedFile[]> {
+  const response = await github.request("GET /repos/{owner}/{repo}/git/trees/{tree_sha}", {
+    owner: repository.owner,
+    repo: repository.repo,
+    tree_sha: treeSha,
+    recursive: "1"
+  });
+
+  if (!isRecord(response.data) || !Array.isArray(response.data.tree) || response.data.truncated === true) {
+    throw new Error("GitHub returned an incomplete repository tree while checking forbidden managed paths");
+  }
+
+  return response.data.tree.flatMap((entry) => {
+    if (
+      !isRecord(entry) ||
+      entry.type !== "blob" ||
+      typeof entry.path !== "string" ||
+      typeof entry.mode !== "string"
+    ) {
+      return [];
+    }
+    const entryPath = entry.path;
+    const isForbiddenRoot = FORBIDDEN_MANAGED_ROOTS.some(
+      (root) => entryPath === root || entryPath.startsWith(`${root}/`)
+    );
+    if (!isForbiddenRoot && !removedFiles.has(entryPath)) return [];
+    return [{ path: entryPath, mode: entry.mode, type: "blob" as const }];
+  });
+}
+
 async function createTree(
   github: GitHubRequester,
   repository: ManagedRepository,
   baseTree: string,
-  files: ManagedFile[]
+  files: ManagedFile[],
+  forbiddenFiles: ForbiddenManagedFile[]
 ): Promise<{ sha: string }> {
   const response = await github.request("POST /repos/{owner}/{repo}/git/trees", {
     owner: repository.owner,
     repo: repository.repo,
     base_tree: baseTree,
-    tree: files.map((file) => ({
-      path: file.path,
-      mode: "100644",
-      type: "blob",
-      content: file.content
-    }))
+    tree: [
+      ...files.map((file) => ({
+        path: file.path,
+        mode: "100644",
+        type: "blob",
+        content: file.content
+      })),
+      ...forbiddenFiles.map((file) => ({
+        path: file.path,
+        mode: file.mode,
+        type: file.type,
+        sha: null
+      }))
+    ]
   });
 
   if (!isRecord(response.data) || typeof response.data.sha !== "string") {
@@ -375,14 +434,13 @@ export function managedSetupPullRequestBody(changedPaths: string[]): string {
     "",
     "## Notes",
     "",
-    "- `.agents/.global` is version-managed by Dark Factory from the AgentOS data repo.",
-    "- `.agents/.project` is managed only when a repo-specific workspace overlay exists.",
-    "- `AGENTS.md` is the managed root agent entrypoint.",
-    "- `.darkfactory` policy files define labels, branching, installer, auto-updater, and release baseline.",
+    "- Shared Agent OS identity, memory, roles, skills, provider state, and sessions remain under `$AGENTS_HOME`; DarkFactory never copies them into repositories.",
+    "- `.agents/.project` is managed only when a repo-specific `agents-data` overlay exists.",
+    "- `AGENTS.md` is the repository entrypoint into project-local context and `$AGENTS_HOME`.",
+    "- `.darkfactory` policy files define labels, branching, installer, and orchestration behavior.",
     "- `.github/workflows/ci.yml` provides the managed validation baseline.",
     `- \`${GITHUB_BOOTSTRAP_WORKFLOW_PATH}\` is bootstrap-managed so repositories have a safe baseline workflow.`,
     "- `.github/workflows/dark-factory-autoupdate.yml` verifies managed setup on a schedule while DarkFactory performs centralized sync.",
-    "- `.github/workflows/dark-factory-release.yml` provides a tag-driven GitHub release baseline.",
     "- `.github/workflows/codex-review.yml` runs Codex autoreview with the repository secret `CODEX_AUTH_JSON`."
   ].join("\n");
 }

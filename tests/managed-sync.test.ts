@@ -12,7 +12,9 @@ import {
   type GitHubRequester
 } from "../src/managed-sync.js";
 import {
+  DARK_FACTORY_ENFORCEMENT_SCRIPT_PATH,
   DARK_FACTORY_FOLLOW_THROUGH_WORKFLOW_PATH,
+  DARK_FACTORY_MANAGED_CONFIG_PATH,
   DARK_FACTORY_ORCHESTRATE_SCRIPT_PATH,
   DARK_FACTORY_ORCHESTRATE_WORKFLOW_PATH,
   DARK_FACTORY_PLAN_SCRIPT_PATH,
@@ -26,22 +28,65 @@ import {
   type ManagedFile
 } from "../src/managed-files.js";
 
-test("managedSetupPullRequestBody lists changed files and documents workspace-owned project state", () => {
+const PACKAGE_MANAGED_PATHS = new Set([
+  DARK_FACTORY_ENFORCEMENT_SCRIPT_PATH,
+  DARK_FACTORY_PLAN_WORKFLOW_PATH,
+  DARK_FACTORY_FOLLOW_THROUGH_WORKFLOW_PATH,
+  DARK_FACTORY_ORCHESTRATE_WORKFLOW_PATH,
+  DARK_FACTORY_WORKFLOW_PATH,
+  DARK_FACTORY_SCRIPT_LIB_PATH,
+  DARK_FACTORY_PLAN_SCRIPT_PATH,
+  DARK_FACTORY_ORCHESTRATE_SCRIPT_PATH,
+  DARK_FACTORY_SWEEP_SCRIPT_PATH,
+  DARK_FACTORY_WORK_SCRIPT_PATH
+]);
+
+async function seedCanonicalManagedSource(root: string): Promise<{ managedRoot: string; registryPath: string }> {
+  const dataRoot = join(root, "data", "agent-os");
+  const managedRoot = join(dataRoot, "managed-repository");
+  const registryPath = join(root, "data-repos.json");
+  const requiredFiles = requiredManagedFilePaths();
+  for (const filePath of requiredFiles) {
+    if (PACKAGE_MANAGED_PATHS.has(filePath)) continue;
+    const fullPath = join(managedRoot, ...filePath.split("/"));
+    await mkdir(dirname(fullPath), { recursive: true });
+    const content = filePath === DARK_FACTORY_MANAGED_CONFIG_PATH
+      ? `${JSON.stringify({
+        schemaVersion: 1,
+        requiredFiles,
+        removedFiles: [
+          ".darkfactory/release-conventions.md",
+          ".darkfactory/release-policy.json",
+          ".github/scripts/dark-factory-release-check.mjs",
+          ".github/workflows/dark-factory-release.yml"
+        ]
+      })}\n`
+      : `${filePath}\n`;
+    await writeFile(fullPath, content);
+  }
+  await writeFile(
+    registryPath,
+    JSON.stringify([{ id: "agent-os-data", repo: "marius-patrik/agents-data", path: dataRoot }])
+  );
+  return { managedRoot, registryPath };
+}
+
+test("managedSetupPullRequestBody lists changed files and documents Agent OS-owned shared state", () => {
   const body = managedSetupPullRequestBody([
     "AGENTS.md",
-    ".agents/.global/VERSION",
     ".github/workflows/ci.yml",
     ".github/workflows/dark-factory-bootstrap.yml"
   ]);
 
   assert.match(body, /AGENTS\.md/);
-  assert.match(body, /\.agents\/\.global\/VERSION/);
+  assert.doesNotMatch(body, /\.agents\/\.global/);
   assert.match(body, /\.github\/workflows\/ci\.yml/);
   assert.match(body, /\.github\/workflows\/dark-factory-bootstrap\.yml/);
-  assert.match(body, /\.agents\/.project` is managed only when a repo-specific workspace overlay exists/);
-  assert.match(body, /labels, branching, installer, auto-updater, and release baseline/);
+  assert.match(body, /\.agents\/.project` is managed only when a repo-specific `agents-data` overlay exists/);
+  assert.match(body, /Shared Agent OS identity/);
+  assert.match(body, /labels, branching, installer, and orchestration behavior/);
   assert.match(body, /dark-factory-autoupdate\.yml/);
-  assert.match(body, /dark-factory-release\.yml/);
+  assert.doesNotMatch(body, /dark-factory-release\.yml/);
 });
 
 test("ensureManagedRepositorySetup creates a managed PR when files are missing", async () => {
@@ -70,6 +115,18 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
         return { data: { tree: { sha: "tree-sha" } } };
       }
 
+      if (route === "GET /repos/{owner}/{repo}/git/trees/{tree_sha}") {
+        return {
+          data: {
+            tree: [
+              { path: ".agents/.global/VERSION", mode: "100644", type: "blob" },
+              { path: ".github/workflows/dark-factory-release.yml", mode: "100644", type: "blob" }
+            ],
+            truncated: false
+          }
+        };
+      }
+
       if (route === "POST /repos/{owner}/{repo}/git/trees") {
         return { data: { sha: "new-tree-sha" } };
       }
@@ -95,9 +152,16 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
   };
   const files: ManagedFile[] = [
     { path: "AGENTS.md", content: "# Agent Entry Point\n" },
-    { path: ".agents/.global/VERSION", content: "agent-darkfactory@1.0.0\n" },
     { path: ".github/workflows/ci.yml", content: "name: CI\n" },
-    { path: ".github/workflows/dark-factory-bootstrap.yml", content: "name: Dark Factory Bootstrap\n" }
+    { path: ".github/workflows/dark-factory-bootstrap.yml", content: "name: Dark Factory Bootstrap\n" },
+    {
+      path: DARK_FACTORY_MANAGED_CONFIG_PATH,
+      content: JSON.stringify({
+        schemaVersion: 1,
+        requiredFiles: [],
+        removedFiles: [".github/workflows/dark-factory-release.yml"]
+      })
+    }
   ];
 
   const result = await ensureManagedRepositorySetup(
@@ -109,9 +173,11 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
   assert.equal(result.status, "created");
   assert.deepEqual(result.changedPaths, [
     "AGENTS.md",
-    ".agents/.global/VERSION",
     ".github/workflows/ci.yml",
-    ".github/workflows/dark-factory-bootstrap.yml"
+    ".github/workflows/dark-factory-bootstrap.yml",
+    DARK_FACTORY_MANAGED_CONFIG_PATH,
+    ".agents/.global/VERSION",
+    ".github/workflows/dark-factory-release.yml"
   ]);
   assert.equal(result.pullRequestUrl, "https://github.com/marius-patrik/example/pull/1");
   assert.ok(
@@ -120,6 +186,32 @@ test("ensureManagedRepositorySetup creates a managed PR when files are missing",
         call.route === "POST /repos/{owner}/{repo}/git/refs" &&
         call.parameters.ref === `refs/heads/${MANAGED_SETUP_BRANCH}`
     )
+  );
+  const treeCall = calls.find((call) => call.route === "POST /repos/{owner}/{repo}/git/trees");
+  assert.ok(treeCall);
+  assert.ok(
+    Array.isArray(treeCall.parameters.tree) &&
+      treeCall.parameters.tree.some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          "path" in entry &&
+          entry.path === ".github/workflows/dark-factory-release.yml" &&
+          "sha" in entry &&
+          entry.sha === null
+      )
+  );
+  assert.ok(
+    Array.isArray(treeCall.parameters.tree) &&
+      treeCall.parameters.tree.some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          "path" in entry &&
+          entry.path === ".agents/.global/VERSION" &&
+          "sha" in entry &&
+          entry.sha === null
+      )
   );
 });
 
@@ -155,56 +247,121 @@ test("orderManagedRepositoriesForSync deduplicates repository entries case-insen
 
 test("readManagedFiles supplies every required package-managed payload", async () => {
   const root = await mkdtemp(join(tmpdir(), "df-managed-root-"));
-  const packagePaths = new Set([
-    DARK_FACTORY_PLAN_WORKFLOW_PATH,
-    DARK_FACTORY_FOLLOW_THROUGH_WORKFLOW_PATH,
-    DARK_FACTORY_ORCHESTRATE_WORKFLOW_PATH,
-    DARK_FACTORY_WORKFLOW_PATH,
-    DARK_FACTORY_SCRIPT_LIB_PATH,
-    DARK_FACTORY_PLAN_SCRIPT_PATH,
-    DARK_FACTORY_ORCHESTRATE_SCRIPT_PATH,
-    DARK_FACTORY_SWEEP_SCRIPT_PATH,
-    DARK_FACTORY_WORK_SCRIPT_PATH
-  ]);
+  const previousRegistry = process.env.AGENTS_DATA_REPOS;
+  const previousAgentsRoot = process.env.AGENTS_ROOT;
 
   try {
-    const requiredPaths = requiredManagedFilePaths(root);
-    for (const filePath of requiredPaths) {
-      if (packagePaths.has(filePath)) continue;
-      const fullPath = join(root, ...filePath.split("/"));
-      await mkdir(dirname(fullPath), { recursive: true });
-      await writeFile(fullPath, `${filePath}\n`);
-    }
-
-    const managedFiles = readManagedFiles(undefined, root);
+    const { registryPath } = await seedCanonicalManagedSource(root);
+    process.env.AGENTS_ROOT = root;
+    process.env.AGENTS_DATA_REPOS = registryPath;
+    const requiredPaths = requiredManagedFilePaths();
+    assert.equal(requiredPaths.some((path) => path.startsWith(".agents/.global")), false);
+    const managedFiles = readManagedFiles();
     const managedPaths = new Set(managedFiles.map((file) => file.path));
 
     for (const filePath of requiredPaths) {
       assert.equal(managedPaths.has(filePath), true, filePath);
     }
   } finally {
+    if (previousRegistry === undefined) delete process.env.AGENTS_DATA_REPOS;
+    else process.env.AGENTS_DATA_REPOS = previousRegistry;
+    if (previousAgentsRoot === undefined) delete process.env.AGENTS_ROOT;
+    else process.env.AGENTS_ROOT = previousAgentsRoot;
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("readManagedFiles does not ship the control-only event forward workflow", async () => {
   const root = await mkdtemp(join(tmpdir(), "df-managed-root-"));
+  const previousRegistry = process.env.AGENTS_DATA_REPOS;
+  const previousAgentsRoot = process.env.AGENTS_ROOT;
 
   try {
-    for (const filePath of requiredManagedFilePaths(root)) {
-      const fullPath = join(root, ...filePath.split("/"));
-      await mkdir(dirname(fullPath), { recursive: true });
-      await writeFile(fullPath, `${filePath}\n`);
-    }
-    const eventForwardPath = join(root, ".github", "workflows", "df-event-forward.yml");
+    const { managedRoot, registryPath } = await seedCanonicalManagedSource(root);
+    process.env.AGENTS_ROOT = root;
+    process.env.AGENTS_DATA_REPOS = registryPath;
+    const eventForwardPath = join(managedRoot, ".github", "workflows", "df-event-forward.yml");
     await mkdir(dirname(eventForwardPath), { recursive: true });
     await writeFile(eventForwardPath, "name: DarkFactory Event Forward\n");
+    await writeFile(join(managedRoot, ".github", "workflows", "dark-factory-release.yml"), "name: obsolete\n");
 
-    const managedFiles = readManagedFiles(undefined, root);
+    const managedFiles = readManagedFiles();
     const managedPaths = new Set(managedFiles.map((file) => file.path));
 
     assert.equal(managedPaths.has(".github/workflows/df-event-forward.yml"), false);
+    assert.equal(managedPaths.has(".github/workflows/dark-factory-release.yml"), false);
   } finally {
+    if (previousRegistry === undefined) delete process.env.AGENTS_DATA_REPOS;
+    else process.env.AGENTS_DATA_REPOS = previousRegistry;
+    if (previousAgentsRoot === undefined) delete process.env.AGENTS_ROOT;
+    else process.env.AGENTS_ROOT = previousAgentsRoot;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readManagedFiles rejects duplicate package-owned payloads in managed data", async () => {
+  const root = await mkdtemp(join(tmpdir(), "df-managed-root-"));
+  const previousRegistry = process.env.AGENTS_DATA_REPOS;
+  const previousAgentsRoot = process.env.AGENTS_ROOT;
+  try {
+    const { managedRoot, registryPath } = await seedCanonicalManagedSource(root);
+    process.env.AGENTS_ROOT = root;
+    process.env.AGENTS_DATA_REPOS = registryPath;
+    const duplicatePath = join(managedRoot, ...DARK_FACTORY_PLAN_WORKFLOW_PATH.split("/"));
+    await mkdir(dirname(duplicatePath), { recursive: true });
+    await writeFile(duplicatePath, "name: duplicate\n");
+
+    assert.throws(() => readManagedFiles(), /duplicates package-owned payload/);
+  } finally {
+    if (previousRegistry === undefined) delete process.env.AGENTS_DATA_REPOS;
+    else process.env.AGENTS_DATA_REPOS = previousRegistry;
+    if (previousAgentsRoot === undefined) delete process.env.AGENTS_ROOT;
+    else process.env.AGENTS_ROOT = previousAgentsRoot;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readManagedFiles resolves only the canonical Agent OS data registry record", async () => {
+  const root = await mkdtemp(join(tmpdir(), "df-agent-os-data-"));
+  const previousRegistry = process.env.AGENTS_DATA_REPOS;
+  const previousAgentsRoot = process.env.AGENTS_ROOT;
+
+  try {
+    const { registryPath } = await seedCanonicalManagedSource(root);
+    process.env.AGENTS_ROOT = root;
+    process.env.AGENTS_DATA_REPOS = registryPath;
+
+    const files = readManagedFiles();
+    assert.ok(files.some((file) => file.path === "AGENTS.md"));
+
+    await writeFile(
+      registryPath,
+      JSON.stringify([{ id: "agent-os-data", repo: "marius-patrik/agents-data", path: join(root, "different") }])
+    );
+    assert.throws(() => readManagedFiles(), /agent-os-data path must be/);
+
+    await writeFile(
+      registryPath,
+      JSON.stringify([{ id: "agent-os-data", repo: "wrong/data", path: join(root, "data", "agent-os") }])
+    );
+    assert.throws(() => readManagedFiles(), /must use repository marius-patrik\/agents-data/);
+
+    await writeFile(registryPath, JSON.stringify([]));
+    assert.throws(() => readManagedFiles(), /only the agent-os-data record/);
+
+    await writeFile(
+      registryPath,
+      JSON.stringify([
+        { id: "agent-os-data", repo: "marius-patrik/agents-data", path: join(root, "data", "agent-os") },
+        { id: "other-data", repo: "marius-patrik/other", path: join(root, "data", "other") }
+      ])
+    );
+    assert.throws(() => readManagedFiles(), /only the agent-os-data record/);
+  } finally {
+    if (previousRegistry === undefined) delete process.env.AGENTS_DATA_REPOS;
+    else process.env.AGENTS_DATA_REPOS = previousRegistry;
+    if (previousAgentsRoot === undefined) delete process.env.AGENTS_ROOT;
+    else process.env.AGENTS_ROOT = previousAgentsRoot;
     await rm(root, { recursive: true, force: true });
   }
 });
