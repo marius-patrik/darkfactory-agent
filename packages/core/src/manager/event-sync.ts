@@ -44,7 +44,7 @@ const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 512 * 1024 * 1024;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const CANONICAL_HASH_OR_ID = /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/;
-const CANONICAL_REPO_SLUG = /^[a-z0-9](?:[a-z0-9.-]{0,38}[a-z0-9])?\/[a-z0-9][a-z0-9._-]{0,99}$/;
+const CANONICAL_REPO_SLUG = /^\/?[a-z0-9](?:[a-z0-9.-]{0,38}[a-z0-9])?\/[a-z0-9][a-z0-9._-]{0,99}$/;
 
 interface SyncConfig {
   schemaVersion: 2;
@@ -260,7 +260,11 @@ function secretLikeText(value: string): boolean {
   // Evidence fields can embed local file URIs; explicit secret signatures above
   // still scan the full value, while URI path material is excluded only from the
   // generic high-entropy fallback.
-  const entropyInput = value.replace(/\bfile:\/\/[^\s)]+/gi, "");
+  const entropyInput = value
+    .replace(/\bfile:\/\/[^\s)]+/gi, "")
+    // Remove only a credential-free HTTP(S) origin. Repository slugs and opaque
+    // path/query material remain in the entropy scan.
+    .replace(/\bhttps?:\/\/(?:\[[^\]]+\]|[^\s/:@]+)(?::\d+)?(?=\/)/gi, "");
   for (const candidate of entropyInput.match(/[A-Za-z0-9_+\/-]{32,}={0,2}/g) ?? []) {
     if (UUID.test(candidate)) continue;
     if (/^[a-f0-9]{40}$|^[a-f0-9]{64}$/.test(candidate)) continue;
