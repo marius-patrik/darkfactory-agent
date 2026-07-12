@@ -375,7 +375,7 @@ test("malformed response diagnostics expose only bounded metadata", async () => 
   );
 });
 
-test("refreshes an expired OAuth token before the review request", async () => {
+test("refreshes an OAuth token that cannot cover the full review horizon", async () => {
   const calls = [];
   let rotated;
   const fetchImpl = async (url, init) => {
@@ -387,7 +387,11 @@ test("refreshes an expired OAuth token before the review request", async () => {
   };
   await requestReview({
     prompt: "review",
-    credential: { access_token: "expired", refresh_token: "refresh", expires_at: 1 },
+    credential: {
+      access_token: "expiring",
+      refresh_token: "refresh",
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+    },
     fetchImpl,
     env: {},
     onCredentialRefresh: async (credential) => {
@@ -400,4 +404,37 @@ test("refreshes an expired OAuth token before the review request", async () => {
   assert.equal(rotated.access_token, "fresh");
   assert.equal(rotated.refresh_token, "refresh");
   assert.ok(rotated.expires_at > Math.floor(Date.now() / 1000));
+});
+
+test("refreshes and retries once when a long review returns 401", async () => {
+  const chatAuthorizations = [];
+  let chatCalls = 0;
+  let rotated;
+  const fetchImpl = async (url, init) => {
+    if (url.endsWith("/api/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "fresh", expires_in: 3600 }), { status: 200 });
+    }
+    chatCalls += 1;
+    chatAuthorizations.push(init.headers.authorization);
+    if (chatCalls === 1) return new Response("expired", { status: 401 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(validReview) } }] }), {
+      status: 200,
+    });
+  };
+  const review = await requestReview({
+    prompt: "review",
+    credential: {
+      access_token: "old",
+      refresh_token: "refresh",
+      expires_at: Math.floor(Date.now() / 1000) + 3_600,
+    },
+    fetchImpl,
+    env: {},
+    onCredentialRefresh: async (credential) => {
+      rotated = credential;
+    },
+  });
+  assert.equal(review.approved, true);
+  assert.deepEqual(chatAuthorizations, ["Bearer old", "Bearer fresh"]);
+  assert.equal(rotated.access_token, "fresh");
 });

@@ -177,7 +177,9 @@ export async function requestReview({
   waitImpl = delay,
 }) {
   let active = credential;
-  if (Number(active.expires_at || 0) <= Math.floor(Date.now() / 1000) + 60) {
+  const timeoutMs = reviewTimeoutMs(env.KIMI_REVIEW_TIMEOUT_MS);
+  const credentialHorizon = Math.floor(Date.now() / 1000) + Math.ceil(timeoutMs / 1_000) + 60;
+  if (Number(active.expires_at || 0) <= credentialHorizon) {
     active = await refreshCredential(active, fetchImpl, env);
     await onCredentialRefresh?.(active);
   }
@@ -216,8 +218,16 @@ export async function requestReview({
           accept: "application/json",
         },
         body: requestBody,
-        signal: AbortSignal.timeout(reviewTimeoutMs(env.KIMI_REVIEW_TIMEOUT_MS)),
+        signal: AbortSignal.timeout(timeoutMs),
       });
+      if (response.status === 401 && active.refresh_token && attempt < 2) {
+        await response.body?.cancel?.().catch(() => {});
+        active = await refreshCredential(active, fetchImpl, env);
+        await onCredentialRefresh?.(active);
+        response = undefined;
+        lastError = new Error("Kimi review authorization expired during the review request");
+        continue;
+      }
       if (response.ok || (response.status !== 429 && response.status < 500)) break;
       lastError = new Error(`Kimi review API failed with retryable HTTP ${response.status}`);
     } catch (error) {
