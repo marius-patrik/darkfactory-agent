@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +24,7 @@ import {
 } from "../../src/manager/event-sync";
 
 const key = "7b".repeat(32);
+const aadPrefix = "andromeda-agent-os-event-exchange-v1:";
 const evidence = {
   uri: "test://event-sync",
   contentHash: "a".repeat(64),
@@ -36,6 +38,45 @@ async function exchangeState(root: string) {
   await writeSecret(state, "AGENTS_SYNC_KEY", key);
   await enableEventSync(state);
   return state;
+}
+
+async function rewriteAuthenticatedBundlePath(
+  sourcePath: string,
+  targetPath: string,
+  rewrite: (relativePath: string) => string,
+): Promise<void> {
+  const envelope = JSON.parse(await readFile(sourcePath, "utf8")) as {
+    schemaVersion: 1;
+    algorithm: "aes-256-gcm";
+    payloadHash: string;
+    nonce: string;
+    authTag: string;
+    ciphertext: string;
+  };
+  const secret = Buffer.from(key, "hex");
+  const decipher = createDecipheriv("aes-256-gcm", secret, Buffer.from(envelope.nonce, "base64"));
+  decipher.setAAD(Buffer.from(`${aadPrefix}${envelope.payloadHash}`));
+  decipher.setAuthTag(Buffer.from(envelope.authTag, "base64"));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(envelope.ciphertext, "base64")),
+    decipher.final(),
+  ]).toString("utf8");
+  const payload = JSON.parse(plaintext) as { entries: Array<{ path: string }> };
+  payload.entries[0].path = rewrite(payload.entries[0].path);
+  const rewritten = JSON.stringify(payload);
+  const payloadHash = createHash("sha256").update(rewritten).digest("hex");
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", secret, nonce);
+  cipher.setAAD(Buffer.from(`${aadPrefix}${payloadHash}`));
+  const ciphertext = Buffer.concat([cipher.update(rewritten, "utf8"), cipher.final()]);
+  await writeFile(targetPath, `${JSON.stringify({
+    schemaVersion: 1,
+    algorithm: "aes-256-gcm",
+    payloadHash,
+    nonce: nonce.toString("base64"),
+    authTag: cipher.getAuthTag().toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+  }, null, 2)}\n`);
 }
 
 describe("encrypted cross-machine event exchange", () => {
@@ -314,7 +355,9 @@ describe("encrypted cross-machine event exchange", () => {
       const [eventName] = await readdir(path.join(eventRoot, machine));
       const collision = path.join(target.stateDir, "memory", "events", machine, eventName);
       await mkdir(path.dirname(collision), { recursive: true });
-      await writeFile(collision, "{}\n");
+      const collisionEvent = JSON.parse(await readFile(path.join(eventRoot, machine, eventName), "utf8")) as Record<string, unknown>;
+      collisionEvent.collision = true;
+      await writeFile(collision, `${JSON.stringify(collisionEvent, null, 2)}\n`);
       await expect(importEventBundle(target, bundle)).rejects.toThrow("immutable event collision");
 
       await mkdir(path.join(source.sessionsDir, ".hidden"), { recursive: true });
@@ -433,6 +476,35 @@ describe("encrypted cross-machine event exchange", () => {
       await expect(
         exportEventBundle(sourceMetadataSecret, path.join(root, "source-metadata-secret.bundle.json")),
       ).rejects.toThrow("canonical non-secret identifier");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("authenticated entries are bound to machine, sequence, and event id paths", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-sync-path-identity-"));
+    try {
+      const source = await exchangeState(path.join(root, "source"));
+      const target = await exchangeState(path.join(root, "target"));
+      await rememberMemory(source, {
+        scope: "project",
+        subject: "Andromeda",
+        predicate: "path-identity",
+        value: "bound",
+        evidence,
+      });
+      const bundle = path.join(root, "events.bundle.json");
+      await exportEventBundle(source, bundle);
+      const mismatches: Array<[string, (relativePath: string) => string]> = [
+        ["machine", (relativePath) => relativePath.replace(/memory\/events\/[^/]+\//, "memory/events/11111111-1111-4111-8111-111111111111/")],
+        ["sequence", (relativePath) => relativePath.replace(/\/0000000000000001-/, "/0000000000000002-")],
+        ["event-id", (relativePath) => relativePath.replace(/-[A-Za-z0-9_-]+\.json$/, "-deadbeefdeadbeefdeadbeefdeadbeef.json")],
+      ];
+      for (const [name, rewrite] of mismatches) {
+        const malformed = path.join(root, `${name}.bundle.json`);
+        await rewriteAuthenticatedBundlePath(bundle, malformed, rewrite);
+        await expect(importEventBundle(target, malformed)).rejects.toThrow("path identity mismatch");
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

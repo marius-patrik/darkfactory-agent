@@ -300,7 +300,7 @@ function assertSourceMetadata(source: { installId: string; machineId: string }):
   }
 }
 
-function assertNoPlantedSecret(relativePath: string, content: string): void {
+function assertNoPlantedSecret(relativePath: string, content: string): unknown {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -313,6 +313,28 @@ function assertNoPlantedSecret(relativePath: string, content: string): void {
   }
   if (containsSecretField(parsed)) {
     throw new Error(`event exchange payload contains a secret-like field: ${relativePath}`);
+  }
+  return parsed;
+}
+
+function assertEventPathIdentity(relativePath: string, parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`event exchange path identity requires an event object: ${relativePath}`);
+  }
+  const event = parsed as { id?: unknown; machineId?: unknown; machineSequence?: unknown; sessionId?: unknown };
+  const segments = relativePath.split("/");
+  const fileName = segments.at(-1) ?? "";
+  const match = fileName.match(/^([0-9]{16})-([A-Za-z0-9_-]+)\.json$/);
+  const machineId = segments[0] === "memory" ? segments[2] : segments[0] === "sessions" ? segments[3] : segments[2];
+  const sessionId = segments[0] === "sessions" ? segments[1] : undefined;
+  if (
+    !match ||
+    event.machineId !== machineId ||
+    event.machineSequence !== Number(match[1]) ||
+    event.id !== match[2] ||
+    (sessionId !== undefined && event.sessionId !== sessionId)
+  ) {
+    throw new Error(`event exchange path identity mismatch: ${relativePath}`);
   }
 }
 
@@ -342,7 +364,7 @@ async function collectFiles(
     assertAllowedPath(relativePath);
     if (entryInfo.size > MAX_FILE_BYTES) throw new Error(`event exchange event is too large: ${relativePath}`);
     const content = await readFile(absolutePath, "utf8");
-    assertNoPlantedSecret(relativePath, content);
+    assertEventPathIdentity(relativePath, assertNoPlantedSecret(relativePath, content));
     entries.push({ path: relativePath, sha256: sha256(content), content: Buffer.from(content).toString("base64") });
     if (entries.length > MAX_FILES) throw new Error(`event exchange exceeds ${MAX_FILES} files`);
   }
@@ -382,7 +404,7 @@ function decodeEntries(entries: EventEntry[]): Map<string, string> {
       throw new Error(`event exchange entry is not canonical UTF-8 base64: ${entry.path}`);
     }
     if (sha256(content) !== entry.sha256) throw new Error(`event exchange entry hash mismatch: ${entry.path}`);
-    assertNoPlantedSecret(entry.path, content);
+    assertEventPathIdentity(entry.path, assertNoPlantedSecret(entry.path, content));
     decoded.set(entry.path, content);
   }
   const sorted = [...decoded.keys()].sort();
