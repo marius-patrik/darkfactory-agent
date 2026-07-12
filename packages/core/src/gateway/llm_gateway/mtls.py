@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 from collections.abc import Mapping
 
@@ -21,9 +22,13 @@ def has_verified_client(headers: Mapping[str, str]) -> bool:
     """
     header = os.environ.get("GATEWAY_MTLS_VERIFY_HEADER", "x-client-cert-verified").strip().lower()
     expected = os.environ.get("GATEWAY_MTLS_VERIFY_VALUE", "SUCCESS").strip()
-    if not header or not expected:
+    edge_header = os.environ.get("GATEWAY_MTLS_EDGE_TOKEN_HEADER", "x-gateway-edge-token").strip().lower()
+    edge_token = os.environ.get("GATEWAY_MTLS_EDGE_TOKEN", "").strip()
+    if not header or not expected or not edge_header or not edge_token:
         return False
-    return headers.get(header, "").strip().casefold() == expected.casefold()
+    verified = headers.get(header, "").strip().casefold() == expected.casefold()
+    presented_token = headers.get(edge_header, "").strip()
+    return verified and hmac.compare_digest(presented_token, edge_token)
 
 
 def mtls_required() -> bool:

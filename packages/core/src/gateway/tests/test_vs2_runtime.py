@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from protobuf import Oneof
 from starlette.websockets import WebSocketDisconnect
 
-from agent_os.v1.common_pb import SwitcherAxis, SwitcherScope
+from agent_os.v1.common_pb import Fabric, SwitcherAxis, SwitcherScope
 from agent_os.v1.session_frames_pb import ClientFrame, ServerFrame, Status, UserInput
 from llm_gateway.main import app
 from llm_gateway.quota import QuotaTracker
@@ -55,6 +55,17 @@ def test_generated_connect_handler_serves_registry_rpc(client):
 
 def test_switcher_update_preserves_unrelated_axes(monkeypatch, tmp_path):
     registry = _registry(tmp_path)
+    registry._definitions["alternate-local"] = {
+        "id": "alternate-local",
+        "provider": "alternate",
+        "model": "alternate-local",
+        "api_base": "http://127.0.0.1:8002/v1",
+        "role": "general",
+        "context_length": 4096,
+        "enabled": True,
+        "cloud": False,
+    }
+    registry.refresh_runtime_status(force=True)
     monkeypatch.setenv("GATEWAY_CLUSTER_HOSTS", "s001=http://s001:8001")
     store = SwitcherStore(registry)
     before = store.state()
@@ -66,6 +77,18 @@ def test_switcher_update_preserves_unrelated_axes(monkeypatch, tmp_path):
     assert after.agent == before.agent
     fabrics = {option.value: option.available for option in store.options(SwitcherAxis.FABRIC)}
     assert fabrics == {"local": True, "cluster": True, "cloud": True}
+
+    cluster = store.set(SwitcherAxis.FABRIC, "cluster", SwitcherScope.GLOBAL)
+    assert cluster.fabric is Fabric.CLUSTER
+    assert cluster.provider == "local"
+    assert cluster.model == "cluster-coder"
+    assert {option.value for option in store.options(SwitcherAxis.MODEL)} == {"cluster-coder"}
+
+    store.set(SwitcherAxis.FABRIC, "local", SwitcherScope.GLOBAL)
+    alternate = store.set(SwitcherAxis.PROVIDER, "alternate", SwitcherScope.GLOBAL)
+    assert alternate.provider == "alternate"
+    assert alternate.model == "alternate-local"
+    assert {option.value for option in store.options(SwitcherAxis.MODEL)} == {"alternate-local"}
 
 
 def test_binary_websocket_relay_supports_multiple_clients(client):
@@ -86,17 +109,19 @@ def test_binary_websocket_relay_supports_multiple_clients(client):
 def test_websocket_mtls_rejects_spoofed_identity_header(monkeypatch, tmp_path):
     monkeypatch.setenv("AGENTS_HOME", str(tmp_path / ".agents"))
     monkeypatch.setenv("GATEWAY_MTLS_MODE", "require")
+    monkeypatch.setenv("GATEWAY_MTLS_EDGE_TOKEN", "trusted-edge-secret")
     with TestClient(app) as client:
+        assert client.get("/health", headers={"x-client-cert-verified": "SUCCESS"}).status_code == 401
         with pytest.raises(WebSocketDisconnect) as rejected:
             with client.websocket_connect(
                 "/v1/sessions/secure/ws",
-                headers={"x-forwarded-client-cert": "By=spoofed;Hash=not-proof"},
+                headers={"x-client-cert-verified": "SUCCESS"},
             ):
                 pass
         assert rejected.value.code == 4401
         with client.websocket_connect(
             "/v1/sessions/secure/ws?client_id=verified",
-            headers={"x-client-cert-verified": "SUCCESS"},
+            headers={"x-client-cert-verified": "SUCCESS", "x-gateway-edge-token": "trusted-edge-secret"},
         ) as websocket:
             assert ServerFrame.from_binary(websocket.receive_bytes()).seq == 1
 

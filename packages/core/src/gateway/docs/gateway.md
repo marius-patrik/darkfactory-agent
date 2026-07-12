@@ -59,10 +59,13 @@ runtime log and input frames.
 Set `GATEWAY_MTLS_MODE=require` only behind an edge that strips untrusted
 verification headers, verifies the client certificate, and injects
 `GATEWAY_MTLS_VERIFY_HEADER` (default `x-client-cert-verified`) with
-`GATEWAY_MTLS_VERIFY_VALUE` (default `SUCCESS`). Certificate identity headers
-such as `x-forwarded-client-cert` are never accepted as proof. The same gate
-runs before both HTTP handling and WebSocket acceptance. Invalid mTLS modes
-fail closed.
+`GATEWAY_MTLS_VERIFY_VALUE` (default `SUCCESS`). The edge must also inject the
+shared `GATEWAY_MTLS_EDGE_TOKEN` through `GATEWAY_MTLS_EDGE_TOKEN_HEADER`
+(default `x-gateway-edge-token`); the gateway compares it in constant time.
+Certificate identity headers such as `x-forwarded-client-cert`, or a spoofed
+verification result without the edge token, are never accepted as proof. The
+same gate runs before both HTTP handling and WebSocket acceptance. Invalid or
+incomplete mTLS configuration fails closed.
 
 ## Durable budgets and cluster axes
 

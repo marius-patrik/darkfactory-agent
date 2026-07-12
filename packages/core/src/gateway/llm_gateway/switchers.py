@@ -68,7 +68,22 @@ class SwitcherStore:
 
         current = self.state(session_id)
         values = _state_values(current)
-        values[_axis_field(axis)] = value if axis is not SwitcherAxis.FABRIC else _fabric(value)
+        if axis is SwitcherAxis.FABRIC:
+            fabric = _fabric(value)
+            candidates = self._route_entries(fabric)
+            if not candidates:
+                raise ConnectError(Code.INVALID_ARGUMENT, f"no enabled route is available for fabric {value!r}")
+            values["fabric"] = fabric
+            values["provider"] = candidates[0].provider
+            values["model"] = candidates[0].id
+        elif axis is SwitcherAxis.PROVIDER:
+            candidates = self._route_entries(current.fabric, value)
+            if not candidates:
+                raise ConnectError(Code.INVALID_ARGUMENT, f"no enabled model is available for provider {value!r}")
+            values["provider"] = value
+            values["model"] = candidates[0].id
+        else:
+            values[_axis_field(axis)] = value
         values["scope_source"] = scope
         updated = SwitcherState(
             host=str(values["host"]),
@@ -116,12 +131,19 @@ class SwitcherStore:
             return [
                 SwitcherOption(value=entry.id, label=entry.name, available=entry.enabled, unavailable_reason="model_unavailable" if not entry.enabled else "")
                 for entry in self.registry.list_all()
-                if entry_fabric(entry) == state.fabric
+                if entry_fabric(entry) == state.fabric and entry.provider == state.provider
             ]
         if axis is SwitcherAxis.AGENT:
             agents = [item.strip() for item in os.environ.get("GATEWAY_AGENTS", "rommie,claude,codex,kimi,agy").split(",") if item.strip()]
             return [SwitcherOption(value=value, label=value, available=True) for value in agents]
         raise ConnectError(Code.INVALID_ARGUMENT, "switcher axis is required")
+
+    def _route_entries(self, fabric: Fabric, provider: str | None = None) -> list[ModelEntry]:
+        return [
+            entry
+            for entry in self.registry.list_enabled()
+            if entry_fabric(entry) == fabric and (provider is None or entry.provider == provider)
+        ]
 
     def hosts(self) -> list[Host]:
         return [Host(id="gateway", label="gateway", online=True)] + [
