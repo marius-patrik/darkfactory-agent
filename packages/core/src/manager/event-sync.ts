@@ -158,6 +158,63 @@ function assertAllowedPath(relativePath: string): void {
   }
 }
 
+async function assertPhysicalPathUnderRoot(
+  root: string,
+  target: string,
+  options: { allowMissing?: boolean; leaf?: "directory" | "file" | "any" } = {},
+): Promise<boolean> {
+  const resolvedRoot = path.resolve(root);
+  const resolvedTarget = path.resolve(target);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`event exchange path escapes canonical state: ${resolvedTarget}`);
+  }
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  let current = resolvedRoot;
+  for (let index = -1; index < segments.length; index += 1) {
+    if (index >= 0) current = path.join(current, segments[index]);
+    let info;
+    try {
+      info = await lstat(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && options.allowMissing) return false;
+      throw error;
+    }
+    if (info.isSymbolicLink()) throw new Error(`event exchange path contains a symbolic link: ${current}`);
+    const isLeaf = index === segments.length - 1;
+    if (!isLeaf && !info.isDirectory()) {
+      throw new Error(`event exchange path ancestor is not a physical directory: ${current}`);
+    }
+    if (isLeaf && options.leaf === "directory" && !info.isDirectory()) {
+      throw new Error(`event exchange path is not a physical directory: ${current}`);
+    }
+    if (isLeaf && options.leaf === "file" && !info.isFile()) {
+      throw new Error(`event exchange path is not a physical file: ${current}`);
+    }
+  }
+  return true;
+}
+
+async function ensurePhysicalDirectoryChain(root: string, directory: string): Promise<void> {
+  const resolvedRoot = path.resolve(root);
+  const resolvedDirectory = path.resolve(directory);
+  const relative = path.relative(resolvedRoot, resolvedDirectory);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`event exchange path escapes canonical state: ${resolvedDirectory}`);
+  }
+  await assertPhysicalPathUnderRoot(resolvedRoot, resolvedRoot, { leaf: "directory" });
+  let current = resolvedRoot;
+  for (const segment of relative === "" ? [] : relative.split(path.sep)) {
+    current = path.join(current, segment);
+    try {
+      await mkdir(current, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    await assertPhysicalPathUnderRoot(resolvedRoot, current, { leaf: "directory" });
+  }
+}
+
 const STRUCTURAL_STRING_FIELDS = new Set([
   "id",
   "agentId",
@@ -241,22 +298,18 @@ async function collectFiles(
   entries: EventEntry[],
 ): Promise<void> {
   const absoluteDirectory = path.join(state.stateDir, ...relativeDirectory.split("/"));
-  let info;
   try {
-    info = await lstat(absoluteDirectory);
+    await assertPhysicalPathUnderRoot(state.stateDir, absoluteDirectory, { leaf: "directory" });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
-  }
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error(`event exchange source must be a physical directory: ${absoluteDirectory}`);
   }
   for (const entry of (await readdir(absoluteDirectory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name.startsWith(".")) throw new Error(`hidden entries cannot roam: ${path.join(absoluteDirectory, entry.name)}`);
     const relativePath = `${relativeDirectory}/${entry.name}`;
     const absolutePath = path.join(absoluteDirectory, entry.name);
     const entryInfo = await lstat(absolutePath);
-    if (entryInfo.isSymbolicLink()) throw new Error(`event exchange source contains a symbolic link: ${absolutePath}`);
+    await assertPhysicalPathUnderRoot(state.stateDir, absolutePath);
     if (entryInfo.isDirectory()) {
       await collectFiles(state, relativePath, entries);
       continue;
@@ -276,8 +329,7 @@ async function collectEventEntries(state: SharedState): Promise<EventEntry[]> {
   await collectFiles(state, "memory/events", entries);
   const sessionsRoot = path.join(state.stateDir, "sessions");
   try {
-    const rootInfo = await lstat(sessionsRoot);
-    if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error("canonical sessions root is not physical");
+    await assertPhysicalPathUnderRoot(state.stateDir, sessionsRoot, { leaf: "directory" });
     for (const entry of (await readdir(sessionsRoot, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
       if (entry.name.startsWith(".")) throw new Error(`hidden canonical session entries cannot roam: ${entry.name}`);
       if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error(`invalid canonical session entry: ${entry.name}`);
@@ -556,8 +608,10 @@ export async function importEventBundle(
       if (journal?.state === "committed") {
         let complete = true;
         for (const [relativePath, content] of incoming) {
+          const target = path.join(state.stateDir, ...relativePath.split("/"));
+          await assertPhysicalPathUnderRoot(state.stateDir, target, { allowMissing: true, leaf: "file" });
           try {
-            if ((await readFile(path.join(state.stateDir, ...relativePath.split("/")), "utf8")) !== content) {
+            if ((await readFile(target, "utf8")) !== content) {
               throw new Error(`immutable event collision: ${relativePath}`);
             }
           } catch (error) {
@@ -582,8 +636,10 @@ export async function importEventBundle(
       let imported = 0;
       let skipped = 0;
       for (const [relativePath, content] of incoming) {
+        const target = path.join(state.stateDir, ...relativePath.split("/"));
+        await assertPhysicalPathUnderRoot(state.stateDir, target, { allowMissing: true, leaf: "file" });
         try {
-          const current = await readFile(path.join(state.stateDir, ...relativePath.split("/")), "utf8");
+          const current = await readFile(target, "utf8");
           if (current !== content) throw new Error(`immutable event collision: ${relativePath}`);
           skipped += 1;
         } catch (error) {
@@ -603,6 +659,8 @@ export async function importEventBundle(
 
       for (const [relativePath, content] of incoming) {
         const target = path.join(state.stateDir, ...relativePath.split("/"));
+        await ensurePhysicalDirectoryChain(state.stateDir, path.dirname(target));
+        await assertPhysicalPathUnderRoot(state.stateDir, target, { allowMissing: true, leaf: "file" });
         if (await writeTextExclusive(target, content)) imported += 1;
         else if ((await readFile(target, "utf8")) !== content) throw new Error(`immutable event collision: ${relativePath}`);
         if (options.failAfter !== undefined && imported >= options.failAfter) {

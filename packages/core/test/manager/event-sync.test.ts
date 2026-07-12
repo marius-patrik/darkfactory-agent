@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ensureSharedState, sharedState } from "../../src/manager/state";
@@ -251,6 +251,39 @@ describe("encrypted cross-machine event exchange", () => {
       await expect(
         exportEventBundle(secretOrchestrator, path.join(root, "secret-orchestrator.bundle.json")),
       ).rejects.toThrow("secret-like");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("symlinked canonical ancestors cannot redirect export reads or import writes", async () => {
+    if (process.platform === "win32") return;
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-sync-symlink-ancestor-"));
+    try {
+      const source = await exchangeState(path.join(root, "source"));
+      await rememberMemory(source, {
+        scope: "project",
+        subject: "Andromeda",
+        predicate: "symlink-boundary",
+        value: "physical-only",
+        evidence,
+      });
+      const bundle = path.join(root, "events.bundle.json");
+      await exportEventBundle(source, bundle);
+
+      const sourceMemory = path.join(source.stateDir, "memory");
+      const movedSourceMemory = path.join(root, "source-memory-outside");
+      await rename(sourceMemory, movedSourceMemory);
+      await symlink(movedSourceMemory, sourceMemory, "dir");
+      await expect(exportEventBundle(source, path.join(root, "redirected.bundle.json"))).rejects.toThrow("symbolic link");
+
+      const target = await exchangeState(path.join(root, "target"));
+      const targetMemory = path.join(target.stateDir, "memory");
+      const movedTargetMemory = path.join(root, "target-memory-outside");
+      await rename(targetMemory, movedTargetMemory);
+      await symlink(movedTargetMemory, targetMemory, "dir");
+      await expect(importEventBundle(target, bundle)).rejects.toThrow("symbolic link");
+      expect((await readdir(path.join(movedTargetMemory, "events"), { recursive: true })).length).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
