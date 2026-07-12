@@ -14,7 +14,8 @@
     "agents": "bun packages/core/src/manager/cli.ts",
     "check": "bunx tsc --noEmit",
     "test": "bun test packages/core/test/manager/*.test.ts",
-    "ci": "bun run check && bun run test && node --test .github/scripts/run-kimi-review.test.mjs",
+    "proto:check": "bun scripts/verify-codegen.ts",
+    "ci": "bun run check && bun run test && bun run proto:check && node --test .github/scripts/run-kimi-review.test.mjs",
     "smoke:release": "bash install/smoke-release.sh"
   },
   "devDependencies": {

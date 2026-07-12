@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 
 from llm_gateway.quota import QuotaTracker
-from llm_gateway.registry import ModelEntry, ModelRegistry, generate_request_id
+from llm_gateway.registry import ModelEntry, ModelRegistry, generate_request_id, is_local_entry
 from llm_gateway.trace import TraceLogger
 
 DEFAULT_ROUTING_POLICY_PATH = Path(__file__).resolve().parent.parent / "registry" / "routing.yaml"
@@ -140,13 +140,18 @@ class TaskRouter:
         self.quota = quota or QuotaTracker()
         self.tracer = tracer
 
-    def resolve(self, task_class: str) -> RouteResolution:
+    def resolve(self, task_class: str, *, allow_cloud: bool = False) -> RouteResolution:
         candidates = self.policy.candidates_for(task_class)
         inspected: list[dict[str, Any]] = []
         selected: tuple[RouteCandidate, ModelEntry] | None = None
+        local_fallback_required = False
         for candidate in candidates:
             entry = self.registry.get(candidate.model_id)
-            status = self._candidate_status(candidate, entry)
+            status = self._candidate_status(candidate, entry, allow_cloud)
+            if entry is not None and entry.cloud and status in {"cloud_disabled", "budget_exhausted"}:
+                local_fallback_required = True
+            elif status is None and local_fallback_required and entry is not None and not is_local_entry(entry):
+                status = "local_fallback_required"
             inspected.append(
                 {
                     "provider": candidate.provider,
@@ -183,14 +188,17 @@ class TaskRouter:
             return resolution
         raise TaskRoutingError(f"No available model route for task class '{task_class}'")
 
-    @staticmethod
-    def _candidate_status(candidate: RouteCandidate, entry: ModelEntry | None) -> str | None:
+    def _candidate_status(self, candidate: RouteCandidate, entry: ModelEntry | None, allow_cloud: bool) -> str | None:
         if entry is None:
             return "model_not_found"
         if entry.provider != candidate.provider:
             return f"provider_mismatch:{entry.provider}"
         if not entry.enabled:
             return "model_disabled"
+        if entry.cloud and not allow_cloud:
+            return "cloud_disabled"
+        if entry.cloud and self.quota.is_exhausted(entry.provider):
+            return "budget_exhausted"
         return None
 
     @staticmethod

@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 from llm_gateway.quota import QuotaTracker
-from llm_gateway.registry import ModelEntry, ModelRegistry, generate_request_id, ROLE_NAMES
+from llm_gateway.registry import ModelEntry, ModelRegistry, generate_request_id, is_local_entry, ROLE_NAMES
 from llm_gateway.trace import TraceLogger
 
 ROLE_ALIASES = ROLE_NAMES
@@ -38,7 +38,7 @@ class Router:
     async def close(self) -> None:
         await self._http.aclose()
 
-    def resolve_model(self, model_id: str) -> ModelEntry:
+    def resolve_model(self, model_id: str, *, allow_cloud: bool = False) -> ModelEntry:
         """Resolve a model identifier to a registry entry.
 
         Supports:
@@ -54,6 +54,20 @@ class Router:
 
         if not entry.enabled:
             raise RoutingError(f"Model '{entry.id}' is disabled")
+
+        if entry.cloud and (not allow_cloud or self.quota.is_exhausted(entry.provider)):
+            fallback = next(
+                (
+                    candidate
+                    for candidate in self.registry.list_by_role(entry.role)
+                    if candidate.enabled and is_local_entry(candidate)
+                ),
+                None,
+            )
+            if fallback is None:
+                reason = "disabled" if not allow_cloud else f"budget for '{entry.provider}' is exhausted"
+                raise RoutingError(f"Cloud routing is {reason} and no local fallback is available")
+            return fallback
 
         return entry
 
@@ -104,12 +118,22 @@ class Router:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         task_class: str | None = None,
+        allow_cloud: bool = False,
     ) -> dict[str, Any] | AsyncIterator[dict[str, Any]]:
         """Route a chat-completion request to the resolved backend."""
         req_id = generate_request_id()
         t0 = time.perf_counter()
 
-        entry = self.resolve_model(model_id)
+        requested_entry = self.registry.get(model_id)
+        if requested_entry is None and model_id in ROLE_ALIASES:
+            requested_entry = self._resolve_role(model_id)
+        entry = self.resolve_model(model_id, allow_cloud=allow_cloud)
+        degraded_to_local = bool(
+            requested_entry is not None
+            and requested_entry.id != entry.id
+            and requested_entry.cloud
+            and is_local_entry(entry)
+        )
         role_hint = entry.role
         requested_role = model_id if model_id in ROLE_ALIASES else None
 
@@ -167,6 +191,7 @@ class Router:
                 response_status="success",
                 backend_meta=backend_meta,
                 task_class=task_class,
+                degraded_to_local=degraded_to_local,
             )
             success_trace_fields = {
                 key: response_meta[key]
@@ -254,6 +279,7 @@ class Router:
         response_status: str,
         backend_meta: dict[str, Any] | None = None,
         task_class: str | None = None,
+        degraded_to_local: bool = False,
     ) -> dict[str, Any]:
         backend_meta = backend_meta or {}
         backend_api_base = backend_meta.get("backend_api_base", entry.api_base)
@@ -276,6 +302,7 @@ class Router:
             "response_status": response_status,
             "http_status": backend_meta.get("http_status", 200),
             "task_class": task_class,
+            "degraded_to_local": degraded_to_local,
         }
 
     def _backend_node_id(self, entry: ModelEntry, api_base: str | None) -> str | None:

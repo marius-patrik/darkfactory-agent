@@ -25,6 +25,7 @@ class ChatCompletionRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     task_class: str | None = Field(default=None, description="Optional task class for route accounting")
+    allow_cloud: bool = False
 
 
 class ChatCompletionChoice(BaseModel):
@@ -97,6 +98,7 @@ class TraceEvent(BaseModel):
 
 class RouteResolveRequest(BaseModel):
     task_class: str = Field(description="Task class, for example mechanical or standard-impl")
+    allow_cloud: bool = False
 
 
 class RouteCandidateInfo(BaseModel):

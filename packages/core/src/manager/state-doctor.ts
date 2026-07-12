@@ -239,6 +239,8 @@ async function permissionsCheck(state: SharedState, tools: ToolStatus[], stateRo
 async function syncSafetyCheck(state: SharedState): Promise<StateDoctorCheck> {
   const paths = stateV2Paths(state);
   const configPath = path.join(paths.syncDir, "config.json");
+  const importsPath = path.join(paths.syncDir, "imports");
+  const syncKeyPath = path.join(state.secretsDir, "AGENTS_SYNC_KEY.secret");
   const retiredConfigPath = path.join(state.stateDir, "state-sync.json");
   const retiredRepoPath = path.join(state.stateDir, "state-repo");
   const [configKind, retiredConfigKind, retiredRepoKind] = await Promise.all([
@@ -249,35 +251,110 @@ async function syncSafetyCheck(state: SharedState): Promise<StateDoctorCheck> {
 
   let schemaVersion: number | null = null;
   let enabled: boolean | null = null;
+  let transport: string | null | undefined;
+  let transportValid = false;
   let parseError: string | null = null;
   if (configKind === "file") {
     try {
-      const parsed = JSON.parse(await readFile(configPath, "utf8")) as { schemaVersion?: unknown; enabled?: unknown };
+      const parsed = JSON.parse(await readFile(configPath, "utf8")) as { schemaVersion?: unknown; enabled?: unknown; transport?: unknown };
       schemaVersion = typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : null;
       enabled = typeof parsed.enabled === "boolean" ? parsed.enabled : null;
+      if (parsed.transport === null || typeof parsed.transport === "string") {
+        transport = parsed.transport;
+        transportValid = true;
+      }
     } catch (error) {
       parseError = (error as Error).message;
     }
   }
 
-  const disabled = configKind === "file" && parseError === null && schemaVersion === 2 && enabled === false;
+  const disabled =
+    configKind === "file" &&
+    parseError === null &&
+    schemaVersion === 2 &&
+    enabled === false &&
+    transportValid &&
+    transport === null;
+  const [keyKind, importsKind] = await Promise.all([pathKind(syncKeyPath), pathKind(importsPath)]);
+  let keyValid = false;
+  if (keyKind === "file") {
+    try {
+      keyValid = /^[a-fA-F0-9]{64}$/.test((await readFile(syncKeyPath, "utf8")).trim());
+    } catch {
+      keyValid = false;
+    }
+  }
+  let preparedImports = 0;
+  const importJournalIssues: string[] = [];
+  if (importsKind === "directory") {
+    for (const entry of await readdir(importsPath, { withFileTypes: true })) {
+      const match = entry.name.match(/^([a-f0-9]{64})\.json$/);
+      if (!entry.isFile() || entry.isSymbolicLink() || !match) {
+        importJournalIssues.push(`invalid import journal entry: ${entry.name}`);
+        continue;
+      }
+      try {
+        const journal = JSON.parse(await readFile(path.join(importsPath, entry.name), "utf8")) as {
+          schemaVersion?: unknown;
+          payloadHash?: unknown;
+          state?: unknown;
+          paths?: unknown;
+        };
+        if (
+          journal.schemaVersion !== 1 ||
+          journal.payloadHash !== match[1] ||
+          (journal.state !== "prepared" && journal.state !== "committed") ||
+          !Array.isArray(journal.paths)
+        ) {
+          importJournalIssues.push(`malformed import journal: ${entry.name}`);
+          continue;
+        }
+        if (journal.state === "prepared") preparedImports += 1;
+      } catch (error) {
+        importJournalIssues.push(`unreadable import journal ${entry.name}: ${(error as Error).message}`);
+      }
+    }
+  }
+  const importsSafe =
+    (importsKind === "missing" || importsKind === "directory") &&
+    preparedImports === 0 &&
+    importJournalIssues.length === 0;
+  const enabledSafely =
+    configKind === "file" &&
+    parseError === null &&
+    schemaVersion === 2 &&
+    enabled === true &&
+    transportValid &&
+    transport === "encrypted-bundle" &&
+    keyValid &&
+    importsKind === "directory" &&
+    importsSafe;
   const retiredArtifacts = [retiredConfigKind !== "missing" ? "state-sync.json" : null, retiredRepoKind !== "missing" ? "state-repo" : null].filter(
     (item): item is string => item !== null,
   );
-  const ok = disabled && retiredArtifacts.length === 0;
+  const ok = ((disabled && importsSafe) || enabledSafely) && retiredArtifacts.length === 0;
   return {
     id: "sync_safety",
     ok,
     message: ok
-      ? "event exchange is disabled and no retired sync artifacts exist"
+      ? enabledSafely
+        ? "encrypted event exchange is enabled with local key material and no interrupted imports"
+        : "event exchange is disabled and no retired sync artifacts exist"
       : retiredArtifacts.length > 0
         ? `retired sync artifacts are present: ${retiredArtifacts.join(", ")}`
-        : "event exchange safety cannot be verified as disabled",
+        : "event exchange safety cannot be verified",
     details: {
       configPresent: configKind === "file",
       configValid: configKind === "file" && parseError === null && schemaVersion === 2 && enabled !== null,
       schemaVersion,
       enabled,
+      transport,
+      transportValid,
+      keyPresent: keyKind === "file",
+      keyValid,
+      importsDirectoryPresent: importsKind === "directory",
+      preparedImports,
+      importJournalIssues,
       retiredConfigPresent: retiredConfigKind !== "missing",
       retiredRepoPresent: retiredRepoKind !== "missing",
       parseError,
@@ -290,7 +367,7 @@ async function providerRegistryCheck(state: SharedState, tools: ToolStatus[]): P
     const registry = await readProviderRegistry(state);
     const installed = tools.filter(
       (tool): tool is ToolStatus & { id: ProviderId } =>
-        tool.id !== "agents" && (tool.location === "canonical" || tool.location === "split"),
+        tool.id !== "agents" && (tool.location === "canonical" || tool.location === "app-owned" || tool.location === "split"),
     );
     const failures: Array<{ id: ProviderId; issues: string[] }> = [];
     const verified: Array<{ id: ProviderId; version: string; executable: string }> = [];
@@ -434,9 +511,15 @@ async function registryIntegrityCheck(state: SharedState): Promise<StateDoctorCh
   }
 }
 
+export function launcherNameForPlatform(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "agents.ps1" : "agents";
+}
+
 async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
   const binDirectory = path.join(state.stateDir, "bin");
-  const launcher = path.join(binDirectory, "agents");
+  const launcherName = launcherNameForPlatform(process.platform);
+  const launcher = path.join(binDirectory, launcherName);
+  const windows = process.platform === "win32";
   const issues: string[] = [];
   try {
     const directoryInfo = await lstat(binDirectory);
@@ -445,7 +528,9 @@ async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
       issues.push(`bin mode is ${modeString(directoryInfo.mode)}, expected 0o700`);
     }
     const entries = await readdir(binDirectory, { withFileTypes: true });
-    if (entries.length !== 1 || entries[0]?.name !== "agents") issues.push("bin must contain exactly one agents launcher");
+    if (entries.length !== 1 || entries[0]?.name !== launcherName) {
+      issues.push(`bin must contain exactly one ${launcherName} launcher`);
+    }
     const launcherInfo = await lstat(launcher);
     if (!launcherInfo.isFile() || launcherInfo.isSymbolicLink()) issues.push("agents launcher must be a physical file");
     if (process.platform !== "win32" && (launcherInfo.mode & 0o777) !== 0o700) {
@@ -453,6 +538,7 @@ async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
     }
     const content = await readFile(launcher, "utf8");
     const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+    const powerShellQuote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
     for (const [name, value] of [
       ["AGENTS_HOME", state.stateDir],
       ["AGENTS_USER_HOME", state.userHome],
@@ -460,13 +546,16 @@ async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
       ["AGENTS_WORKSPACE", state.workspaceDir],
       ["AGENTS_SYSTEM_DATA_ROOT", systemDataPath(state.root)],
     ] as const) {
-      const binding = `export ${name}=${shellQuote(value)}`;
+      const binding = windows ? `$env:${name} = ${powerShellQuote(value)}` : `export ${name}=${shellQuote(value)}`;
       if (!content.includes(binding)) {
-        issues.push(`agents launcher is missing canonical binding: export ${name}=${value}`);
+        issues.push(`agents launcher is missing canonical binding: ${name}=${value}`);
       }
     }
     const cliPath = path.join(state.root, "packages", "core", "src", "manager", "cli.ts");
-    if (!content.includes(`export AGENTS_ENTRYPOINT=${shellQuote(cliPath)}`)) {
+    const entrypointBinding = windows
+      ? `$env:AGENTS_ENTRYPOINT = ${powerShellQuote(cliPath)}`
+      : `export AGENTS_ENTRYPOINT=${shellQuote(cliPath)}`;
+    if (!content.includes(entrypointBinding)) {
       issues.push(`agents launcher is missing canonical binding: ${cliPath}`);
     }
     if (content.includes("export AGENTS_DATA=")) issues.push("agents launcher exports the removed AGENTS_DATA parent path");
@@ -534,6 +623,7 @@ export async function doctorState(state: SharedState): Promise<StateDoctorReport
   }
 
   const invalidToolRoots = tools.filter((tool) => tool.location === "split" || tool.location === "forbidden");
+  const appOwnedToolRoots = tools.filter((tool) => tool.location === "app-owned");
   const checks: StateDoctorCheck[] = [
     {
       id: "state_root",
@@ -552,9 +642,14 @@ export async function doctorState(state: SharedState): Promise<StateDoctorReport
       ok: invalidToolRoots.length === 0,
       message:
         invalidToolRoots.length === 0
-          ? "provider state exists only under the canonical root"
+          ? appOwnedToolRoots.length > 0
+            ? `provider authority is canonical; app-owned desktop roots coexist for ${appOwnedToolRoots.map((tool) => tool.id).join(", ")}`
+            : "provider state exists only under the canonical root"
           : `forbidden standalone or split provider state: ${invalidToolRoots.map((tool) => tool.id).join(", ")}`,
-      details: { failures: invalidToolRoots.map((tool) => tool.id) },
+      details: {
+        failures: invalidToolRoots.map((tool) => tool.id),
+        appOwned: appOwnedToolRoots.map((tool) => tool.id),
+      },
     },
     await providerRegistryCheck(state, tools),
     {

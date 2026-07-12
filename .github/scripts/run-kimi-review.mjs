@@ -17,7 +17,11 @@ function delay(milliseconds) {
 }
 
 export function reviewTimeoutMs(value) {
-  const timeout = Number(value ?? DEFAULT_REVIEW_TIMEOUT_MS);
+  const timeout = value === undefined
+    ? DEFAULT_REVIEW_TIMEOUT_MS
+    : typeof value === "number" || (typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value))
+      ? Number(value)
+      : Number.NaN;
   if (!Number.isSafeInteger(timeout) || timeout < 30_000 || timeout > 900_000) {
     throw new Error("KIMI_REVIEW_TIMEOUT_MS must be an integer between 30000 and 900000");
   }
@@ -25,7 +29,11 @@ export function reviewTimeoutMs(value) {
 }
 
 export function reviewMaxTokens(value) {
-  const tokens = Number(value ?? DEFAULT_REVIEW_MAX_TOKENS);
+  const tokens = value === undefined
+    ? DEFAULT_REVIEW_MAX_TOKENS
+    : typeof value === "number" || (typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value))
+      ? Number(value)
+      : Number.NaN;
   if (!Number.isSafeInteger(tokens) || tokens < 4_096 || tokens > 32_768) {
     throw new Error("KIMI_REVIEW_MAX_TOKENS must be an integer between 4096 and 32768");
   }
@@ -63,16 +71,15 @@ function splitText(text, maxCharacters) {
 function splitReviewPrompt(prompt, maxCharacters) {
   if (prompt.length <= maxCharacters) return [prompt];
   const marker = "\n--- FULL DIFF ---\n";
-  const markerIndex = prompt.indexOf(marker);
-  if (markerIndex >= 0) {
-    const sharedContext = prompt.slice(0, markerIndex + marker.length);
-    const segmentCharacters = maxCharacters - sharedContext.length;
-    if (segmentCharacters >= 10_000) {
-      return splitText(prompt.slice(markerIndex + marker.length), segmentCharacters)
-        .map((segment) => `${sharedContext}${segment}`);
-    }
+  const markerIndex = prompt.lastIndexOf(marker);
+  if (markerIndex < 0) throw new Error("large review prompt is missing the generated full-diff boundary");
+  const sharedContext = prompt.slice(0, markerIndex + marker.length);
+  const segmentCharacters = maxCharacters - sharedContext.length;
+  if (segmentCharacters < 10_000) {
+    throw new Error("large review shared context leaves too little room for fail-closed diff segments");
   }
-  return splitText(prompt, maxCharacters);
+  return splitText(prompt.slice(markerIndex + marker.length), segmentCharacters)
+    .map((segment) => `${sharedContext}${segment}`);
 }
 
 function reviewShape(value) {
@@ -134,7 +141,7 @@ export function parseReview(text) {
   if (fenced) candidates.push(fenced[1]);
   candidates.push(...balancedJsonObjects(trimmed));
   let shapeError = null;
-  let validReview = null;
+  const validReviews = [];
   for (const candidate of new Set(candidates)) {
     let parsed;
     try {
@@ -143,13 +150,31 @@ export function parseReview(text) {
       continue;
     }
     try {
-      validReview = reviewShape(parsed);
+      validReviews.push(reviewShape(parsed));
     } catch (error) {
       shapeError = error instanceof Error ? error : new Error(String(error));
     }
   }
-  if (validReview) return validReview;
+  if (validReviews.length > 0) {
+    const blockingFindings = [...new Set(validReviews.flatMap((review) => review.blocking_findings))];
+    const nonBlockingNotes = [...new Set(validReviews.flatMap((review) => review.non_blocking_notes))];
+    return {
+      approved: validReviews.every((review) => review.approved) && blockingFindings.length === 0,
+      summary: validReviews.at(-1).summary,
+      blocking_findings: blockingFindings,
+      non_blocking_notes: nonBlockingNotes,
+    };
+  }
   throw new Error(`Kimi returned invalid review JSON: ${shapeError?.message ?? "response was not parseable JSON"}`);
+}
+
+function retryDelayMs(response) {
+  const raw = response.headers?.get?.("retry-after");
+  if (!raw) return 1_000;
+  const seconds = Number(raw);
+  const requested = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(raw) - Date.now();
+  if (!Number.isFinite(requested)) return 1_000;
+  return Math.min(30_000, Math.max(1_000, Math.ceil(requested)));
 }
 
 export function parseCredential(raw) {
@@ -229,32 +254,36 @@ async function requestReviewChunk({
   }
   const base = (env.KIMI_REVIEW_API_BASE || DEFAULT_API_BASE).replace(/\/+$/, "");
   const requestBody = JSON.stringify({
-      model: env.KIMI_REVIEW_MODEL || "kimi-for-coding",
-      // Kimi Code's coding models currently accept temperature=1 only.
-      temperature: 1,
-      max_tokens: reviewMaxTokens(env.KIMI_REVIEW_MAX_TOKENS),
-      prompt_cache_key: createHash("sha256").update(prompt).digest("hex"),
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "Perform a read-only pull-request review from the supplied context.",
-            "Do not request tools or external data.",
-            "Return only one JSON object with exactly these fields:",
-            '{"approved":boolean,"summary":string,"blocking_findings":string[],"non_blocking_notes":string[]}.',
-            "Set approved to false whenever blocking_findings is non-empty.",
-            "Keep summary under 150 words and return at most 10 concise items in each findings array.",
-          ].join(" "),
-        },
-        { role: "user", content: prompt },
-      ],
+    model: env.KIMI_REVIEW_MODEL || "kimi-for-coding",
+    // Kimi Code's coding models currently accept temperature=1 only.
+    temperature: 1,
+    max_tokens: reviewMaxTokens(env.KIMI_REVIEW_MAX_TOKENS),
+    prompt_cache_key: createHash("sha256").update(prompt).digest("hex"),
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "Perform a read-only pull-request review from the supplied context.",
+          "Do not request tools or external data.",
+          "Return only one JSON object with exactly these fields:",
+          '{"approved":boolean,"summary":string,"blocking_findings":string[],"non_blocking_notes":string[]}.',
+          "Set approved to false whenever blocking_findings is non-empty.",
+          "Keep summary under 150 words and return at most 10 concise items in each findings array.",
+        ].join(" "),
+      },
+      { role: "user", content: prompt },
+    ],
   });
   let response;
   let lastError;
+  let refreshedAfter401 = false;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    response = undefined;
+    let retryDelay = 1_000;
+    let attemptResponse;
     try {
-      response = await fetchImpl(`${base}/chat/completions`, {
+      attemptResponse = await fetchImpl(`${base}/chat/completions`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${active.access_token}`,
@@ -264,20 +293,34 @@ async function requestReviewChunk({
         body: requestBody,
         signal: AbortSignal.timeout(timeoutMs),
       });
-      if (response.status === 401 && active.refresh_token && attempt < 2) {
-        await response.body?.cancel?.().catch(() => {});
-        active = await refreshCredential(active, fetchImpl, env);
-        await onCredentialRefresh?.(active);
-        response = undefined;
-        lastError = new Error("Kimi review authorization expired during the review request");
-        continue;
-      }
-      if (response.ok || (response.status !== 429 && response.status < 500)) break;
-      lastError = new Error(`Kimi review API failed with retryable HTTP ${response.status}`);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
     }
-    if (attempt < 2) await waitImpl(1_000);
+    if (!attemptResponse) {
+      if (attempt < 2) await waitImpl(retryDelay);
+      continue;
+    }
+    if (attemptResponse.status === 401 && active.refresh_token && !refreshedAfter401 && attempt < 2) {
+      await attemptResponse.body?.cancel?.().catch(() => {});
+      try {
+        active = await refreshCredential(active, fetchImpl, env);
+        await onCredentialRefresh?.(active);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Kimi credential refresh after HTTP 401 failed: ${message}`);
+      }
+      refreshedAfter401 = true;
+      lastError = new Error("Kimi review authorization expired during the review request");
+      continue;
+    }
+    if (attemptResponse.ok || (attemptResponse.status !== 429 && attemptResponse.status < 500)) {
+      response = attemptResponse;
+      break;
+    }
+    lastError = new Error(`Kimi review API failed with retryable HTTP ${attemptResponse.status}`);
+    retryDelay = retryDelayMs(attemptResponse);
+    await attemptResponse.body?.cancel?.().catch(() => {});
+    if (attempt < 2) await waitImpl(retryDelay);
   }
   if (!response) throw lastError ?? new Error("Kimi review API request failed");
   if (!response.ok) throw new Error(`Kimi review API failed with HTTP ${response.status}`);
@@ -320,11 +363,12 @@ export async function requestReview(options) {
   if (reviews.length === 1) return reviews[0];
   const blockingFindings = [...new Set(reviews.flatMap((review) => review.blocking_findings))];
   const nonBlockingNotes = [...new Set(reviews.flatMap((review) => review.non_blocking_notes))];
+  const combinedSummary = `Kimi quota-takeover segmented review (${reviews.length} segments): ${reviews
+    .map((review) => review.summary.replace(/^Kimi quota-takeover review:\s*/, ""))
+    .join(" | ")}`;
   return {
     approved: reviews.every((review) => review.approved) && blockingFindings.length === 0,
-    summary: `Kimi quota-takeover segmented review (${reviews.length} segments): ${reviews
-      .map((review) => review.summary.replace(/^Kimi quota-takeover review:\s*/, ""))
-      .join(" | ")}`,
+    summary: combinedSummary.length <= 1_500 ? combinedSummary : `${combinedSummary.slice(0, 1_497)}...`,
     blocking_findings: blockingFindings,
     non_blocking_notes: nonBlockingNotes,
   };

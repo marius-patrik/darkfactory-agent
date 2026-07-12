@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import json
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from typing import Any
+from pathlib import Path
 
 
 class QuotaTracker:
@@ -47,7 +49,7 @@ class QuotaTracker:
             return True
         if max_tokens is not None and sum(count for _, count in self._tokens[provider]) >= max_tokens:
             return True
-        return False
+        return self._persistent_budget_exhausted(provider)
 
     def snapshot(self) -> dict[str, Any]:
         now = self._now()
@@ -81,5 +83,49 @@ class QuotaTracker:
             return None
         return int(value)
 
+    def _persistent_budget_exhausted(self, provider: str) -> bool:
+        """Read durable Agent OS/provider budgets without becoming a writer."""
+        raw_path = os.environ.get("GATEWAY_BUDGETS_PATH") or os.environ.get("AGENTS_CREDITS")
+        if not raw_path:
+            return False
+        path = Path(raw_path)
+        try:
+            store = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(store, dict):
+                return True
+            providers = store.get("providers", {})
+            if not isinstance(providers, dict) or provider not in providers:
+                return True
+            state = providers[provider]
+            if not isinstance(state, dict):
+                return True
+            budget = state.get("budget", {})
+            if not isinstance(budget, dict):
+                return True
+            requests = _integer(state.get("requests"))
+            tokens = _integer(state.get("tokensIn")) + _integer(state.get("tokensOut"))
+            max_requests = _optional_integer(
+                budget.get("maxRequests"),
+                os.environ.get(f"GATEWAY_BUDGET_{_env_provider(provider)}_MAX_REQUESTS_TOTAL"),
+            )
+            max_tokens = _optional_integer(
+                budget.get("maxTokens"),
+                os.environ.get(f"GATEWAY_BUDGET_{_env_provider(provider)}_MAX_TOKENS_TOTAL"),
+            )
+            return (max_requests is not None and requests >= max_requests) or (max_tokens is not None and tokens >= max_tokens)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            # A configured but unreadable budget authority cannot authorize
+            # metered/cloud work. Local routing remains available.
+            return True
+
 def _env_provider(provider: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in provider).upper()
+
+
+def _integer(value: Any) -> int:
+    return max(0, int(value or 0))
+
+
+def _optional_integer(primary: Any, fallback: Any) -> int | None:
+    value = primary if primary is not None and str(primary).strip() else fallback
+    return None if value is None or not str(value).strip() else max(0, int(value))
