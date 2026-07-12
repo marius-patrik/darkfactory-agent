@@ -14,7 +14,8 @@
     "agents": "bun packages/core/src/manager/cli.ts",
     "check": "bunx tsc --noEmit",
     "test": "bun test packages/core/test/manager/*.test.ts",
-    "ci": "bun run check && bun run test && node --test .github/scripts/run-kimi-review.test.mjs",
+    "proto:check": "cd packages/core/src/core && bunx --bun @bufbuild/buf lint proto && bunx --bun @bufbuild/buf generate proto && bunx --bun @bufbuild/buf generate proto --template buf.gen.gateway-python.yaml && git diff --exit-code -- contracts-go/gen clients/shared-ts/src/gen ../gateway/agent_os",
+    "ci": "bun run check && bun run test && bun run proto:check && node --test .github/scripts/run-kimi-review.test.mjs",
     "smoke:release": "bash install/smoke-release.sh"
   },
   "devDependencies": {

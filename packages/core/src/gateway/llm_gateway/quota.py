@@ -91,8 +91,12 @@ class QuotaTracker:
         path = Path(raw_path)
         try:
             store = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(store, dict):
+                return True
             providers = store.get("providers", {})
-            state = providers.get(provider, {}) if isinstance(providers, dict) else {}
+            if not isinstance(providers, dict) or provider not in providers:
+                return True
+            state = providers[provider]
             if not isinstance(state, dict):
                 return True
             budget = state.get("budget", {})

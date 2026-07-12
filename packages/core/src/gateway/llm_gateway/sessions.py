@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ class SessionRecord:
     history: list[ServerFrame] = field(default_factory=list)
     clients: dict[str, WebSocket] = field(default_factory=dict)
     next_seq: int = 1
+    relay_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def message(self) -> Session:
         return Session(
@@ -92,13 +94,16 @@ class SessionHub:
         )
 
     async def attach(self, record: SessionRecord, client_id: str, websocket: WebSocket) -> None:
-        record.clients[client_id] = websocket
-        for frame in record.history:
-            await websocket.send_bytes(frame.to_binary())
+        async with record.relay_lock:
+            for frame in record.history:
+                await websocket.send_bytes(frame.to_binary())
+            record.clients[client_id] = websocket
         await self.publish_attach(record, client_id, "attached")
 
     async def detach(self, record: SessionRecord, client_id: str) -> None:
-        if record.clients.pop(client_id, None) is not None:
+        async with record.relay_lock:
+            detached = record.clients.pop(client_id, None) is not None
+        if detached:
             await self.publish_attach(record, client_id, "detached")
 
     async def publish_attach(self, record: SessionRecord, client_id: str, action: str) -> None:
@@ -109,6 +114,10 @@ class SessionHub:
         await self.publish(record, ServerFrame(frame=Oneof("session_event", event)))  # type: ignore[arg-type]
 
     async def publish(self, record: SessionRecord, frame: ServerFrame, *, exclude: str = "") -> int:
+        async with record.relay_lock:
+            return await self._publish_locked(record, frame, exclude=exclude)
+
+    async def _publish_locked(self, record: SessionRecord, frame: ServerFrame, *, exclude: str = "") -> int:
         frame.seq = record.next_seq
         record.next_seq += 1
         record.history.append(ServerFrame.from_binary(frame.to_binary()))

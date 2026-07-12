@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -14,7 +15,7 @@ from agent_os.v1.session_frames_pb import ClientFrame, ServerFrame, Status, User
 from llm_gateway.main import app
 from llm_gateway.quota import QuotaTracker
 from llm_gateway.registry import ModelRegistry
-from llm_gateway.router import Router
+from llm_gateway.router import Router, RoutingError
 from llm_gateway.sessions import SessionHub
 from llm_gateway.switchers import SwitcherStore
 from llm_gateway.trace import TraceLogger
@@ -123,6 +124,38 @@ async def test_relay_drops_broken_client_without_blocking_healthy_delivery():
     assert len(healthy.payloads) == 1
 
 
+@pytest.mark.asyncio
+async def test_attach_replay_is_an_atomic_boundary_before_live_delivery():
+    class BlockingSocket:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.sequences: list[int] = []
+
+        async def send_bytes(self, payload: bytes) -> None:
+            frame = ServerFrame.from_binary(payload)
+            if not self.sequences:
+                self.started.set()
+                await self.release.wait()
+            self.sequences.append(frame.seq)
+
+    hub = SessionHub("ws://gateway", "gateway")
+    record = hub.create(session_id="ordered-replay")
+    await hub.publish(record, ServerFrame(frame=Oneof("status", Status(state="history"))))  # type: ignore[arg-type]
+    socket = BlockingSocket()
+    attach = asyncio.create_task(hub.attach(record, "late-client", socket))  # type: ignore[arg-type]
+    await socket.started.wait()
+    live = asyncio.create_task(
+        hub.publish(record, ServerFrame(frame=Oneof("status", Status(state="live"))))  # type: ignore[arg-type]
+    )
+    await asyncio.sleep(0)
+    assert live.done() is False
+    socket.release.set()
+    await asyncio.gather(attach, live)
+    assert socket.sequences == sorted(socket.sequences)
+    assert socket.sequences[:2] == [1, 2]
+
+
 def test_durable_budget_exhaustion_degrades_cloud_to_local(monkeypatch, tmp_path):
     registry = _registry(tmp_path)
     budget_path = tmp_path / "credits.json"
@@ -161,6 +194,29 @@ def test_cloud_route_requires_opt_in_and_fails_closed_on_bad_budget(monkeypatch,
         budget_path.write_text("not-json", encoding="utf-8")
         monkeypatch.setenv("GATEWAY_BUDGETS_PATH", str(budget_path))
         assert router.resolve_model("cloud-general", allow_cloud=True).id == "local-general"
+    finally:
+        tracer.close()
+
+
+def test_configured_budget_authority_fails_closed_for_bad_root_or_missing_provider(monkeypatch, tmp_path):
+    budget_path = tmp_path / "credits.json"
+    monkeypatch.setenv("GATEWAY_BUDGETS_PATH", str(budget_path))
+    quota = QuotaTracker()
+    budget_path.write_text("[]", encoding="utf-8")
+    assert quota.is_exhausted("claude") is True
+    budget_path.write_text(json.dumps({"providers": {}}), encoding="utf-8")
+    assert quota.is_exhausted("claude") is True
+
+
+def test_cloud_fallback_never_selects_disabled_local_model(tmp_path):
+    registry = _registry(tmp_path)
+    registry._definitions["local-general"]["enabled"] = False
+    registry.refresh_runtime_status(force=True)
+    tracer = TraceLogger(trace_dir=tmp_path / "traces")
+    router = Router(registry, tracer, quota=QuotaTracker())
+    try:
+        with pytest.raises(RoutingError, match="no local fallback"):
+            router.resolve_model("cloud-general", allow_cloud=False)
     finally:
         tracer.close()
 

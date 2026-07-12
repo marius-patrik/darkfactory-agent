@@ -57,7 +57,11 @@ class Router:
 
         if entry.cloud and (not allow_cloud or self.quota.is_exhausted(entry.provider)):
             fallback = next(
-                (candidate for candidate in self.registry.list_by_role(entry.role) if not candidate.cloud),
+                (
+                    candidate
+                    for candidate in self.registry.list_by_role(entry.role)
+                    if candidate.enabled and not candidate.cloud
+                ),
                 None,
             )
             if fallback is None:
