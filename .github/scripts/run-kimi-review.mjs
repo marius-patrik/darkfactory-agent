@@ -81,7 +81,7 @@ export function parseReview(text) {
   if (fenced) candidates.push(fenced[1]);
   candidates.push(...balancedJsonObjects(trimmed));
   let shapeError = null;
-  let validReview = null;
+  const validReviews = [];
   for (const candidate of new Set(candidates)) {
     let parsed;
     try {
@@ -90,13 +90,31 @@ export function parseReview(text) {
       continue;
     }
     try {
-      validReview = reviewShape(parsed);
+      validReviews.push(reviewShape(parsed));
     } catch (error) {
       shapeError = error instanceof Error ? error : new Error(String(error));
     }
   }
-  if (validReview) return validReview;
+  if (validReviews.length > 0) {
+    const blockingFindings = [...new Set(validReviews.flatMap((review) => review.blocking_findings))];
+    const nonBlockingNotes = [...new Set(validReviews.flatMap((review) => review.non_blocking_notes))];
+    return {
+      approved: validReviews.every((review) => review.approved) && blockingFindings.length === 0,
+      summary: validReviews.at(-1).summary,
+      blocking_findings: blockingFindings,
+      non_blocking_notes: nonBlockingNotes,
+    };
+  }
   throw new Error(`Kimi returned invalid review JSON: ${shapeError?.message ?? "response was not parseable JSON"}`);
+}
+
+function retryDelayMs(response) {
+  const raw = response.headers?.get?.("retry-after");
+  if (!raw) return 1_000;
+  const seconds = Number(raw);
+  const requested = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(raw) - Date.now();
+  if (!Number.isFinite(requested)) return 1_000;
+  return Math.min(30_000, Math.max(1_000, Math.ceil(requested)));
 }
 
 export function parseCredential(raw) {
@@ -174,32 +192,34 @@ export async function requestReview({
   }
   const base = (env.KIMI_REVIEW_API_BASE || DEFAULT_API_BASE).replace(/\/+$/, "");
   const requestBody = JSON.stringify({
-      model: env.KIMI_REVIEW_MODEL || "kimi-for-coding",
-      // Kimi Code's coding models currently accept temperature=1 only.
-      temperature: 1,
-      max_tokens: 8192,
-      prompt_cache_key: createHash("sha256").update(prompt).digest("hex"),
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "Perform a read-only pull-request review from the supplied context.",
-            "Do not request tools or external data.",
-            "Return only one JSON object with exactly these fields:",
-            '{"approved":boolean,"summary":string,"blocking_findings":string[],"non_blocking_notes":string[]}.',
-            "Set approved to false whenever blocking_findings is non-empty.",
-            "Keep summary under 150 words and return at most 10 concise items in each findings array.",
-          ].join(" "),
-        },
-        { role: "user", content: prompt },
-      ],
+    model: env.KIMI_REVIEW_MODEL || "kimi-for-coding",
+    // Kimi Code's coding models currently accept temperature=1 only.
+    temperature: 1,
+    max_tokens: 8192,
+    prompt_cache_key: createHash("sha256").update(prompt).digest("hex"),
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "Perform a read-only pull-request review from the supplied context.",
+          "Do not request tools or external data.",
+          "Return only one JSON object with exactly these fields:",
+          '{"approved":boolean,"summary":string,"blocking_findings":string[],"non_blocking_notes":string[]}.',
+          "Set approved to false whenever blocking_findings is non-empty.",
+          "Keep summary under 150 words and return at most 10 concise items in each findings array.",
+        ].join(" "),
+      },
+      { role: "user", content: prompt },
+    ],
   });
   let response;
   let lastError;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    response = undefined;
+    let retryDelay = 1_000;
     try {
-      response = await fetchImpl(`${base}/chat/completions`, {
+      const attemptResponse = await fetchImpl(`${base}/chat/completions`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${active.access_token}`,
@@ -209,12 +229,17 @@ export async function requestReview({
         body: requestBody,
         signal: AbortSignal.timeout(reviewTimeoutMs(env.KIMI_REVIEW_TIMEOUT_MS)),
       });
-      if (response.ok || (response.status !== 429 && response.status < 500)) break;
-      lastError = new Error(`Kimi review API failed with retryable HTTP ${response.status}`);
+      if (attemptResponse.ok || (attemptResponse.status !== 429 && attemptResponse.status < 500)) {
+        response = attemptResponse;
+        break;
+      }
+      lastError = new Error(`Kimi review API failed with retryable HTTP ${attemptResponse.status}`);
+      retryDelay = retryDelayMs(attemptResponse);
+      await attemptResponse.body?.cancel?.().catch(() => {});
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
     }
-    if (attempt < 2) await waitImpl(1_000);
+    if (attempt < 2) await waitImpl(retryDelay);
   }
   if (!response) throw lastError ?? new Error("Kimi review API request failed");
   if (!response.ok) throw new Error(`Kimi review API failed with HTTP ${response.status}`);

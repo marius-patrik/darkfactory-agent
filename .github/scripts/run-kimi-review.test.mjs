@@ -36,7 +36,7 @@ test("recovers the final review object after unrelated balanced JSON", () => {
   assert.deepEqual(review.blocking_findings, []);
 });
 
-test("the last schema-valid object wins over a scratch verdict", () => {
+test("multiple schema-valid objects combine into a fail-closed verdict", () => {
   const scratch = JSON.stringify(validReview);
   const final = JSON.stringify({
     approved: false,
@@ -47,6 +47,10 @@ test("the last schema-valid object wins over a scratch verdict", () => {
   const review = parseReview(`scratch ${scratch}\nfinal ${final}`);
   assert.equal(review.approved, false);
   assert.deepEqual(review.blocking_findings, ["blocking final finding"]);
+
+  const reversed = parseReview(`scratch ${final}\nfinal ${scratch}`);
+  assert.equal(reversed.approved, false);
+  assert.deepEqual(reversed.blocking_findings, ["blocking final finding"]);
 });
 
 test("blocking findings always force a failed normalized verdict", () => {
@@ -90,6 +94,7 @@ test("takeover timeout is long enough for large reviews and remains bounded", ()
 
 test("workflow isolates Codex and Kimi credentials in separate provider steps", async () => {
   const workflow = await readFile(".github/workflows/codex-review.yml", "utf8");
+  assert.match(workflow, /timeout-minutes: 35/);
   const codexStep = workflow.match(/- name: Run Codex review[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
   const kimiStep = workflow.match(/- name: Run credential-isolated Kimi takeover[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
   assert.match(codexStep, /CODEX_AUTH_JSON:/);
@@ -324,6 +329,75 @@ test("does not retry a non-retryable provider response", async () => {
     /HTTP 400/,
   );
   assert.equal(calls, 1);
+});
+
+test("honors bounded Retry-After and cancels a retryable response body", async () => {
+  let calls = 0;
+  let cancelled = 0;
+  const waits = [];
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return {
+        ok: false,
+        status: 429,
+        headers: new Headers({ "retry-after": "2" }),
+        body: { cancel: async () => { cancelled += 1; } },
+      };
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(validReview) } }] }), {
+      status: 200,
+    });
+  };
+  const review = await requestReview({
+    prompt: "review",
+    credential: { access_token: "token", expires_at: Math.floor(Date.now() / 1000) + 3600 },
+    fetchImpl,
+    env: {},
+    waitImpl: async (milliseconds) => waits.push(milliseconds),
+  });
+  assert.equal(review.approved, true);
+  assert.equal(cancelled, 1);
+  assert.deepEqual(waits, [2_000]);
+});
+
+test("the latest failure wins after mixed retry failures", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response("unavailable", { status: 503 });
+    }
+    throw new TypeError("latest fetch failed");
+  };
+  await assert.rejects(
+    requestReview({
+      prompt: "review",
+      credential: { access_token: "token", expires_at: Math.floor(Date.now() / 1000) + 3600 },
+      fetchImpl,
+      env: {},
+      waitImpl: async () => {},
+    }),
+    /latest fetch failed/,
+  );
+  assert.equal(calls, 2);
+});
+
+test("both retryable HTTP attempts fail closed with the final status", async () => {
+  const statuses = [503, 502];
+  let calls = 0;
+  const fetchImpl = async () => new Response("unavailable", { status: statuses[calls++] });
+  await assert.rejects(
+    requestReview({
+      prompt: "review",
+      credential: { access_token: "token", expires_at: Math.floor(Date.now() / 1000) + 3600 },
+      fetchImpl,
+      env: {},
+      waitImpl: async () => {},
+    }),
+    /retryable HTTP 502/,
+  );
+  assert.equal(calls, 2);
 });
 
 test("reports completion truncation distinctly from malformed JSON", async () => {
