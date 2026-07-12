@@ -56,10 +56,11 @@ operation; they do not exchange runtime state.
 - Existing paths with identical bytes are no-ops. Existing paths with different
   bytes are immutable-event collisions and abort the import.
 - `sync/imports/<payload-hash>.json` records `prepared` and `committed` phases
-  together with the authenticated, secret-scanned entry bytes and hashes.
-  `agents sync recover` resumes a prepared import without the original external
-  bundle, verifies already-published bytes, rebuilds projections, and commits
-  the journal. `state doctor` fails while an import is prepared.
+  together with the exact encrypted envelope and checked entry metadata.
+  `agents sync recover` reauthenticates that durable envelope with the local key,
+  resumes without the original external bundle, verifies already-published
+  bytes, rebuilds projections, and commits the journal. `state doctor` fails
+  while an import is prepared.
 - Memory retraction and supersession events are the deletion/tombstone model.
   Authoritative event files are append-only and are never deleted by exchange.
 - Session and orchestrator hash chains are verified per machine. Cross-machine

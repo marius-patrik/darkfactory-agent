@@ -186,6 +186,37 @@ describe("encrypted cross-machine event exchange", () => {
     }
   });
 
+  test("prepared recovery reauthenticates its durable encrypted envelope", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-sync-recovery-auth-"));
+    try {
+      const source = await exchangeState(path.join(root, "source"));
+      const target = await exchangeState(path.join(root, "target"));
+      await rememberMemory(source, {
+        scope: "project",
+        subject: "Andromeda",
+        predicate: "recovery-auth",
+        value: "required",
+        evidence,
+      });
+      const bundle = path.join(root, "events.bundle.json");
+      await exportEventBundle(source, bundle);
+      await expect(importEventBundle(target, bundle, { failAfter: 1 })).rejects.toThrow("simulated interrupted");
+      const journalDirectory = path.join(target.stateDir, "sync", "imports");
+      const [journalName] = await readdir(journalDirectory);
+      const journalPath = path.join(journalDirectory, journalName);
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { envelope: { ciphertext: string } };
+      const ciphertext = Buffer.from(journal.envelope.ciphertext, "base64");
+      ciphertext[0] ^= 1;
+      journal.envelope.ciphertext = ciphertext.toString("base64");
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await rm(bundle);
+      await expect(recoverPreparedEventImports(target)).rejects.toThrow("authentication failed");
+      expect(await eventSyncStatus(target)).toMatchObject({ committedImports: 0, preparedImports: 1 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("tampering, immutable collisions, and secret memory fail before publication", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-sync-denied-"));
     try {

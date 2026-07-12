@@ -78,6 +78,7 @@ interface ImportJournal {
   state: "prepared" | "committed";
   paths: string[];
   entries?: EventEntry[];
+  envelope?: BundleEnvelope;
   imported: number;
   skipped: number;
   projectionHash?: string;
@@ -389,6 +390,59 @@ function decodeEntries(entries: EventEntry[]): Map<string, string> {
   return decoded;
 }
 
+async function authenticateBundleEnvelope(
+  state: SharedState,
+  value: unknown,
+): Promise<{ envelope: BundleEnvelope; payloadHash: string; payload: BundlePayload; incoming: Map<string, string> }> {
+  const envelope = value as Partial<BundleEnvelope>;
+  if (
+    envelope.schemaVersion !== 1 ||
+    envelope.algorithm !== "aes-256-gcm" ||
+    typeof envelope.payloadHash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(envelope.payloadHash) ||
+    typeof envelope.nonce !== "string" ||
+    typeof envelope.authTag !== "string" ||
+    typeof envelope.ciphertext !== "string"
+  ) {
+    throw new Error("invalid event exchange envelope");
+  }
+  const normalized = envelope as BundleEnvelope;
+  const nonce = canonicalBase64(normalized.nonce, "nonce", 12);
+  const authTag = canonicalBase64(normalized.authTag, "authentication tag", 16);
+  const ciphertext = canonicalBase64(normalized.ciphertext, "ciphertext");
+  const key = await keyMaterial(state);
+  let plaintextBytes: Buffer;
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", key, nonce, { authTagLength: 16 });
+    decipher.setAAD(Buffer.from(`${AAD_PREFIX}${normalized.payloadHash}`));
+    decipher.setAuthTag(authTag);
+    plaintextBytes = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  } catch {
+    throw new Error("event exchange authentication failed");
+  }
+  if (plaintextBytes.byteLength > MAX_BUNDLE_BYTES) throw new Error("event exchange payload is too large");
+  const plaintext = plaintextBytes.toString("utf8");
+  if (sha256(plaintext) !== normalized.payloadHash) throw new Error("event exchange payload hash mismatch");
+  const payload = JSON.parse(plaintext) as Partial<BundlePayload>;
+  if (
+    payload.schemaVersion !== 1 ||
+    !payload.source ||
+    typeof payload.source.installId !== "string" ||
+    typeof payload.source.machineId !== "string" ||
+    !Array.isArray(payload.entries)
+  ) {
+    throw new Error("invalid event exchange payload");
+  }
+  assertSourceMetadata(payload.source);
+  const completePayload = payload as BundlePayload;
+  return {
+    envelope: normalized,
+    payloadHash: normalized.payloadHash,
+    payload: completePayload,
+    incoming: decodeEntries(completePayload.entries),
+  };
+}
+
 async function validateMergedEvents(state: SharedState, incoming: Map<string, string>): Promise<Map<string, string>> {
   const combined = new Map((await collectEventEntries(state)).map((entry) => [entry.path, Buffer.from(entry.content, "base64").toString("utf8")]));
   for (const [relativePath, content] of incoming) {
@@ -522,9 +576,14 @@ function encodedEntries(incoming: Map<string, string>): EventEntry[] {
     }));
 }
 
-function preparedJournalEntries(journal: ImportJournal): Map<string, string> {
-  if (!journal.entries) throw new Error(`prepared event import ${journal.payloadHash} has no durable authenticated entries`);
-  const incoming = decodeEntries(journal.entries);
+async function preparedJournalEntries(state: SharedState, journal: ImportJournal): Promise<Map<string, string>> {
+  if (!journal.envelope) throw new Error(`prepared event import ${journal.payloadHash} has no durable authenticated envelope`);
+  const authenticated = await authenticateBundleEnvelope(state, journal.envelope);
+  if (authenticated.payloadHash !== journal.payloadHash) {
+    throw new Error(`prepared event import ${journal.payloadHash} does not match its authenticated envelope`);
+  }
+  const incoming = authenticated.incoming;
+  if (journal.entries) assertSameIncoming(incoming, decodeEntries(journal.entries));
   if (journal.paths.length !== incoming.size || journal.paths.some((item, index) => item !== [...incoming.keys()][index])) {
     throw new Error(`prepared event import ${journal.payloadHash} has inconsistent recovery paths`);
   }
@@ -684,50 +743,11 @@ export async function importEventBundle(
     const inputInfo = await lstat(path.resolve(inputPath));
     if (!inputInfo.isFile() || inputInfo.isSymbolicLink()) throw new Error("event exchange bundle must be a physical file");
     if (inputInfo.size > MAX_BUNDLE_BYTES * 2) throw new Error("event exchange envelope is too large");
-    const envelope = JSON.parse(await readFile(path.resolve(inputPath), "utf8")) as Partial<BundleEnvelope>;
-    if (
-      envelope.schemaVersion !== 1 ||
-      envelope.algorithm !== "aes-256-gcm" ||
-      typeof envelope.payloadHash !== "string" ||
-      !/^[a-f0-9]{64}$/.test(envelope.payloadHash) ||
-      typeof envelope.nonce !== "string" ||
-      typeof envelope.authTag !== "string" ||
-      typeof envelope.ciphertext !== "string"
-    ) {
-      throw new Error("invalid event exchange envelope");
-    }
-    const payloadHash = envelope.payloadHash;
-    const nonce = canonicalBase64(envelope.nonce, "nonce", 12);
-    const authTag = canonicalBase64(envelope.authTag, "authentication tag", 16);
-    const ciphertext = canonicalBase64(envelope.ciphertext, "ciphertext");
-    const key = await keyMaterial(state);
-    let plaintextBytes: Buffer;
-    try {
-      const decipher = createDecipheriv("aes-256-gcm", key, nonce, { authTagLength: 16 });
-      decipher.setAAD(Buffer.from(`${AAD_PREFIX}${payloadHash}`));
-      decipher.setAuthTag(authTag);
-      plaintextBytes = Buffer.concat([
-        decipher.update(ciphertext),
-        decipher.final(),
-      ]);
-    } catch {
-      throw new Error("event exchange authentication failed");
-    }
-    if (plaintextBytes.byteLength > MAX_BUNDLE_BYTES) throw new Error("event exchange payload is too large");
-    const plaintext = plaintextBytes.toString("utf8");
-    if (sha256(plaintext) !== payloadHash) throw new Error("event exchange payload hash mismatch");
-    const payload = JSON.parse(plaintext) as Partial<BundlePayload>;
-    if (
-      payload.schemaVersion !== 1 ||
-      !payload.source ||
-      typeof payload.source.installId !== "string" ||
-      typeof payload.source.machineId !== "string" ||
-      !Array.isArray(payload.entries)
-    ) {
-      throw new Error("invalid event exchange payload");
-    }
-    assertSourceMetadata(payload.source);
-    const incoming = decodeEntries(payload.entries);
+    const authenticated = await authenticateBundleEnvelope(
+      state,
+      JSON.parse(await readFile(path.resolve(inputPath), "utf8")),
+    );
+    const { payloadHash, incoming } = authenticated;
     const journalPath = path.join(importsDirectory(state), `${payloadHash}.json`);
     await ensurePhysicalDirectoryChain(state.stateDir, importsDirectory(state));
     await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { allowMissing: true, leaf: "file" });
@@ -763,14 +783,14 @@ export async function importEventBundle(
             entries: incoming.size,
             imported: 0,
             skipped: incoming.size,
-            projectionHash: journal.projectionHash ?? await projectionHash(state, incoming),
+            projectionHash: await projectionHash(state, incoming),
             idempotent: true,
           };
         }
       }
 
       if (journal?.state === "prepared") {
-        const durableIncoming = preparedJournalEntries(journal);
+        const durableIncoming = await preparedJournalEntries(state, journal);
         assertSameIncoming(durableIncoming, incoming);
         return publishPreparedImport(state, payloadHash, durableIncoming, journalPath, journal, options);
       }
@@ -796,6 +816,7 @@ export async function importEventBundle(
         state: "prepared",
         paths: [...incoming.keys()],
         entries: encodedEntries(incoming),
+        envelope: authenticated.envelope,
         imported: 0,
         skipped,
       };
@@ -828,7 +849,7 @@ export async function recoverPreparedEventImports(state: SharedState): Promise<E
         throw new Error(`invalid event import journal: ${entry.name}`);
       }
       if (journal.state === "committed") continue;
-      const incoming = preparedJournalEntries(journal);
+      const incoming = await preparedJournalEntries(state, journal);
       results.push(await withAffectedEventLocks(state, incoming, () => (
         publishPreparedImport(state, journal.payloadHash, incoming, journalPath, journal)
       )));
