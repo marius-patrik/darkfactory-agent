@@ -158,6 +158,9 @@ export async function requestReview({ prompt, credential, fetchImpl = fetch, env
   });
   if (!response.ok) throw new Error(`Kimi review API failed with HTTP ${response.status}`);
   const payload = await response.json();
+  if (payload?.choices?.[0]?.finish_reason === "length") {
+    throw new Error("Kimi review reached the completion-token limit before producing a complete verdict");
+  }
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("Kimi review API returned no message content");
   return parseReview(content);

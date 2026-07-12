@@ -262,6 +262,23 @@ test("uses the review API without placing credentials in model input", async () 
   assert.equal(JSON.parse(request.init.body).max_tokens, 8192);
 });
 
+test("reports completion truncation distinctly from malformed JSON", async () => {
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({ choices: [{ finish_reason: "length", message: { content: '{"approved":' } }] }),
+      { status: 200 },
+    );
+  await assert.rejects(
+    requestReview({
+      prompt: "large review",
+      credential: { access_token: "token", expires_at: Math.floor(Date.now() / 1000) + 3600 },
+      fetchImpl,
+      env: {},
+    }),
+    /completion-token limit/,
+  );
+});
+
 test("refreshes an expired OAuth token before the review request", async () => {
   const calls = [];
   let rotated;
