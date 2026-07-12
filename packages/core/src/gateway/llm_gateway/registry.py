@@ -8,6 +8,7 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 from jsonschema import FormatChecker, ValidationError, validate
@@ -71,6 +72,7 @@ class ModelRegistry:
         self._models: dict[str, ModelEntry] = {}
         self._definitions: dict[str, dict[str, Any]] = {}
         self._status_signature: tuple[bool, int, int] | None = None
+        self._inferctl_status_error: str | None = None
         self._schema: dict[str, Any] | None = None
         self.load()
 
@@ -125,10 +127,21 @@ class ModelRegistry:
             if status is None:
                 entry.api_base = None
                 entry.enabled = False
-                entry.extra["inferctl"] = {"status": "missing", "available": False}
+                runtime_status = "malformed" if self._inferctl_status_error else "missing"
+                entry.extra["inferctl"] = {
+                    "status": runtime_status,
+                    "available": False,
+                    **({"error": self._inferctl_status_error} if self._inferctl_status_error else {}),
+                }
                 continue
-            api_base = _optional_string(status.get("api_base"))
+            malformed = _optional_string(status.get("_malformed"))
+            api_base = _http_api_base(status.get("api_base"))
             runtime_status = _inferctl_state(status)
+            if malformed:
+                runtime_status = "malformed"
+            elif status.get("api_base") is not None and api_base is None:
+                runtime_status = "malformed"
+                malformed = "api_base must be an absolute HTTP(S) URL"
             available = bool(api_base) and runtime_status in INFERCTL_READY_STATUSES
             entry.api_base = api_base
             entry.enabled = entry.configured_enabled and available
@@ -137,32 +150,42 @@ class ModelRegistry:
                 "api_base": api_base,
                 "available": entry.enabled,
                 "source": str(self.inferctl_status_path),
+                **({"error": malformed} if malformed else {}),
             }
         self._models = models
         self._status_signature = signature
 
     def _inferctl_signature(self) -> tuple[bool, int, int]:
         try:
-            info = self.inferctl_status_path.stat()
-            if not self.inferctl_status_path.is_file() or self.inferctl_status_path.is_symlink():
-                raise RegistryError("inferctl status path must be a physical file")
+            info = self.inferctl_status_path.lstat()
             return True, info.st_mtime_ns, info.st_size
-        except FileNotFoundError:
+        except OSError:
             return False, 0, 0
 
     def _load_inferctl_status(self) -> dict[str, dict[str, Any]]:
+        self._inferctl_status_error = None
         if not self.inferctl_status_path.exists():
             return {}
-        with open(self.inferctl_status_path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
+        if not self.inferctl_status_path.is_file() or self.inferctl_status_path.is_symlink():
+            self._inferctl_status_error = "inferctl status path must be a physical file"
+            return {}
+        try:
+            with open(self.inferctl_status_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f)
+        except (OSError, yaml.YAMLError) as exc:
+            self._inferctl_status_error = f"cannot parse inferctl status: {exc}"
+            return {}
         if not isinstance(raw, dict) or raw.get("schema_version") != "inferctl-local-engines-v1":
-            raise RegistryError("inferctl status must use schema_version inferctl-local-engines-v1")
+            self._inferctl_status_error = "inferctl status must use schema_version inferctl-local-engines-v1"
+            return {}
         engines = raw.get("engines")
         if not isinstance(engines, dict):
-            raise RegistryError("inferctl status engines must be an object")
-        if any(not isinstance(value, dict) for value in engines.values()):
-            raise RegistryError("inferctl engine status entries must be objects")
-        return {str(key): value for key, value in engines.items()}
+            self._inferctl_status_error = "inferctl status engines must be an object"
+            return {}
+        return {
+            str(key): value if isinstance(value, dict) else {"_malformed": "inferctl engine status must be an object"}
+            for key, value in engines.items()
+        }
 
     def get(self, model_id: str) -> ModelEntry | None:
         self.refresh_runtime_status()
@@ -190,6 +213,16 @@ def _optional_string(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _http_api_base(value: Any) -> str | None:
+    text = _optional_string(value)
+    if text is None:
+        return None
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return text
 
 
 def _inferctl_state(status: dict[str, Any]) -> str:
