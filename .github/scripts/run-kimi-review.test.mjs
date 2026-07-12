@@ -45,6 +45,7 @@ test("uses the review API without placing credentials in model input", async () 
 
 test("refreshes an expired OAuth token before the review request", async () => {
   const calls = [];
+  let rotated;
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
     if (url.endsWith("/api/oauth/token")) {
@@ -57,8 +58,13 @@ test("refreshes an expired OAuth token before the review request", async () => {
     credential: { access_token: "expired", refresh_token: "refresh", expires_at: 1 },
     fetchImpl,
     env: {},
+    onCredentialRefresh: async (credential) => {
+      rotated = credential;
+    },
   });
   assert.equal(calls.length, 2);
   assert.match(String(calls[0].init.body), /grant_type=refresh_token/);
   assert.equal(calls[1].init.headers.authorization, "Bearer fresh");
+  assert.equal(rotated.access_token, "fresh");
+  assert.ok(rotated.expires_at > Math.floor(Date.now() / 1000));
 });

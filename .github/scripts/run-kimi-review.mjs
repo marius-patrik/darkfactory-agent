@@ -66,13 +66,18 @@ async function refreshCredential(credential, fetchImpl, env) {
   if (!response.ok) throw new Error(`Kimi OAuth refresh failed with HTTP ${response.status}`);
   const refreshed = await response.json();
   if (!refreshed?.access_token) throw new Error("Kimi OAuth refresh returned no access_token");
-  return refreshed;
+  const expiresIn = Number(refreshed.expires_in || 0);
+  return {
+    ...refreshed,
+    expires_at: expiresIn > 0 ? Math.floor(Date.now() / 1000) + expiresIn : 0,
+  };
 }
 
-export async function requestReview({ prompt, credential, fetchImpl = fetch, env = process.env }) {
+export async function requestReview({ prompt, credential, fetchImpl = fetch, env = process.env, onCredentialRefresh }) {
   let active = credential;
   if (Number(active.expires_at || 0) <= Math.floor(Date.now() / 1000) + 60) {
     active = await refreshCredential(active, fetchImpl, env);
+    await onCredentialRefresh?.(active);
   }
   const base = (env.KIMI_REVIEW_API_BASE || DEFAULT_API_BASE).replace(/\/+$/, "");
   const response = await fetchImpl(`${base}/chat/completions`, {
@@ -118,7 +123,18 @@ export async function main(env = process.env) {
   try {
     const prompt = fs.readFileSync(env.KIMI_REVIEW_PROMPT, "utf8");
     const credential = parseCredential(env.KIMI_AUTH_JSON || "");
-    const review = await requestReview({ prompt, credential, env });
+    const review = await requestReview({
+      prompt,
+      credential,
+      env,
+      onCredentialRefresh: async (refreshed) => {
+        if (!env.KIMI_REFRESHED_AUTH_OUTPUT) return;
+        fs.writeFileSync(env.KIMI_REFRESHED_AUTH_OUTPUT, `${JSON.stringify(refreshed, null, 2)}\n`, {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+      },
+    });
     fs.writeFileSync(output, `${JSON.stringify(review, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   } catch (error) {
     fs.writeFileSync(output, `${JSON.stringify(blockedReview(error), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
