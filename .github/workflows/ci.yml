@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Create repository checkout token
-        if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        if: github.event_name == 'push'
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
@@ -36,7 +36,7 @@ jobs:
             SkyAgent
 
       - name: Check out repository with private components
-        if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        if: github.event_name == 'push'
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -44,8 +44,8 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
-      - name: Check out untrusted pull request without private components
-        if: github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]')
+      - name: Check out pull request without private components
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
