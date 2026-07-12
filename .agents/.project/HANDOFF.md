@@ -1,8 +1,8 @@
 # Handoff
 
-Resume planning from `data/agent-os/context/TASK.md`. Do not recreate completed rows from stale Fable, Claude, Codex, or Dream task stores.
+Andromeda v0.2.2 acceptance is complete. Resume planning from `data/agent-os/context/TASK.md`; do not recreate completed rows from stale Fable, Claude, Codex, or Dream task stores.
 
-PR #169 and the PR #170 back-sync are merged. PR #172 is the dedicated `dev`-to-`main` v0.2.2 release. After it merges, tag its merge commit, install that exact `main` commit on Windows and Mac, run the explicit-root doctor commands below, and repeat the encrypted two-way exchange idempotently.
+Windows and Mac both install exact `main@d7bafd4f660c`. Explicit-root state doctors are green, encrypted exchange replays idempotently in both directions, and no prepared imports remain. Use the commands below to re-verify live state rather than inferring it from this file.
 
 ```powershell
 $env:AGENTS_HOME = "$HOME\.agents"
@@ -18,4 +18,4 @@ AGENTS_ROOT="$HOME/marius-patrik/Andromeda" \
   "$HOME/.agents/bin/agents" state doctor --json
 ```
 
-After acceptance, update this handoff to the released commit and verified exchange hashes. Backlog items remain deferred; Parked items remain frozen until Patrik explicitly reopens them.
+The Backlog row remains deferred. The final Parked row remains frozen until Patrik explicitly reopens an item.
