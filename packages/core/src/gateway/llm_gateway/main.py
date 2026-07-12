@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from protobuf import Oneof
 
 from agent_os.v1.common_pb import RunStatus, SwitcherScope
+from agent_os.v1.health_connect import HealthServiceASGIApplication
 from agent_os.v1.registry_connect import RegistryServiceASGIApplication
 from agent_os.v1.session_frames_pb import Attach, ClientFrame, ServerFrame, SessionEvent, SessionEventKind, Status, Switch, SwitchState, UserInput
 from agent_os.v1.sessions_connect import SessionServiceASGIApplication
@@ -39,7 +40,7 @@ from llm_gateway.registry import ModelRegistry
 from llm_gateway.router import Router, RoutingError
 from llm_gateway.task_routing import TaskRouter, TaskRoutingError
 from llm_gateway.health import HealthChecker
-from llm_gateway.control_plane import RegistryControlPlane, SessionControlPlane, SwitcherControlPlane
+from llm_gateway.control_plane import HealthControlPlane, RegistryControlPlane, SessionControlPlane, SwitcherControlPlane
 from llm_gateway.mtls import has_verified_client, mtls_mode, mtls_required
 from llm_gateway.sessions import SessionHub
 from llm_gateway.switchers import SwitcherStore
@@ -56,12 +57,13 @@ session_hub: SessionHub
 registry_control: RegistryControlPlane
 session_control: SessionControlPlane
 switcher_control: SwitcherControlPlane
+health_control: HealthControlPlane
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global registry, tracer, router, task_router, health_checker
-    global switcher_store, session_hub, registry_control, session_control, switcher_control
+    global switcher_store, session_hub, registry_control, session_control, switcher_control, health_control
     tracer = TraceLogger()
     registry = ModelRegistry()
     router = Router(registry, tracer)
@@ -75,6 +77,7 @@ async def lifespan(app: FastAPI):
     registry_control = RegistryControlPlane(switcher_store)
     session_control = SessionControlPlane(session_hub)
     switcher_control = SwitcherControlPlane(switcher_store)
+    health_control = HealthControlPlane(health_checker, switcher_store, router.quota)
     yield
     await router.close()
     await health_checker.close()
@@ -115,6 +118,11 @@ class _RegistryProxy:
         return await registry_control.list_nodes(request, ctx)
 
 
+class _HealthProxy:
+    async def get_health(self, request, ctx):
+        return await health_control.get_health(request, ctx)
+
+
 class _SessionProxy:
     async def create_session(self, request, ctx):
         return await session_control.create_session(request, ctx)
@@ -141,6 +149,7 @@ class _SwitcherProxy:
 
 
 for connect_app in (
+    HealthServiceASGIApplication(_HealthProxy(), read_max_bytes=1024 * 1024),
     RegistryServiceASGIApplication(_RegistryProxy(), read_max_bytes=1024 * 1024),
     SessionServiceASGIApplication(_SessionProxy(), read_max_bytes=1024 * 1024),
     SwitcherServiceASGIApplication(_SwitcherProxy(), read_max_bytes=1024 * 1024),
@@ -233,8 +242,11 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
     client_id = websocket.query_params.get("client_id") or f"client-{uuid.uuid4().hex[:12]}"
     record = session_hub.get_or_create(session_id)
-    await session_hub.attach(record, client_id, websocket)
+    if client_id in record.clients:
+        await websocket.close(code=4409, reason="client_id is already attached")
+        return
     try:
+        await session_hub.attach(record, client_id, websocket)
         while True:
             raw = await websocket.receive_bytes()
             if len(raw) > int(os.environ.get("GATEWAY_WS_MAX_FRAME_BYTES", str(1024 * 1024))):

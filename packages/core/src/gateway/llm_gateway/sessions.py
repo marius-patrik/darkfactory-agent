@@ -77,6 +77,8 @@ class SessionHub:
                 raise ValueError("at_turn_id must be a numeric server-frame sequence") from exc
             if branch_seq < 0 or branch_seq >= source.next_seq:
                 raise ValueError("at_turn_id is outside the retained session log")
+            if source.history and branch_seq not in {0} and branch_seq < source.history[0].seq:
+                raise ValueError("at_turn_id is older than the retained session log")
             history = [frame for frame in history if frame.seq <= branch_seq]
         forked.history = [ServerFrame.from_binary(frame.to_binary()) for frame in history]
         forked.next_seq = (forked.history[-1].seq + 1) if forked.history else 1

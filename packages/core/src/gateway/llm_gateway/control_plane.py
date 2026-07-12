@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
+from agent_os.v1.common_pb import Usage
+from agent_os.v1.health_pb import ComponentHealth, GetHealthRequest, GetHealthResponse
 from agent_os.v1.registry_pb import (
     ListHostsRequest,
     ListHostsResponse,
@@ -37,6 +40,35 @@ from connectrpc.errors import ConnectError
 
 from llm_gateway.sessions import SessionHub
 from llm_gateway.switchers import SwitcherStore
+
+
+class HealthControlPlane:
+    def __init__(self, checker: Any, switchers: SwitcherStore, quota: Any) -> None:
+        self.checker = checker
+        self.switchers = switchers
+        self.quota = quota
+
+    async def get_health(self, request: GetHealthRequest, ctx: Any) -> GetHealthResponse:
+        report = await self.checker.check()
+        snapshot = self.quota.snapshot()
+        state = {"healthy": "ok", "degraded": "degraded", "unhealthy": "down"}.get(report["status"], "down")
+        components = [ComponentHealth(name="gateway", state=state, detail="runtime health aggregate")]
+        components.extend(
+            ComponentHealth(name=name, state="ok" if healthy else "down", detail="model backend")
+            for name, healthy in sorted(report.get("details", {}).items())
+        )
+        nodes = self.switchers.nodes()
+        require_all = os.environ.get("GATEWAY_REQUIRE_ALL_NODES", "false").strip().lower() in {"1", "true", "yes"}
+        return GetHealthResponse(
+            paused=require_all and any(not node.online for node in nodes),
+            nodes=nodes,
+            components=components,
+            usage=Usage(
+                input_tokens=0,
+                output_tokens=sum(int(state.get("tokens", 0)) for state in snapshot.values()),
+                degraded_to_local=any(bool(state.get("exhausted")) for state in snapshot.values()),
+            ),
+        )
 
 
 class RegistryControlPlane:

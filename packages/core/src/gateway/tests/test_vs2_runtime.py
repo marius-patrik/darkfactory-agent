@@ -43,6 +43,13 @@ def test_generated_connect_handler_serves_registry_rpc(client):
         "conv-7b-1m",
         "conv-14b-1m",
     }
+    health = client.post(
+        "/agent_os.v1.HealthService/GetHealth",
+        content="{}",
+        headers={"content-type": "application/json"},
+    )
+    assert health.status_code == 200
+    assert health.json()["components"][0]["name"] == "gateway"
 
 
 def test_switcher_update_preserves_unrelated_axes(monkeypatch, tmp_path):

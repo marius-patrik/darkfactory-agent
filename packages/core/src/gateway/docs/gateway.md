@@ -41,8 +41,8 @@ harnesses.
 
 `buf generate proto --template buf.gen.gateway-python.yaml` runs from
 `packages/core/src/core` and produces the checked-in `agent_os.v1` Python
-messages and Connect handlers. The gateway mounts the generated Registry,
-Session, and Switcher services at their canonical
+messages and Connect handlers. The gateway mounts the generated Health,
+Registry, Session, and Switcher services at their canonical
 `/agent_os.v1.<Service>/<Method>` paths. These are protocol handlers, not
 method-shaped JSON substitutes.
 

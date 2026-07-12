@@ -98,6 +98,8 @@ class SwitcherStore:
         if axis is SwitcherAxis.FABRIC:
             entries = self.registry.list_all()
             available = {entry_fabric(entry) for entry in entries if entry.enabled}
+            if cluster_hosts(self.registry):
+                available.add(Fabric.CLUSTER)
             return [
                 SwitcherOption(
                     value=fabric.name.lower(),
@@ -108,13 +110,13 @@ class SwitcherStore:
                 for fabric in (Fabric.LOCAL, Fabric.CLUSTER, Fabric.CLOUD)
             ]
         if axis is SwitcherAxis.PROVIDER:
-            providers = sorted({entry.provider for entry in self.registry.list_enabled() if entry_fabric(entry) is state.fabric})
+            providers = sorted({entry.provider for entry in self.registry.list_enabled() if entry_fabric(entry) == state.fabric})
             return [SwitcherOption(value=value, label=value, available=True) for value in providers]
         if axis is SwitcherAxis.MODEL:
             return [
                 SwitcherOption(value=entry.id, label=entry.name, available=entry.enabled, unavailable_reason="model_unavailable" if not entry.enabled else "")
                 for entry in self.registry.list_all()
-                if entry_fabric(entry) is state.fabric
+                if entry_fabric(entry) == state.fabric
             ]
         if axis is SwitcherAxis.AGENT:
             agents = [item.strip() for item in os.environ.get("GATEWAY_AGENTS", "rommie,claude,codex,kimi,agy").split(",") if item.strip()]
