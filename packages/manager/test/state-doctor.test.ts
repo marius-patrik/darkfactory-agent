@@ -9,6 +9,7 @@ import { toolCanonicalPath, toolForbiddenPath } from "../src/state-consolidation
 import { rebuildMemoryProjections, rememberMemory, type MemoryEvent } from "../src/memory";
 import { activateIdentityBundle, installCapability } from "../src/capabilities";
 import { recordSourceInstall } from "../src/source-install";
+import { enableEventSync } from "../src/event-sync";
 import { createSession, rebuildSessionProjections, sessionPaths } from "../../harness/session";
 
 const repoRoot = path.resolve(import.meta.dir, "..");
@@ -35,7 +36,20 @@ async function ensureDoctorProduct(state: ReturnType<typeof tempState>): Promise
   await git(state.root, ["add", ".gitignore"]);
   await git(state.root, ["commit", "-q", "-m", "doctor fixture"]);
   await git(state.root, ["remote", "add", "origin", "https://example.invalid/agents-manager.git"]);
+  await mkdir(state.stateDir, { recursive: true });
+  await git(state.stateDir, ["init", "-q", "-b", "main"]);
+  await git(state.stateDir, ["config", "user.name", "Agent OS state test"]);
+  await git(state.stateDir, ["config", "user.email", "state@invalid"]);
+  await git(state.stateDir, ["remote", "add", "origin", "https://github.com/marius-patrik/Andromeda-data.git"]);
+  await writeFile(path.join(state.stateDir, ".gitignore"), "*\n!.gitignore\n!agent.package.json\n!README.md\n!scripts/\n!scripts/validate.mjs\n");
+  await writeFile(path.join(state.stateDir, "agent.package.json"), '{"schemaVersion":1,"id":"agent-os-data","kind":"data"}\n');
+  await writeFile(path.join(state.stateDir, "README.md"), "# State fixture\n");
+  await mkdir(path.join(state.stateDir, "scripts"), { recursive: true });
+  await writeFile(path.join(state.stateDir, "scripts", "validate.mjs"), "// fixture\n");
+  await git(state.stateDir, ["add", ".gitignore", "agent.package.json", "README.md", "scripts/validate.mjs"]);
+  await git(state.stateDir, ["commit", "-q", "-m", "state fixture"]);
   await ensureSharedState(state);
+  await enableEventSync(state, true);
   await installCapability(state, {
     kind: "skill",
     name: "test",
@@ -58,8 +72,8 @@ async function ensureDoctorProduct(state: ReturnType<typeof tempState>): Promise
   const launcher = path.join(bin, launcherNameForPlatform(process.platform));
   const launcherContent =
     process.platform === "win32"
-      ? `$env:AGENTS_HOME = '${state.stateDir.replaceAll("'", "''")}'\n$env:AGENTS_USER_HOME = '${state.userHome.replaceAll("'", "''")}'\n$env:AGENTS_ROOT = '${state.root.replaceAll("'", "''")}'\n$env:AGENTS_WORKSPACE = '${state.workspaceDir.replaceAll("'", "''")}'\n$env:AGENTS_SYSTEM_DATA_ROOT = '${systemDataPath(state.root).replaceAll("'", "''")}'\n$env:AGENTS_ENTRYPOINT = '${path.join(state.root, "packages", "manager", "src", "cli.ts").replaceAll("'", "''")}'\n& bun $env:AGENTS_ENTRYPOINT @args\n`
-      : `#!/usr/bin/env bash\nexport AGENTS_HOME=${shellQuote(state.stateDir)}\nexport AGENTS_USER_HOME=${shellQuote(state.userHome)}\nexport AGENTS_ROOT=${shellQuote(state.root)}\nexport AGENTS_WORKSPACE=${shellQuote(state.workspaceDir)}\nexport AGENTS_SYSTEM_DATA_ROOT=${shellQuote(systemDataPath(state.root))}\nexport AGENTS_ENTRYPOINT=${shellQuote(path.join(state.root, "packages", "manager", "src", "cli.ts"))}\nexec bun "$AGENTS_ENTRYPOINT" "$@"\n`;
+      ? `$env:AGENTS_HOME = '${state.stateDir.replaceAll("'", "''")}'\n$env:AGENTS_USER_HOME = '${state.userHome.replaceAll("'", "''")}'\n$env:AGENTS_ROOT = '${state.root.replaceAll("'", "''")}'\n$env:AGENTS_WORKSPACE = '${state.workspaceDir.replaceAll("'", "''")}'\n$env:AGENTS_SYSTEM_DATA_ROOT = '${systemDataPath(state).replaceAll("'", "''")}'\n$env:AGENTS_ENTRYPOINT = '${path.join(state.root, "packages", "manager", "src", "cli.ts").replaceAll("'", "''")}'\n& bun $env:AGENTS_ENTRYPOINT @args\n`
+      : `#!/usr/bin/env bash\nexport AGENTS_HOME=${shellQuote(state.stateDir)}\nexport AGENTS_USER_HOME=${shellQuote(state.userHome)}\nexport AGENTS_ROOT=${shellQuote(state.root)}\nexport AGENTS_WORKSPACE=${shellQuote(state.workspaceDir)}\nexport AGENTS_SYSTEM_DATA_ROOT=${shellQuote(systemDataPath(state))}\nexport AGENTS_ENTRYPOINT=${shellQuote(path.join(state.root, "packages", "manager", "src", "cli.ts"))}\nexec bun "$AGENTS_ENTRYPOINT" "$@"\n`;
   await writeFile(
     launcher,
     launcherContent,
@@ -103,6 +117,7 @@ describe("read-only Agent OS state doctor", () => {
         "permissions",
         "generated_env",
         "sync_safety",
+        "state_repository",
       ]);
       expect(await readdir(root)).toEqual(before);
       expect(await Bun.file(state.stateDir).exists()).toBe(false);
@@ -209,7 +224,7 @@ describe("read-only Agent OS state doctor", () => {
       const report = JSON.parse(stdout) as { ok: boolean; stateRoot: string; checks: unknown[]; tools: unknown[] };
       expect(report.ok).toBe(true);
       expect(report.stateRoot).toBe(path.resolve(state.stateDir));
-      expect(report.checks.length).toBe(15);
+      expect(report.checks.length).toBe(16);
       expect(report.tools.length).toBe(5);
     } finally {
       await rm(root, { recursive: true, force: true });

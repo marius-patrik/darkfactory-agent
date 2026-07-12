@@ -90,7 +90,7 @@ describe("os lifecycle pure helpers", () => {
       expect(env.AGENTS_HOME).toBe("/agents/state");
       expect(env.AGENTS_DATA).toBeUndefined();
       expect(env.AGENTS_WORKSPACE).toBe("/workspace/agents");
-      expect(env.AGENTS_SYSTEM_DATA_ROOT).toBe("/agents/data/agent-os");
+      expect(env.AGENTS_SYSTEM_DATA_ROOT).toBe("/agents/state");
       expect(env.AGENTS_CREDITS).toBe("/agents/state/credits.json");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -113,7 +113,8 @@ describe("os lifecycle pure helpers", () => {
       const mounts = await containerMounts(state, dataRepos);
       expect(mounts.find((m) => m.container === "/agents/state")?.host).toBe(toPosixPath(state.stateDir));
       expect(mounts.find((m) => m.container === "/agents/state")?.mode).toBe("ro");
-      expect(mounts.find((m) => m.container === "/agents/data/agent-os")?.host).toBe(toPosixPath(systemDataPath(root)));
+      expect(mounts.filter((m) => m.container === "/agents/state")).toHaveLength(1);
+      expect(containerEnv(dataRepos).AGENTS_SYSTEM_DATA_ROOT).toBe("/agents/state");
       expect(mounts.find((m) => m.container === "/workspace/agents")?.host).toBe(toPosixPath(state.workspaceDir));
       expect(mounts.find((m) => m.container === "/agents/data/project-data")?.host).toBe(
         toPosixPath(path.join(root, "data", "project")),
@@ -231,7 +232,7 @@ describe("agents os CLI", () => {
       const { env } = await fakeDocker(root);
       const doctor = await runAgents(root, ["os", "doctor"], env);
       expect(doctor.code).toBe(1);
-      expect(doctor.stderr).toContain("missing data repo checkout: agent-os-data");
+      expect(doctor.stderr).toContain("no OS images configured");
       expect(doctor.stderr).toContain("no OS images configured");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -577,7 +578,7 @@ describe("os doctor acceptance additions", () => {
       const state = sharedState(root);
       await ensureSharedState(state);
       await mkdir(state.workspaceDir, { recursive: true });
-      await mkdir(systemDataPath(root), { recursive: true });
+      await mkdir(systemDataPath(state), { recursive: true });
 
       const passingRunner = async () => ({ code: 0, stdout: "", stderr: "" });
       const passing = await checkPathSharing(state, { runner: passingRunner, image: "test-image" });

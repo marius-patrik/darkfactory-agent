@@ -540,11 +540,11 @@ describe("encrypted cross-machine event exchange", () => {
         scope: "project",
         subject: "Andromeda",
         predicate: "release-commit",
-        value: "0123456789abcdef0123456789abcdef01234567",
+        value: "0123456789abcdef0123456789abcdef01234567.",
         evidence,
       });
       await supersedeMemory(source, original.id, {
-        value: "89abcdef0123456789abcdef0123456789abcdef",
+        value: "89abcdef0123456789abcdef0123456789abcdef.",
         evidence,
       });
       await rememberMemory(source, {

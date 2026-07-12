@@ -53,7 +53,7 @@ function validateDataRepos(state: SharedState, value: unknown, source: string): 
   const paths = new Set<string>();
   const envs = new Set<string>();
   let hasSystemData = false;
-  const canonicalPath = systemDataPath(state.root);
+  const canonicalPath = systemDataPath(state);
 
   for (const record of value) {
     if (

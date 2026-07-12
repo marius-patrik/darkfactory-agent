@@ -6,6 +6,9 @@ umask 077
 readonly REPO_URL="https://github.com/marius-patrik/Andromeda.git"
 readonly SOURCE_URL="${ANDROMEDA_SOURCE:-$REPO_URL}"
 readonly SOURCE_BRANCH="${ANDROMEDA_BRANCH:-dev}"
+readonly DATA_REPO_URL="https://github.com/marius-patrik/Andromeda-data.git"
+readonly DATA_SOURCE_URL="${ANDROMEDA_DATA_SOURCE:-$DATA_REPO_URL}"
+readonly DATA_BRANCH="main"
 
 die() {
   echo "error: $*" >&2
@@ -99,6 +102,31 @@ install_or_update_checkout() {
     cd "$AGENTS_ROOT"
     bun install --frozen-lockfile
   )
+}
+
+install_or_update_state_checkout() {
+  if git -C "$AGENTS_HOME" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    local current_source current_branch worktree_root
+    worktree_root="$(git -C "$AGENTS_HOME" rev-parse --show-toplevel)"
+    [ "$(source_identity "$worktree_root")" = "$(source_identity "$AGENTS_HOME")" ] ||
+      die "AGENTS_HOME is inside another Git worktree instead of being its root: $AGENTS_HOME (top-level $worktree_root)"
+    current_source="$(git -C "$AGENTS_HOME" remote get-url origin 2>/dev/null || true)"
+    [ "$(source_identity "$current_source")" = "$(source_identity "$DATA_REPO_URL")" ] ||
+      die "AGENTS_HOME origin is $current_source, expected $DATA_REPO_URL"
+    current_branch="$(git -C "$AGENTS_HOME" branch --show-current)"
+    [ "$current_branch" = "$DATA_BRANCH" ] ||
+      die "AGENTS_HOME is on $current_branch, expected $DATA_BRANCH"
+    [ -z "$(git -C "$AGENTS_HOME" status --porcelain --untracked-files=no)" ] ||
+      die "AGENTS_HOME has tracked changes: $AGENTS_HOME"
+    echo "Updating Andromeda-data state checkout in $AGENTS_HOME ..."
+    git -C "$AGENTS_HOME" pull --rebase "$DATA_SOURCE_URL" "$DATA_BRANCH"
+  elif [ -z "$(find "$AGENTS_HOME" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    echo "Installing Andromeda-data state checkout into $AGENTS_HOME ..."
+    git clone --branch "$DATA_BRANCH" --single-branch "$DATA_SOURCE_URL" "$AGENTS_HOME"
+    git -C "$AGENTS_HOME" remote set-url origin "$DATA_REPO_URL"
+  else
+    die "AGENTS_HOME contains state but is not the Andromeda-data checkout; migrate it before installing: $AGENTS_HOME"
+  fi
 }
 
 write_export() {
@@ -205,7 +233,7 @@ install_launcher() {
       write_ps_env AGENTS_DATA_REPOS "$(native_path "$AGENTS_HOME/data-repos.json")"
       write_ps_env AGENTS_ENVIRONMENTS "$(native_path "$AGENTS_HOME/environments.json")"
       write_ps_env AGENTS_CONFIG "$(native_path "$AGENTS_HOME/config.json")"
-      write_ps_env AGENTS_SYSTEM_DATA_ROOT "$(native_path "$AGENTS_ROOT/data/agent-os")"
+      write_ps_env AGENTS_SYSTEM_DATA_ROOT "$(native_path "$AGENTS_HOME")"
       write_ps_env AGENTS_BUN "$(native_path "$bun_bin")"
       write_ps_env AGENTS_ENTRYPOINT "$(native_path "$AGENTS_ROOT/packages/manager/src/cli.ts")"
       printf '& $env:AGENTS_BUN $env:AGENTS_ENTRYPOINT @args\n'
@@ -240,7 +268,7 @@ install_launcher() {
       write_export AGENTS_DATA_REPOS "$AGENTS_HOME/data-repos.json"
       write_export AGENTS_ENVIRONMENTS "$AGENTS_HOME/environments.json"
       write_export AGENTS_CONFIG "$AGENTS_HOME/config.json"
-      write_export AGENTS_SYSTEM_DATA_ROOT "$AGENTS_ROOT/data/agent-os"
+      write_export AGENTS_SYSTEM_DATA_ROOT "$AGENTS_HOME"
       write_export AGENTS_BUN "$bun_bin"
       write_export AGENTS_ENTRYPOINT "$AGENTS_ROOT/packages/manager/src/cli.ts"
       echo 'exec "$AGENTS_BUN" "$AGENTS_ENTRYPOINT" "$@"'
@@ -300,9 +328,18 @@ main() {
   check_dependencies
   prepare_paths
   install_or_update_checkout
+  install_or_update_state_checkout
   install_launcher
 
   run_launcher state init
+  if [ ! -f "$AGENTS_HOME/secrets/AGENTS_SYNC_KEY.secret" ]; then
+    if [ -n "$(git -C "$AGENTS_HOME" ls-files -- 'backups/events')" ]; then
+      die "Andromeda-data contains encrypted backups; install the existing AGENTS_SYNC_KEY before continuing"
+    fi
+    run_launcher sync enable --generate-key
+  else
+    run_launcher sync enable
+  fi
   run_launcher state record-install
   install_default_capabilities
   pin_installed_providers

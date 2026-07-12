@@ -97,7 +97,7 @@ export function adapterEnv(state: SharedState, id: CliId): Record<string, string
     AGENTS_MEMORY: path.join(state.stateDir, "memory"),
     AGENTS_CREDITS: state.creditsFile,
     AGENTS_DATA_REPOS: state.dataReposFile,
-    AGENTS_SYSTEM_DATA_ROOT: systemDataPath(state.root),
+    AGENTS_SYSTEM_DATA_ROOT: systemDataPath(state),
   };
   for (const [name, dir] of Object.entries(spec.homeEnv)) env[name] = path.join(state.clisDir, dir);
   return env;

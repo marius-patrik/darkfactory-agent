@@ -143,7 +143,9 @@ older snapshot-sync or provider-adoption command to fall back to.
   `plugins/skyblock-agent/`, and `plugins/singularity/` — managed product plugins.
 - `skills/`, `hooks/`, `roles/`, and `commands/` — authored capability roots;
   `persona.md` is the authored identity persona.
-- `data/agent-os/` — the sole managed Agent OS data checkout, not an alternate runtime-state root.
+- `data/agent-os/` — the development pin for Andromeda-data; the live
+  Andromeda-data checkout is `$AGENTS_HOME` and is also
+  `AGENTS_SYSTEM_DATA_ROOT`.
 - `docs/` — the only repository documentation root, including component,
   protocol, architecture, and specification material.
 

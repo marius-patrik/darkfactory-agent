@@ -52,11 +52,18 @@ while read -r _key component_name; do
   component_path="$(git -C "$SOURCE_DIR" config --file .gitmodules --get "submodule.$component_name.path")"
   stub_repo="$STUB_ROOT/$component_name"
   mkdir -p "$stub_repo"
-  git -C "$stub_repo" init -q
+  git -C "$stub_repo" init -q -b main
   git -C "$stub_repo" config user.name "Agent OS smoke"
   git -C "$stub_repo" config user.email "agent-os-smoke@invalid"
   printf '%s\n' "$component_path" >"$stub_repo/COMPONENT"
-  git -C "$stub_repo" add COMPONENT
+  if [ "$component_name" = "data" ]; then
+    printf '%s\n' '/bin/' '/clis/' '/memory/' '/runtime/' '/secrets/' '/sessions/' '/sync/' >"$stub_repo/.gitignore"
+    printf '%s\n' '{"schemaVersion":1,"id":"agent-os-data","kind":"data"}' >"$stub_repo/agent.package.json"
+    printf '%s\n' '# Agent OS Data smoke fixture' >"$stub_repo/README.md"
+    mkdir -p "$stub_repo/scripts"
+    printf '%s\n' '// smoke fixture' >"$stub_repo/scripts/validate.mjs"
+  fi
+  git -C "$stub_repo" add .
   git -C "$stub_repo" commit -q -m "stub $component_name"
   stub_commit="$(git -C "$stub_repo" rev-parse HEAD)"
   git -C "$SOURCE_DIR" config --file .gitmodules "submodule.$component_name.url" "$stub_repo"
@@ -67,6 +74,12 @@ git -C "$SOURCE_DIR" config user.name "Agent OS smoke"
 git -C "$SOURCE_DIR" config user.email "agent-os-smoke@invalid"
 git -C "$SOURCE_DIR" add .gitmodules
 git -C "$SOURCE_DIR" commit -q --allow-empty -m "smoke source snapshot"
+
+# Seed the primary state checkout before planting existing provider/runtime
+# contents. This models an already-converged AGENTS_HOME while the edge fixture
+# below still exercises a fresh Andromeda-data clone.
+git clone --quiet --branch main "$STUB_ROOT/data" "$AGENTS_HOME"
+git -C "$AGENTS_HOME" remote set-url origin https://github.com/marius-patrik/Andromeda-data.git
 
 # The manager runtime does not need installed third-party packages for this
 # boundary. Skip only the install subcommand; every CLI execution uses real Bun.
@@ -116,6 +129,7 @@ run_installer() {
     PATH="$FAKE_BIN:$PATH" \
     HOME="$AGENTS_USER_HOME" \
     ANDROMEDA_SOURCE="$SOURCE_DIR" \
+    ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
     ANDROMEDA_BRANCH=dev \
     AGENTS_HOME="$AGENTS_HOME" \
     AGENTS_USER_HOME="$AGENTS_USER_HOME" \
@@ -139,6 +153,7 @@ env \
   PATH="$FAKE_BIN:$PATH" \
   HOME="$EDGE_USER_HOME" \
   ANDROMEDA_SOURCE="$SOURCE_DIR" \
+  ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
   ANDROMEDA_BRANCH=dev \
   AGENTS_HOME="$EDGE_AGENTS_HOME" \
   AGENTS_USER_HOME="$EDGE_USER_HOME" \
@@ -156,6 +171,7 @@ if env \
   PATH="$FAKE_BIN:$PATH" \
   HOME="$DENIED_USER_HOME" \
   ANDROMEDA_SOURCE="$SOURCE_DIR" \
+  ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
   ANDROMEDA_BRANCH=dev \
   AGENTS_HOME="$DENIED_USER_HOME/.agents" \
   AGENTS_USER_HOME="$DENIED_USER_HOME" \
@@ -177,6 +193,7 @@ if env \
   PATH="$FAKE_BIN:$PATH" \
   HOME="$NESTED_USER_HOME" \
   ANDROMEDA_SOURCE="$SOURCE_DIR" \
+  ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
   ANDROMEDA_BRANCH=dev \
   AGENTS_HOME="$NESTED_USER_HOME/.agents" \
   AGENTS_USER_HOME="$NESTED_USER_HOME" \

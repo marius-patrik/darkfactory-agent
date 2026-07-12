@@ -91,7 +91,7 @@ describe("harness CLI", () => {
       expect(env.AGENTS_CLIS).toBe(path.join(root, ".agents", "clis"));
       expect(env.AGENTS_CREDITS).toBe(path.join(root, ".agents", "credits.json"));
       expect(env.AGENTS_DATA_REPOS).toBe(path.join(root, ".agents", "data-repos.json"));
-      expect(env.AGENTS_SYSTEM_DATA_ROOT).toBe(path.join(root, "data", "agent-os"));
+      expect(env.AGENTS_SYSTEM_DATA_ROOT).toBe(path.join(root, ".agents"));
       expect(env.AGENTS_HARNESS_HOME).toBe(path.join(root, ".agents", "harnesses", "probe", "runtime"));
       expect(JSON.stringify(env.passthrough)).toBe(JSON.stringify(["--probe"]));
     } finally {
@@ -158,7 +158,7 @@ describe("harness CLI", () => {
       expect(env.AGENTS_WORKSPACE).toBe(path.join(root, ".agents", "runtime", "workspaces"));
       expect(env.AGENTS_SECRETS).toBe(path.join(root, ".agents", "secrets"));
       expect(env.AGENTS_DATA_REPOS).toBe(path.join(root, ".agents", "data-repos.json"));
-      expect(env.AGENTS_SYSTEM_DATA_ROOT).toBe(path.join(root, "data", "agent-os"));
+      expect(env.AGENTS_SYSTEM_DATA_ROOT).toBe(path.join(root, ".agents"));
       expect(env.PROJECT_DATA_ROOT).toBe(path.join(root, "data", "project"));
       expect(JSON.stringify(env.args)).toBe(JSON.stringify(["--probe"]));
     } finally {

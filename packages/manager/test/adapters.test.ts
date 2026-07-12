@@ -80,7 +80,7 @@ describe("CLI adapters", () => {
     expect(adapterEnv(state, "codex").AGENTS_WORKSPACE).toBe(path.join("repo", ".agents", "runtime", "workspaces"));
     expect(adapterEnv(state, "codex").AGENTS_SECRETS).toBe(path.join(state.stateDir, "secrets"));
     expect(adapterEnv(state, "codex").AGENTS_DATA_REPOS).toBe(path.join(state.stateDir, "data-repos.json"));
-    expect(adapterEnv(state, "codex").AGENTS_SYSTEM_DATA_ROOT).toBe(path.join("repo", "data", "agent-os"));
+    expect(adapterEnv(state, "codex").AGENTS_SYSTEM_DATA_ROOT).toBe(path.join("repo", ".agents"));
     expect(adapterEnv(state, "claude").CLAUDE_CONFIG_DIR).toBe(path.join(state.clisDir, "claude"));
     expect(adapterEnv(state, "kimi").KIMI_CODE_HOME).toBe(path.join(state.clisDir, "kimi"));
     expect(adapterEnv(state, "kimi").HOME).toBe(state.userHome);

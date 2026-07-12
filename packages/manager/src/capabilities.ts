@@ -1419,6 +1419,15 @@ async function prepareProvenancePublication(
             `immutable provenance has an invalid ${key}: ${target}`,
           );
         }
+      } else if (
+        key === "source" &&
+        manifest.kind === "identity-activation" &&
+        current.kind === "identity-activation" &&
+        current.sourceSha256 === manifest.sourceSha256
+      ) {
+        // Identity provenance is content-addressed. Preserve the immutable
+        // original source when repository convergence relocates the same bytes.
+        continue;
       } else if (JSON.stringify(current[key]) !== JSON.stringify(expected)) {
         throw new Error(
           `immutable provenance does not match transaction: ${target}`,

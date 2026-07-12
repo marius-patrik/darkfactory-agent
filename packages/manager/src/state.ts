@@ -5,13 +5,10 @@ import { ensureStateV2, writeTextAtomic, writeTextExclusive, writeTextIfChanged 
 import { withStateFileLock } from "./state-lock";
 
 export const SYSTEM_DATA_REPO_ID = "agent-os-data";
-export const SYSTEM_DATA_REPOSITORY = "marius-patrik/agents-data";
+export const SYSTEM_DATA_REPOSITORY = "marius-patrik/Andromeda-data";
 export const SYSTEM_DATA_ENV = "AGENTS_SYSTEM_DATA_ROOT";
-export const SYSTEM_DATA_RELATIVE_PATH = path.join("data", "agent-os");
-
-export function systemDataPath(root: string): string {
-  return path.join(root, SYSTEM_DATA_RELATIVE_PATH);
-}
+const LEGACY_SYSTEM_DATA_REPOSITORY = "marius-patrik/agents-data";
+const LEGACY_SYSTEM_DATA_RELATIVE_PATH = path.join("data", "agent-os");
 
 export type InstallKind =
   | "app"
@@ -94,6 +91,11 @@ export interface SharedState {
   dataReposFile: string;
   configFile: string;
   envFile: string;
+}
+
+/** The Andromeda-data checkout is the canonical personal state root. */
+export function systemDataPath(state: SharedState): string {
+  return state.stateDir;
 }
 
 export interface SessionConfig {
@@ -203,7 +205,6 @@ export async function ensureSharedState(state: SharedState): Promise<void> {
       2,
     )}\n`,
   );
-
   await writeTextExclusive(
     state.dataReposFile,
     `${JSON.stringify(
@@ -211,7 +212,7 @@ export async function ensureSharedState(state: SharedState): Promise<void> {
         {
           id: SYSTEM_DATA_REPO_ID,
           repo: SYSTEM_DATA_REPOSITORY,
-          path: systemDataPath(state.root),
+          path: systemDataPath(state),
           branch: "main",
           env: SYSTEM_DATA_ENV,
           configuredAt: new Date().toISOString(),
@@ -221,6 +222,7 @@ export async function ensureSharedState(state: SharedState): Promise<void> {
       2,
     )}\n`,
   );
+  await convergeSystemDataRegistration(state);
 
   await writeTextExclusive(state.configFile, `${JSON.stringify({ schemaVersion: 1 }, null, 2)}\n`);
 
@@ -246,7 +248,7 @@ export async function ensureSharedState(state: SharedState): Promise<void> {
       `AGENTS_DATA_REPOS=${state.dataReposFile}`,
       `AGENTS_ENVIRONMENTS=${state.environmentsFile}`,
       `AGENTS_CONFIG=${state.configFile}`,
-      `${SYSTEM_DATA_ENV}=${systemDataPath(state.root)}`,
+      `${SYSTEM_DATA_ENV}=${systemDataPath(state)}`,
       "",
     ].join("\n"),
   );
@@ -263,6 +265,35 @@ export async function ensureSharedState(state: SharedState): Promise<void> {
     ];
     await Promise.all(privateFiles.map((file) => chmod(file, 0o600)));
   }
+}
+
+async function convergeSystemDataRegistration(state: SharedState): Promise<void> {
+  await withStateFileLock(state, "data-repos", async () => {
+    const parsed = JSON.parse(await Bun.file(state.dataReposFile).text()) as unknown;
+    if (!Array.isArray(parsed)) return;
+    const canonical = parsed.find((item) => item && typeof item === "object" && item.id === SYSTEM_DATA_REPO_ID) as
+      | Record<string, unknown>
+      | undefined;
+    if (!canonical) return;
+    const legacyPath = path.join(state.root, LEGACY_SYSTEM_DATA_RELATIVE_PATH);
+    const alreadyCanonical =
+      canonical.repo === SYSTEM_DATA_REPOSITORY &&
+      canonical.path === state.stateDir &&
+      canonical.branch === "main" &&
+      canonical.env === SYSTEM_DATA_ENV &&
+      canonical.managedPath === undefined;
+    if (alreadyCanonical) return;
+    const exactLegacy =
+      canonical.repo === LEGACY_SYSTEM_DATA_REPOSITORY &&
+      canonical.path === legacyPath &&
+      canonical.branch === "main" &&
+      canonical.env === SYSTEM_DATA_ENV &&
+      canonical.managedPath === undefined;
+    if (!exactLegacy) return;
+    canonical.repo = SYSTEM_DATA_REPOSITORY;
+    canonical.path = state.stateDir;
+    await writeTextAtomic(state.dataReposFile, `${JSON.stringify(parsed, null, 2)}\n`);
+  });
 }
 
 export async function readInstalls(state: SharedState): Promise<InstallRecord[]> {

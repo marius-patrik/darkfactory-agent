@@ -12,7 +12,6 @@ import {
   sharedState,
   sharedStateFromEnv,
   updateCreditStore,
-  SYSTEM_DATA_RELATIVE_PATH,
   SYSTEM_DATA_REPO_ID,
   type CreditStore,
   type SharedState,
@@ -32,6 +31,12 @@ import { formatToolStatus, readToolStatus, toolStateSpecs } from "./state-consol
 import { doctorState, formatStateDoctor } from "./state-doctor";
 import { memoryCommand } from "./memory";
 import { recordSourceInstall } from "./source-install";
+import {
+  backupStateRepository,
+  inspectStateRepository,
+  restoreStateRepository,
+  syncStateRepository,
+} from "./state-repository";
 import {
   disableEventSync,
   enableEventSync,
@@ -116,6 +121,10 @@ Usage:
   agents state doctor [--json]
   agents state record-install
   agents state status [--json]
+  agents state repo-status [--json]
+  agents state backup [--json]
+  agents state restore [--json]
+  agents state sync [--json]
   agents memory <remember|list|status|supersede|retract|render> [options]
     mutations require --source <uri> --hash <sha256> --source-class <verified|inferred> --confidence <0..1>
   agents identity activate <source-directory> [--replace]
@@ -354,6 +363,27 @@ async function stateCommand(values: string[], flags: Record<string, string | boo
       return;
     }
     console.log(formatToolStatus(tools));
+    return;
+  }
+  if (action === "repo-status") {
+    const status = await inspectStateRepository(state);
+    console.log(flags.json ? JSON.stringify(status, null, 2) : Object.entries(status).map(([key, value]) => `${key} ${Array.isArray(value) ? value.join("; ") : value}`).join("\n"));
+    if (status.issues.length > 0) process.exitCode = 1;
+    return;
+  }
+  if (action === "backup") {
+    const result = await backupStateRepository(state);
+    console.log(flags.json ? JSON.stringify(result, null, 2) : `backed up ${result.entries} event(s) to ${result.bundle}`);
+    return;
+  }
+  if (action === "restore") {
+    const result = await restoreStateRepository(state);
+    console.log(flags.json ? JSON.stringify(result, null, 2) : `restored ${result.imported} event(s) from ${result.bundles} bundle(s)`);
+    return;
+  }
+  if (action === "sync") {
+    const result = await syncStateRepository(state);
+    console.log(flags.json ? JSON.stringify(result, null, 2) : `synchronized ${result.restored.bundles} bundle(s) and pushed ${result.backup.bundle}`);
     return;
   }
   throw new Error(`unknown state action: ${action}`);
@@ -953,7 +983,7 @@ async function dataCommand(args: string[], flags: Record<string, string | boolea
     const registration = await upsertDataRepo(state, {
       id,
       repo,
-      path: String(flags.path ?? (id === SYSTEM_DATA_REPO_ID ? SYSTEM_DATA_RELATIVE_PATH : path.join("data", id))),
+      path: String(flags.path ?? (id === SYSTEM_DATA_REPO_ID ? state.stateDir : path.join("data", id))),
       branch: typeof flags.branch === "string" ? flags.branch : "main",
       managedPath: typeof flags["managed-path"] === "string" ? flags["managed-path"] : undefined,
       env: typeof flags.env === "string" ? flags.env : undefined,

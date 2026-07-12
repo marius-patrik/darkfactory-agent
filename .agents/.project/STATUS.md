@@ -20,7 +20,9 @@
   seven explicit supersessions, zero disputes/retractions/secrets, and projection
   hash `86d1a15e55c1c3f679661c0c0dd03e73ecaeccb65c31ece49924dbe69333cc5f`.
 - Shared runtime identity, memory, sessions, orchestration, and providers live
-  under `.agents`. Provider-local memories and transcripts are cache or
-  hash-addressed rollback evidence only.
+  inside the Andromeda-data checkout at `.agents`. Provider-local memories and
+  transcripts are cache or hash-addressed rollback evidence only. Git sync and
+  backup use authenticated encrypted canonical-event bundles; plaintext
+  credentials and runtime artifacts remain ignored.
 - Repairing the installed `agents` launcher/source-install binding belongs to
   Planned 3 rather than this completed memory slice.

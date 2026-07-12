@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { dataRepoManagedRoot, readDataRepos, upsertDataRepo } from "../src/data-repos";
@@ -13,8 +13,8 @@ describe("data repos", () => {
       await ensureSharedState(state);
       const initial = await readDataRepos(state);
       expect(initial[0].id).toBe("agent-os-data");
-      expect(initial[0].repo).toBe("marius-patrik/agents-data");
-      expect(dataRepoManagedRoot(initial[0])).toBe(path.join(root, "data", "agent-os"));
+      expect(initial[0].repo).toBe("marius-patrik/Andromeda-data");
+      expect(dataRepoManagedRoot(initial[0])).toBe(state.stateDir);
 
       const repo = await upsertDataRepo(state, {
         id: "project-data",
@@ -36,11 +36,40 @@ describe("data repos", () => {
       await expect(
         upsertDataRepo(state, {
           id: "system-data-alias",
-          repo: "marius-patrik/agents-data",
+          repo: "marius-patrik/Andromeda-data",
           path: "data/system-data-alias",
           branch: "main",
         }),
       ).rejects.toThrow("aliases the canonical agent-os-data authority");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("converges the exact retired data checkout record during state initialization", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-data-repos-converge-"));
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      await writeFile(
+        state.dataReposFile,
+        `${JSON.stringify([
+          {
+            id: "agent-os-data",
+            repo: "marius-patrik/agents-data",
+            path: path.join(root, "data", "agent-os"),
+            branch: "main",
+            env: "AGENTS_SYSTEM_DATA_ROOT",
+            configuredAt: "2026-07-01T00:00:00.000Z",
+          },
+        ], null, 2)}\n`,
+      );
+
+      await ensureSharedState(state);
+      const [registration] = await readDataRepos(state);
+      expect(registration.repo).toBe("marius-patrik/Andromeda-data");
+      expect(registration.path).toBe(state.stateDir);
+      expect(registration.configuredAt).toBe("2026-07-01T00:00:00.000Z");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
