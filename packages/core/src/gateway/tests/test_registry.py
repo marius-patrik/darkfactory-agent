@@ -164,6 +164,31 @@ class TestModelRegistry:
         assert reg.list_enabled() == []
         assert reg.get("managed").extra["inferctl"]["status"] == "stopped"
 
+    def test_runtime_refresh_fails_closed_on_invalid_utf8(self, tmp_registry):
+        reg_path, schema_path, td = tmp_registry
+        schema_path.write_text(json.dumps({"type": "object"}))
+        definition = {
+            "id": "managed",
+            "provider": "local",
+            "model": "managed",
+            "role": "general",
+            "context_length": 1024,
+            "enabled": True,
+            "extra": {"inferctl_managed": True},
+        }
+        reg_path.write_text(yaml.safe_dump({"schema_version": "gateway-registry-v1", "models": {"managed": definition}}))
+        status_path = Path(td) / "inferctl.yaml"
+        status_path.write_text(yaml.safe_dump({
+            "schema_version": "inferctl-local-engines-v1",
+            "engines": {"managed": {"status": "healthy", "api_base": "http://127.0.0.1:9101/v1"}},
+        }))
+        reg = ModelRegistry(reg_path, schema_path, status_path)
+        assert [entry.id for entry in reg.list_enabled()] == ["managed"]
+
+        status_path.write_bytes(b"\xff\xfe\x80invalid")
+        assert reg.list_enabled() == []
+        assert reg.get("managed").extra["inferctl"]["status"] == "malformed"
+
     def test_load_valid_registry(self, tmp_registry):
         reg_path, schema_path, _ = tmp_registry
         schema = {

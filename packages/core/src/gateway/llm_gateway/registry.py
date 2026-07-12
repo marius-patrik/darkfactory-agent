@@ -174,7 +174,7 @@ class ModelRegistry:
         try:
             with open(self.inferctl_status_path, "r", encoding="utf-8") as f:
                 raw = yaml.safe_load(f)
-        except (OSError, yaml.YAMLError) as exc:
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
             self._inferctl_status_error = f"cannot parse inferctl status: {exc}"
             return {}
         if not isinstance(raw, dict) or raw.get("schema_version") != "inferctl-local-engines-v1":
