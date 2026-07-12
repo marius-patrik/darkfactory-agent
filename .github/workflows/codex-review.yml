@@ -100,7 +100,8 @@ jobs:
         id: review
         env:
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-          CODEX_REVIEW_MODEL: gpt-5.5
+          KIMI_AUTH_JSON: ${{ secrets.KIMI_AUTH_JSON }}
+          CODEX_REVIEW_MODEL: kimi
           CODEX_REVIEW_EFFORT: low
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -137,6 +138,7 @@ jobs:
             -e REVIEW_CONTEXT_DIR=/review-context \
             -e PR_TITLE \
             -e PR_BODY \
+            -e KIMI_AUTH_JSON \
             -v "${PWD}/pr-workspace:/workspace" \
             -v "${PWD}/review-context:/review-context:ro" \
             -v "${CODEX_HOME_DIR}:/codex-home" \

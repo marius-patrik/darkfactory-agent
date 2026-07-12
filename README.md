@@ -1,6 +1,6 @@
-# agents-mono
+# Andromeda
 
-agents-mono is the root aggregator workspace for the agents-mono topology. It
+Andromeda is the root aggregator workspace for the agents topology. It
 exposes the `agents` CLI for managing agent packages, apps, templates, private
 workspace state, shared skills/plugins, CLI data, and a common credit store.
 
