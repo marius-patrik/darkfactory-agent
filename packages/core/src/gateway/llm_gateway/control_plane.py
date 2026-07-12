@@ -78,7 +78,7 @@ class RegistryControlPlane:
     async def list_models(self, request: ListModelsRequest, ctx: Any) -> ListModelsResponse:
         models = self.switchers.models()
         if request.fabric.value:
-            models = [model for model in models if model.fabric is request.fabric]
+            models = [model for model in models if model.fabric == request.fabric]
         if request.provider_id:
             models = [model for model in models if model.provider_id == request.provider_id]
         if request.role:
@@ -88,7 +88,7 @@ class RegistryControlPlane:
     async def list_providers(self, request: ListProvidersRequest, ctx: Any) -> ListProvidersResponse:
         providers = self.switchers.providers()
         if request.fabric.value:
-            providers = [provider for provider in providers if provider.fabric is request.fabric]
+            providers = [provider for provider in providers if provider.fabric == request.fabric]
         return ListProvidersResponse(providers=providers)
 
     async def list_hosts(self, request: ListHostsRequest, ctx: Any) -> ListHostsResponse:

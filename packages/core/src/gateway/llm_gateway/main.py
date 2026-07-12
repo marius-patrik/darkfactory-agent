@@ -11,6 +11,7 @@ Only the package-owned local inference registry is accepted.
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from typing import AsyncIterator, cast
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from protobuf import Oneof
+from connectrpc.errors import ConnectError
 
 from agent_os.v1.common_pb import RunStatus, SwitcherScope
 from agent_os.v1.health_connect import HealthServiceASGIApplication
@@ -58,6 +60,16 @@ registry_control: RegistryControlPlane
 session_control: SessionControlPlane
 switcher_control: SwitcherControlPlane
 health_control: HealthControlPlane
+
+_CLIENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 @asynccontextmanager
@@ -239,7 +251,11 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     if mtls_required() and not has_verified_client(websocket.headers):
         await websocket.close(code=4401, reason="verified client certificate required")
         return
-    client_id = websocket.query_params.get("client_id") or f"client-{uuid.uuid4().hex[:12]}"
+    requested_client_id = websocket.query_params.get("client_id")
+    client_id = requested_client_id or f"client-{uuid.uuid4().hex[:12]}"
+    if requested_client_id is not None and not _CLIENT_ID.fullmatch(requested_client_id):
+        await websocket.close(code=4400, reason="client_id must be 1-128 safe identifier characters")
+        return
     record = session_hub.get(session_id)
     if record is None:
         await websocket.close(code=4404, reason="session does not exist")
@@ -258,7 +274,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             return
         while True:
             raw = await websocket.receive_bytes()
-            if len(raw) > int(os.environ.get("GATEWAY_WS_MAX_FRAME_BYTES", str(1024 * 1024))):
+            if len(raw) > _positive_int_env("GATEWAY_WS_MAX_FRAME_BYTES", 1024 * 1024):
                 await websocket.close(code=1009, reason="client frame exceeds configured limit")
                 return
             try:
@@ -271,14 +287,21 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                 return
             field = frame.frame.field
             value = frame.frame.value
+            exclude_sender = client_id
             if field == "user_input":
                 user_input = cast(UserInput, value)
                 outgoing = ServerFrame(frame=Oneof("status", Status(state="input", detail=user_input.text, run_status=RunStatus.RUNNING)))  # type: ignore[arg-type]
             elif field == "switch":
                 switch = cast(Switch, value)
-                state = switcher_store.set(switch.axis, switch.value, SwitcherScope.SESSION, session_id)
-                event = SessionEvent(kind=SessionEventKind.SWITCH, payload=Oneof("switch", SwitchState(state=state)))  # type: ignore[arg-type]
-                outgoing = ServerFrame(frame=Oneof("session_event", event))  # type: ignore[arg-type]
+                try:
+                    state = switcher_store.set(switch.axis, switch.value, SwitcherScope.SESSION, session_id)
+                    event = SessionEvent(kind=SessionEventKind.SWITCH, payload=Oneof("switch", SwitchState(state=state)))  # type: ignore[arg-type]
+                    outgoing = ServerFrame(frame=Oneof("session_event", event))  # type: ignore[arg-type]
+                except ConnectError as exc:
+                    exclude_sender = ""
+                    outgoing = ServerFrame(
+                        frame=Oneof("status", Status(state="switch_error", detail=str(exc), run_status=RunStatus.FAILED))  # type: ignore[arg-type]
+                    )
             elif field == "interrupt":
                 outgoing = ServerFrame(frame=Oneof("status", Status(state="interrupted", run_status=RunStatus.PAUSED)))  # type: ignore[arg-type]
             elif field == "approval_response":
@@ -290,7 +313,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             else:
                 await websocket.close(code=1003, reason="unsupported client frame")
                 return
-            await session_hub.publish(record, outgoing, exclude=client_id)
+            await session_hub.publish(record, outgoing, exclude=exclude_sender)
     except WebSocketDisconnect:
         pass
     finally:

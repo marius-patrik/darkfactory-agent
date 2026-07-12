@@ -172,7 +172,8 @@ class SwitcherStore:
 
     def _make_state(self, values: dict[str, object], source: SwitcherScope) -> SwitcherState:
         fabric = values["fabric"]
-        assert isinstance(fabric, Fabric)
+        if not isinstance(fabric, Fabric):
+            raise RuntimeError("resolved switcher fabric must be a Fabric enum")
         provider = str(values["provider"])
         model = str(values["model"])
         matching = [
