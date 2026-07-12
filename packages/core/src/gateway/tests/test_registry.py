@@ -71,6 +71,124 @@ class TestModelRegistry:
         assert reg.list_enabled() == []
         assert reg.get("managed").extra["inferctl"]["status"] == "unhealthy"
 
+    def test_malformed_status_disables_managed_models_without_breaking_registry(self, tmp_registry):
+        reg_path, schema_path, td = tmp_registry
+        schema_path.write_text(json.dumps({"type": "object"}))
+        definition = {
+            "id": "managed",
+            "provider": "local",
+            "model": "managed",
+            "role": "general",
+            "context_length": 1024,
+            "enabled": True,
+            "extra": {"inferctl_managed": True},
+        }
+        reg_path.write_text(yaml.safe_dump({"schema_version": "gateway-registry-v1", "models": {"managed": definition}}))
+        status_path = Path(td) / "inferctl.yaml"
+        status_path.write_text("schema_version: [unterminated\n")
+        reg = ModelRegistry(reg_path, schema_path, status_path)
+        assert reg.list_enabled() == []
+        assert reg.get("managed").extra["inferctl"]["status"] == "malformed"
+
+    def test_malformed_engine_is_isolated_and_invalid_url_is_disabled(self, tmp_registry):
+        reg_path, schema_path, td = tmp_registry
+        schema_path.write_text(json.dumps({"type": "object"}))
+
+        def managed(model_id):
+            return {
+                "id": model_id,
+                "provider": "local",
+                "model": model_id,
+                "role": "general",
+                "context_length": 1024,
+                "enabled": True,
+                "extra": {"inferctl_managed": True},
+            }
+
+        reg_path.write_text(yaml.safe_dump({
+            "schema_version": "gateway-registry-v1",
+            "models": {
+                model_id: managed(model_id)
+                for model_id in ("healthy", "broken", "bad-url", "bad-brackets", "bad-port", "bad-health")
+            },
+        }))
+        status_path = Path(td) / "inferctl.yaml"
+        status_path.write_text(yaml.safe_dump({
+            "schema_version": "inferctl-local-engines-v1",
+            "engines": {
+                "healthy": {"status": "healthy", "api_base": "http://127.0.0.1:9101/v1"},
+                "broken": "not-an-object",
+                "bad-url": {"status": "healthy", "api_base": "file:///tmp/socket"},
+                "bad-brackets": {"status": "healthy", "api_base": "http://[::1"},
+                "bad-port": {"status": "healthy", "api_base": "http://localhost:not-a-port/v1"},
+                "bad-health": {
+                    "status": "healthy",
+                    "healthy": "false",
+                    "api_base": "http://127.0.0.1:9202/v1",
+                },
+            },
+        }))
+        reg = ModelRegistry(reg_path, schema_path, status_path)
+        assert [entry.id for entry in reg.list_enabled()] == ["healthy"]
+        assert reg.get("broken").extra["inferctl"]["status"] == "malformed"
+        assert reg.get("bad-url").extra["inferctl"]["status"] == "malformed"
+        assert reg.get("bad-brackets").extra["inferctl"]["status"] == "malformed"
+        assert reg.get("bad-port").extra["inferctl"]["status"] == "malformed"
+        assert reg.get("bad-health").extra["inferctl"]["status"] == "malformed"
+
+    def test_stopped_lifecycle_cannot_be_overridden_by_stale_healthy_flag(self, tmp_registry):
+        reg_path, schema_path, td = tmp_registry
+        schema_path.write_text(json.dumps({"type": "object"}))
+        definition = {
+            "id": "managed",
+            "provider": "local",
+            "model": "managed",
+            "role": "general",
+            "context_length": 1024,
+            "enabled": True,
+            "extra": {"inferctl_managed": True},
+        }
+        reg_path.write_text(yaml.safe_dump({"schema_version": "gateway-registry-v1", "models": {"managed": definition}}))
+        status_path = Path(td) / "inferctl.yaml"
+        status_path.write_text(yaml.safe_dump({
+            "schema_version": "inferctl-local-engines-v1",
+            "engines": {
+                "managed": {
+                    "healthy": True,
+                    "status": "stopped",
+                    "api_base": "http://127.0.0.1:9101/v1",
+                },
+            },
+        }))
+        reg = ModelRegistry(reg_path, schema_path, status_path)
+        assert reg.list_enabled() == []
+        assert reg.get("managed").extra["inferctl"]["status"] == "stopped"
+
+    def test_runtime_refresh_fails_closed_on_invalid_utf8(self, tmp_registry):
+        reg_path, schema_path, td = tmp_registry
+        schema_path.write_text(json.dumps({"type": "object"}))
+        definition = {
+            "id": "managed",
+            "provider": "local",
+            "model": "managed",
+            "role": "general",
+            "context_length": 1024,
+            "enabled": True,
+            "extra": {"inferctl_managed": True},
+        }
+        reg_path.write_text(yaml.safe_dump({"schema_version": "gateway-registry-v1", "models": {"managed": definition}}))
+        status_path = Path(td) / "inferctl.yaml"
+        status_path.write_text(yaml.safe_dump({
+            "schema_version": "inferctl-local-engines-v1",
+            "engines": {"managed": {"status": "healthy", "api_base": "http://127.0.0.1:9101/v1"}},
+        }))
+        reg = ModelRegistry(reg_path, schema_path, status_path)
+        assert [entry.id for entry in reg.list_enabled()] == ["managed"]
+
+        status_path.write_bytes(b"\xff\xfe\x80invalid")
+        assert reg.list_enabled() == []
+        assert reg.get("managed").extra["inferctl"]["status"] == "malformed"
+
     def test_load_valid_registry(self, tmp_registry):
         reg_path, schema_path, _ = tmp_registry
         schema = {
@@ -157,6 +275,26 @@ class TestModelRegistry:
         }))
         with pytest.raises(RegistryError, match="keys must match entry ids"):
             ModelRegistry(registry_path=reg_path, schema_path=schema_path)
+
+    def test_schema_requires_endpoint_only_for_unmanaged_models(self, tmp_registry):
+        gateway_root = Path(__file__).resolve().parents[1]
+        schema_path = gateway_root / "registry" / "schema.json"
+        reg_path, _, _ = tmp_registry
+        base = {
+            "id": "model",
+            "provider": "local",
+            "model": "model",
+            "role": "general",
+            "context_length": 1024,
+            "enabled": True,
+        }
+        reg_path.write_text(yaml.safe_dump({"schema_version": "gateway-registry-v1", "models": {"model": base}}))
+        with pytest.raises(RegistryError, match="api_base"):
+            ModelRegistry(reg_path, schema_path)
+
+        managed = {**base, "extra": {"inferctl_managed": True}}
+        reg_path.write_text(yaml.safe_dump({"schema_version": "gateway-registry-v1", "models": {"model": managed}}))
+        assert ModelRegistry(reg_path, schema_path).get("model").inferctl_managed is True
 
     def test_default_registry_declares_local_fabric(self):
         """The shipped models.yaml seeds the five local engines."""
