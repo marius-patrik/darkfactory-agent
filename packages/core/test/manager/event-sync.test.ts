@@ -327,6 +327,27 @@ describe("encrypted cross-machine event exchange", () => {
       await expect(
         exportEventBundle(alphabeticOrchestrator, path.join(root, "alphabetic-orchestrator.bundle.json")),
       ).rejects.toThrow("secret-like");
+
+      const structuralSecret = await exchangeState(path.join(root, "structural-secret"));
+      await createSession(structuralSecret, {
+        sessionId: "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef",
+        provider: "codex",
+        model: "gpt-5",
+        mode: "task",
+        workdir: "/workspace",
+      });
+      await expect(exportEventBundle(structuralSecret, path.join(root, "structural-secret.bundle.json"))).rejects.toThrow(
+        "secret-like",
+      );
+
+      const sourceMetadataSecret = await exchangeState(path.join(root, "source-metadata-secret"));
+      const manifestPath = path.join(sourceMetadataSecret.stateDir, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+      manifest.machineId = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef";
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      await expect(
+        exportEventBundle(sourceMetadataSecret, path.join(root, "source-metadata-secret.bundle.json")),
+      ).rejects.toThrow("canonical non-secret identifier");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

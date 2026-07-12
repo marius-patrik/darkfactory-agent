@@ -42,6 +42,8 @@ const ALLOWED_EVENT_PATHS = [
 const MAX_FILES = 100_000;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 512 * 1024 * 1024;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+const CANONICAL_HASH_OR_ID = /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/;
 
 interface SyncConfig {
   schemaVersion: 2;
@@ -270,7 +272,7 @@ function secretLikeText(value: string): boolean {
 
 function containsSecretField(value: unknown, field = ""): boolean {
   if (typeof value === "string") {
-    if (STRUCTURAL_STRING_FIELDS.has(field)) return false;
+    if (STRUCTURAL_STRING_FIELDS.has(field) && (UUID.test(value) || CANONICAL_HASH_OR_ID.test(value))) return false;
     return secretLikeText(value);
   }
   if (Array.isArray(value)) return value.some((item) => containsSecretField(item, field));
@@ -286,6 +288,15 @@ function containsSecretField(value: unknown, field = ""): boolean {
     if (containsSecretField(nested, key)) return true;
   }
   return false;
+}
+
+function assertSourceMetadata(source: { installId: string; machineId: string }): void {
+  for (const field of ["installId", "machineId"] as const) {
+    const value = source[field];
+    if (!UUID.test(value)) {
+      throw new Error(`event exchange source ${field} is not a canonical non-secret identifier`);
+    }
+  }
 }
 
 function assertNoPlantedSecret(relativePath: string, content: string): void {
@@ -630,6 +641,7 @@ export async function exportEventBundle(
   if (!config.enabled || config.transport !== "encrypted-bundle") throw new Error("event exchange is disabled");
   const key = await keyMaterial(state);
   const manifest = JSON.parse(await readFile(stateV2Paths(state).manifestFile, "utf8")) as { installId: string; machineId: string };
+  assertSourceMetadata(manifest);
   const [memory, sessions, orchestrator] = await Promise.all([
     inspectMemoryIntegrity(state),
     inspectSessionIntegrity(state),
@@ -714,6 +726,7 @@ export async function importEventBundle(
     ) {
       throw new Error("invalid event exchange payload");
     }
+    assertSourceMetadata(payload.source);
     const incoming = decodeEntries(payload.entries);
     const journalPath = path.join(importsDirectory(state), `${payloadHash}.json`);
     await ensurePhysicalDirectoryChain(state.stateDir, importsDirectory(state));
