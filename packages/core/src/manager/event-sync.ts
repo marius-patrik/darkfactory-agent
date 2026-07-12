@@ -122,7 +122,9 @@ function importsDirectory(state: SharedState): string {
 }
 
 async function readConfig(state: SharedState): Promise<SyncConfig> {
-  const parsed = JSON.parse(await readFile(syncConfigPath(state), "utf8")) as Partial<SyncConfig>;
+  const configPath = syncConfigPath(state);
+  await assertPhysicalPathUnderRoot(state.stateDir, configPath, { leaf: "file" });
+  const parsed = JSON.parse(await readFile(configPath, "utf8")) as Partial<SyncConfig>;
   if (
     parsed.schemaVersion !== 2 ||
     typeof parsed.enabled !== "boolean" ||
@@ -500,14 +502,17 @@ export async function enableEventSync(state: SharedState, generateKey = false): 
     await writeSecret(state, SYNC_SECRET, randomBytes(32).toString("hex"));
   }
   await keyMaterial(state);
+  await ensurePhysicalDirectoryChain(state.stateDir, importsDirectory(state));
+  await assertPhysicalPathUnderRoot(state.stateDir, syncConfigPath(state), { allowMissing: true, leaf: "file" });
   await writeTextAtomic(
     syncConfigPath(state),
     `${JSON.stringify({ schemaVersion: 2, enabled: true, transport: "encrypted-bundle" }, null, 2)}\n`,
   );
-  await mkdir(importsDirectory(state), { recursive: true });
 }
 
 export async function disableEventSync(state: SharedState): Promise<void> {
+  await ensurePhysicalDirectoryChain(state.stateDir, path.dirname(syncConfigPath(state)));
+  await assertPhysicalPathUnderRoot(state.stateDir, syncConfigPath(state), { allowMissing: true, leaf: "file" });
   await writeTextAtomic(syncConfigPath(state), `${JSON.stringify({ schemaVersion: 2, enabled: false, transport: null }, null, 2)}\n`);
 }
 
@@ -522,9 +527,12 @@ export async function eventSyncStatus(state: SharedState): Promise<EventSyncStat
   let committedImports = 0;
   let preparedImports = 0;
   try {
+    await assertPhysicalPathUnderRoot(state.stateDir, importsDirectory(state), { leaf: "directory" });
     for (const entry of await readdir(importsDirectory(state), { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const journal = JSON.parse(await readFile(path.join(importsDirectory(state), entry.name), "utf8")) as ImportJournal;
+      const journalPath = path.join(importsDirectory(state), entry.name);
+      await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { leaf: "file" });
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as ImportJournal;
       if (journal.state === "committed") committedImports += 1;
       else if (journal.state === "prepared") preparedImports += 1;
     }
@@ -629,9 +637,12 @@ export async function importEventBundle(
     }
     const incoming = decodeEntries(payload.entries);
     const journalPath = path.join(importsDirectory(state), `${payloadHash}.json`);
+    await ensurePhysicalDirectoryChain(state.stateDir, importsDirectory(state));
+    await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { allowMissing: true, leaf: "file" });
     return withAffectedEventLocks(state, incoming, async () => {
       let journal: ImportJournal | null = null;
       try {
+        await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { allowMissing: true, leaf: "file" });
         journal = JSON.parse(await readFile(journalPath, "utf8")) as ImportJournal;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -677,7 +688,8 @@ export async function importEventBundle(
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
       }
-      await mkdir(importsDirectory(state), { recursive: true });
+      await ensurePhysicalDirectoryChain(state.stateDir, importsDirectory(state));
+      await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { allowMissing: true, leaf: "file" });
       const prepared: ImportJournal = {
         schemaVersion: 1,
         payloadHash,
@@ -707,6 +719,7 @@ export async function importEventBundle(
         skipped: incoming.size - imported,
         projectionHash: finalProjectionHash,
       };
+      await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { leaf: "file" });
       await writeTextAtomic(journalPath, `${JSON.stringify(committed, null, 2)}\n`);
       return {
         payloadHash,

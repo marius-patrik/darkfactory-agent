@@ -320,4 +320,39 @@ describe("encrypted cross-machine event exchange", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("symlinked sync journal ancestors cannot redirect import metadata", async () => {
+    if (process.platform === "win32") return;
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-sync-journal-symlink-"));
+    try {
+      const source = await exchangeState(path.join(root, "source"));
+      await rememberMemory(source, {
+        scope: "project",
+        subject: "Andromeda",
+        predicate: "journal-boundary",
+        value: "physical-only",
+        evidence,
+      });
+      const bundle = path.join(root, "events.bundle.json");
+      await exportEventBundle(source, bundle);
+
+      const syncTarget = await exchangeState(path.join(root, "sync-target"));
+      const syncDirectory = path.join(syncTarget.stateDir, "sync");
+      const movedSyncDirectory = path.join(root, "sync-outside");
+      await rename(syncDirectory, movedSyncDirectory);
+      await symlink(movedSyncDirectory, syncDirectory, "dir");
+      await expect(enableEventSync(syncTarget)).rejects.toThrow("symbolic link");
+      await expect(importEventBundle(syncTarget, bundle)).rejects.toThrow("symbolic link");
+
+      const importsTarget = await exchangeState(path.join(root, "imports-target"));
+      const importsDirectory = path.join(importsTarget.stateDir, "sync", "imports");
+      const movedImportsDirectory = path.join(root, "imports-outside");
+      await rename(importsDirectory, movedImportsDirectory);
+      await symlink(movedImportsDirectory, importsDirectory, "dir");
+      await expect(importEventBundle(importsTarget, bundle)).rejects.toThrow("symbolic link");
+      expect((await readdir(movedImportsDirectory)).length).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
