@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +12,7 @@ from protobuf import Oneof
 from starlette.websockets import WebSocketDisconnect
 
 from agent_os.v1.common_pb import Fabric, SwitcherAxis, SwitcherScope, SwitcherState, Task
-from agent_os.v1.session_frames_pb import ClientFrame, ServerFrame, Status, UserInput
+from agent_os.v1.session_frames_pb import ClientFrame, ServerFrame, Status, Switch, UserInput
 from agent_os.v1.sessions_pb import CreateSessionRequest
 import llm_gateway.main as gateway_main
 from llm_gateway.control_plane import SessionControlPlane
@@ -133,8 +134,18 @@ async def test_create_session_applies_task_and_switcher_seed(tmp_path):
     assert switchers.state(record.id).model == "local-general"
     assert switchers.state(record.id).agent == "codex"
 
+    empty = await control.create_session(CreateSessionRequest(agent="codex", title="empty"), None)
+    empty_record = hub.get(empty.session.id)
+    assert empty_record is not None
+    assert empty_record.task is None
+    assert empty_record.history == []
 
-def test_binary_websocket_relay_supports_multiple_clients(client):
+
+def test_binary_websocket_relay_supports_multiple_clients(client, monkeypatch):
+    monkeypatch.setenv("GATEWAY_WS_MAX_FRAME_BYTES", "invalid")
+    monkeypatch.setenv("GATEWAY_WS_REPLAY_TIMEOUT_SECONDS", "invalid")
+    monkeypatch.setenv("GATEWAY_WS_SEND_TIMEOUT_SECONDS", "invalid")
+    monkeypatch.setenv("GATEWAY_SESSION_HISTORY_FRAMES", "invalid")
     gateway_main.session_hub.create(session_id="relay")
     with client.websocket_connect("/v1/sessions/relay/ws?client_id=a") as first:
         assert ServerFrame.from_binary(first.receive_bytes()).seq == 1
@@ -148,6 +159,26 @@ def test_binary_websocket_relay_supports_multiple_clients(client):
             assert relayed.frame is not None
             assert relayed.frame.field == "status"
             assert relayed.frame.value.detail == "hello"
+
+
+def test_websocket_rejects_unsafe_client_id(client):
+    gateway_main.session_hub.create(session_id="client-id")
+    with pytest.raises(WebSocketDisconnect) as rejected:
+        with client.websocket_connect(f"/v1/sessions/client-id/ws?client_id={'x' * 129}"):
+            pass
+    assert rejected.value.code == 4400
+
+
+def test_invalid_switch_returns_error_without_dropping_websocket(client):
+    gateway_main.session_hub.create(session_id="switch-error")
+    with client.websocket_connect("/v1/sessions/switch-error/ws?client_id=requester") as websocket:
+        assert ServerFrame.from_binary(websocket.receive_bytes()).seq == 1
+        websocket.send_bytes(ClientFrame(frame=Oneof("switch", Switch(value="bad"))).to_binary())
+        error = ServerFrame.from_binary(websocket.receive_bytes())
+        assert error.frame is not None and error.frame.field == "status"
+        assert error.frame.value.state == "switch_error"
+        websocket.send_bytes(ClientFrame(frame=Oneof("switch", Switch(value="still-bad"))).to_binary())
+        assert ServerFrame.from_binary(websocket.receive_bytes()).frame.value.state == "switch_error"
 
 
 def test_websocket_mtls_rejects_spoofed_identity_header(monkeypatch, tmp_path):
@@ -308,6 +339,31 @@ def test_durable_budget_exhaustion_degrades_cloud_to_local(monkeypatch, tmp_path
     try:
         assert router.resolve_model("cloud-general", allow_cloud=True).id == "local-general"
     finally:
+        tracer.close()
+
+
+@pytest.mark.asyncio
+async def test_role_alias_trace_reports_cloud_to_local_degrade(tmp_path):
+    registry = _registry(tmp_path)
+    registry._definitions = {
+        "cloud-general": registry._definitions["cloud-general"],
+        "local-general": registry._definitions["local-general"],
+    }
+    registry.refresh_runtime_status(force=True)
+    tracer = TraceLogger(trace_dir=tmp_path / "traces")
+    router = Router(registry, tracer, quota=QuotaTracker())
+    router._via_http = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"completion_tokens": 1},
+        }
+    )
+    try:
+        result = await router.chat_completion("general", [{"role": "user", "content": "hi"}])
+        assert result["llm_gateway"]["resolved_model_id"] == "local-general"
+        assert result["llm_gateway"]["degraded_to_local"] is True
+    finally:
+        await router.close()
         tracer.close()
 
 

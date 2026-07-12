@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +17,22 @@ from protobuf import Oneof
 
 class DuplicateClientError(ValueError):
     """Raised when a live relay client already owns a client identifier."""
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if math.isfinite(value) and value > 0 else default
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 @dataclass
@@ -114,7 +131,7 @@ class SessionHub:
         async with record.relay_lock:
             if client_id in record.clients:
                 raise DuplicateClientError(f"client_id {client_id!r} is already attached")
-            replay_timeout = max(0.01, float(os.environ.get("GATEWAY_WS_REPLAY_TIMEOUT_SECONDS", "5")))
+            replay_timeout = _positive_float_env("GATEWAY_WS_REPLAY_TIMEOUT_SECONDS", 5.0)
             async with asyncio.timeout(replay_timeout):
                 for frame in record.history:
                     await self._send(websocket, frame.to_binary())
@@ -144,7 +161,7 @@ class SessionHub:
         frame.seq = record.next_seq
         record.next_seq += 1
         record.history.append(ServerFrame.from_binary(frame.to_binary()))
-        history_limit = max(1, int(os.environ.get("GATEWAY_SESSION_HISTORY_FRAMES", "1000")))
+        history_limit = _positive_int_env("GATEWAY_SESSION_HISTORY_FRAMES", 1000)
         if len(record.history) > history_limit:
             del record.history[: len(record.history) - history_limit]
         payload = frame.to_binary()
@@ -166,5 +183,5 @@ class SessionHub:
 
     @staticmethod
     async def _send(websocket: WebSocket, payload: bytes) -> None:
-        timeout = max(0.01, float(os.environ.get("GATEWAY_WS_SEND_TIMEOUT_SECONDS", "5")))
+        timeout = _positive_float_env("GATEWAY_WS_SEND_TIMEOUT_SECONDS", 5.0)
         await asyncio.wait_for(websocket.send_bytes(payload), timeout=timeout)

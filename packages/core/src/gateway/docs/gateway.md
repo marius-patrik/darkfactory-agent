@@ -46,6 +46,10 @@ Registry, Session, and Switcher services at their canonical
 `/agent_os.v1.<Service>/<Method>` paths. These are protocol handlers, not
 method-shaped JSON substitutes.
 
+The gateway pins `connectrpc==0.11.0` and directly pins Buf's Apache-2.0
+`protobuf-py==0.1.1` message runtime; wheel installs do not depend on an
+undeclared transitive `protobuf` provider.
+
 Live clients attach at `/v1/sessions/{session_id}/ws` and exchange the binary
 `ClientFrame`/`ServerFrame` messages from `session_frames.proto`. The relay
 supports replay, multiple clients, fork-at-sequence, and monotonic sequence
@@ -84,10 +88,16 @@ cap must enforce it at the ASGI server or edge proxy.
 ## Durable budgets and cluster axes
 
 `GATEWAY_BUDGETS_PATH` (or `AGENTS_CREDITS`) is a read-only durable budget
-authority. When a cloud provider is exhausted—or the configured budget file
+authority. `GATEWAY_BUDGETS_PATH` takes precedence when both are set;
+`AGENTS_CREDITS` is the canonical Agent OS fallback. When a cloud provider is exhausted—or the configured budget file
 cannot be validated—the request/task routers skip it and use an enabled local
 model with the same role. Cloud is also local-by-default unless the caller sets
 `allow_cloud=true`. The gateway never writes the shared credit store.
+
+`user_input` relay frames produce a `status(state="input")` event whose `detail`
+carries the submitted text; attached peers consume that status event rather than
+a byte-for-byte echo of the original client frame. Invalid switch requests return
+a `status(state="switch_error")` frame and leave the WebSocket attached.
 
 `GATEWAY_CLUSTER_HOSTS` accepts comma-separated `node=url` entries. Live
 registry `extra.node_id`/`extra.backend_node_id` values also populate the host

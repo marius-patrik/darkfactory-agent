@@ -124,8 +124,16 @@ class Router:
         req_id = generate_request_id()
         t0 = time.perf_counter()
 
+        requested_entry = self.registry.get(model_id)
+        if requested_entry is None and model_id in ROLE_ALIASES:
+            requested_entry = self._resolve_role(model_id)
         entry = self.resolve_model(model_id, allow_cloud=allow_cloud)
-        degraded_to_local = entry.id != model_id and model_id not in ROLE_ALIASES
+        degraded_to_local = bool(
+            requested_entry is not None
+            and requested_entry.id != entry.id
+            and requested_entry.cloud
+            and is_local_entry(entry)
+        )
         role_hint = entry.role
         requested_role = model_id if model_id in ROLE_ALIASES else None
 
