@@ -61,8 +61,23 @@ describe("encrypted cross-machine event exchange", () => {
       const exported = await exportEventBundle(source, bundle);
       let importSettled = false;
       let pendingImport: ReturnType<typeof importEventBundle> | undefined;
+      let concurrentAppend: ReturnType<typeof withSessionWriteTransaction> | undefined;
       await withSessionWriteLock(target, "exchange-session", async () => {
-        pendingImport = importEventBundle(target, bundle);
+        pendingImport = importEventBundle(target, bundle, {
+          beforeProjection: async () => {
+            let appendSettled = false;
+            concurrentAppend = withSessionWriteTransaction(target, "exchange-session", async (transaction) => {
+              const turnId = await transaction.beginTurn();
+              await transaction.appendMessage(turnId, { role: "user", content: "continued on the second machine" });
+              await transaction.completeTurn(turnId);
+            });
+            void concurrentAppend.finally(() => {
+              appendSettled = true;
+            });
+            await Bun.sleep(75);
+            expect(appendSettled).toBe(false);
+          },
+        });
         void pendingImport.finally(() => {
           importSettled = true;
         });
@@ -74,6 +89,7 @@ describe("encrypted cross-machine event exchange", () => {
 
       expect(imported.imported).toBe(2);
       expect(imported.projectionHash).toBe(exported.projectionHash);
+      await concurrentAppend!;
       expect((await inspectSessionIntegrity(target)).ok).toBe(true);
       expect(await eventSyncStatus(target)).toMatchObject({ committedImports: 1, preparedImports: 0 });
 
@@ -83,11 +99,6 @@ describe("encrypted cross-machine event exchange", () => {
         predicate: "reverse-exchange",
         value: "verified",
         evidence,
-      });
-      await withSessionWriteTransaction(target, "exchange-session", async (transaction) => {
-        const turnId = await transaction.beginTurn();
-        await transaction.appendMessage(turnId, { role: "user", content: "continued on the second machine" });
-        await transaction.completeTurn(turnId);
       });
       const reverseBundle = path.join(root, "events.reverse.bundle.json");
       const reverseExport = await exportEventBundle(target, reverseBundle);
@@ -124,6 +135,11 @@ describe("encrypted cross-machine event exchange", () => {
       expect(await eventSyncStatus(target)).toMatchObject({ committedImports: 1, preparedImports: 0 });
       const replayed = await importEventBundle(target, bundle);
       expect(replayed).toMatchObject({ idempotent: true, imported: 0, skipped: 1 });
+      await writeFile(
+        path.join(target.stateDir, "sync", "config.json"),
+        `${JSON.stringify({ schemaVersion: 2, enabled: false, transport: 123 })}\n`,
+      );
+      expect((await doctorState(target)).checks.find((check) => check.id === "sync_safety")?.ok).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -157,6 +173,9 @@ describe("encrypted cross-machine event exchange", () => {
       await mkdir(path.dirname(collision), { recursive: true });
       await writeFile(collision, "{}\n");
       await expect(importEventBundle(target, bundle)).rejects.toThrow("immutable event collision");
+
+      await mkdir(path.join(source.sessionsDir, ".hidden"), { recursive: true });
+      await expect(exportEventBundle(source, path.join(root, "hidden.bundle.json"))).rejects.toThrow("hidden");
 
       const secretSource = await exchangeState(path.join(root, "secret-source"));
       await rememberMemory(secretSource, {

@@ -251,20 +251,30 @@ async function syncSafetyCheck(state: SharedState): Promise<StateDoctorCheck> {
 
   let schemaVersion: number | null = null;
   let enabled: boolean | null = null;
-  let transport: string | null = null;
+  let transport: string | null | undefined;
+  let transportValid = false;
   let parseError: string | null = null;
   if (configKind === "file") {
     try {
       const parsed = JSON.parse(await readFile(configPath, "utf8")) as { schemaVersion?: unknown; enabled?: unknown; transport?: unknown };
       schemaVersion = typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : null;
       enabled = typeof parsed.enabled === "boolean" ? parsed.enabled : null;
-      transport = typeof parsed.transport === "string" ? parsed.transport : null;
+      if (parsed.transport === null || typeof parsed.transport === "string") {
+        transport = parsed.transport;
+        transportValid = true;
+      }
     } catch (error) {
       parseError = (error as Error).message;
     }
   }
 
-  const disabled = configKind === "file" && parseError === null && schemaVersion === 2 && enabled === false && transport === null;
+  const disabled =
+    configKind === "file" &&
+    parseError === null &&
+    schemaVersion === 2 &&
+    enabled === false &&
+    transportValid &&
+    transport === null;
   const [keyKind, importsKind] = await Promise.all([pathKind(syncKeyPath), pathKind(importsPath)]);
   let keyValid = false;
   if (keyKind === "file") {
@@ -291,6 +301,7 @@ async function syncSafetyCheck(state: SharedState): Promise<StateDoctorCheck> {
     parseError === null &&
     schemaVersion === 2 &&
     enabled === true &&
+    transportValid &&
     transport === "encrypted-bundle" &&
     keyValid &&
     importsKind === "directory" &&
@@ -315,6 +326,7 @@ async function syncSafetyCheck(state: SharedState): Promise<StateDoctorCheck> {
       schemaVersion,
       enabled,
       transport,
+      transportValid,
       keyPresent: keyKind === "file",
       keyValid,
       importsDirectoryPresent: importsKind === "directory",

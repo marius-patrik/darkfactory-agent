@@ -688,6 +688,13 @@ export async function rebuildSessionProjections(
   return withSessionWriteLock(state, sessionId, () => rebuildSessionProjectionsUnlocked(state, sessionId));
 }
 
+export async function rebuildSessionProjectionsWhileLocked(
+  state: SessionStateRoot,
+  rawSessionId: string,
+): Promise<SessionProjection | null> {
+  return rebuildSessionProjectionsUnlocked(state, validateSessionId(rawSessionId));
+}
+
 export async function loadSessionEvents(state: SessionStateRoot, rawSessionId: string): Promise<SessionEvent[]> {
   const sessionId = validateSessionId(rawSessionId);
   return withSessionWriteLock(state, sessionId, async () => {

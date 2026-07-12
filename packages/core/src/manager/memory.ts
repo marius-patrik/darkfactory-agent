@@ -1205,18 +1205,20 @@ export async function renderStartupMemory(state: SharedState): Promise<RenderSta
   });
 }
 
+export async function rebuildMemoryProjectionsWhileLocked(state: SharedState): Promise<MemoryProjectionRebuild> {
+  const { stream, records, projection } = await loadCanonicalMemoryUnlocked(state);
+  return {
+    events: stream.events.length,
+    records: records.length,
+    eventHeads: stream.eventHeads,
+    projectionHash: projection.projectionHash,
+    startupView: path.join(stateV2Paths(state).memoryViewsDir, "startup.md"),
+    startupContent: projection.startup.content,
+  };
+}
+
 export async function rebuildMemoryProjections(state: SharedState): Promise<MemoryProjectionRebuild> {
-  return withMemoryLock(state, "rebuild", new Date(), async () => {
-    const { stream, records, projection } = await loadCanonicalMemoryUnlocked(state);
-    return {
-      events: stream.events.length,
-      records: records.length,
-      eventHeads: stream.eventHeads,
-      projectionHash: projection.projectionHash,
-      startupView: path.join(stateV2Paths(state).memoryViewsDir, "startup.md"),
-      startupContent: projection.startup.content,
-    };
-  });
+  return withMemoryLock(state, "rebuild", new Date(), () => rebuildMemoryProjectionsWhileLocked(state));
 }
 
 async function projectionIssues(

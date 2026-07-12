@@ -603,6 +603,10 @@ export async function readOrchestratorState(state: SharedState): Promise<Orchest
   return withOrchestratorLock(state, "state-reader", () => readAndProjectUnlocked(state));
 }
 
+export async function rebuildOrchestratorProjectionWhileLocked(state: SharedState): Promise<OrchestratorStateDoc | null> {
+  return readAndProjectUnlocked(state);
+}
+
 export async function inspectOrchestratorIntegrity(
   state: SharedState,
   now = new Date(),

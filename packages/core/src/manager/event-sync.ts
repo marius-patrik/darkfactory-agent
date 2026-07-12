@@ -17,15 +17,15 @@ import type { SharedState } from "./state";
 import { sharedStateAt } from "./state";
 import { readSecret, secretPath, writeSecret } from "./secrets";
 import { stateV2Paths, writeTextAtomic, writeTextExclusive } from "./state-v2";
-import { inspectMemoryIntegrity, rebuildMemoryProjections, withMemoryEventWriteLock } from "./memory";
+import { inspectMemoryIntegrity, rebuildMemoryProjectionsWhileLocked, withMemoryEventWriteLock } from "./memory";
 import {
   inspectSessionIntegrity,
-  rebuildSessionProjections,
+  rebuildSessionProjectionsWhileLocked,
   withSessionWriteLock,
 } from "../harness/session";
 import {
   inspectOrchestratorIntegrity,
-  readOrchestratorState,
+  rebuildOrchestratorProjectionWhileLocked,
   withOrchestratorEventWriteLock,
 } from "./orchestrator";
 import { withStateFileLock } from "./state-lock";
@@ -230,7 +230,7 @@ async function collectEventEntries(state: SharedState): Promise<EventEntry[]> {
     const rootInfo = await lstat(sessionsRoot);
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error("canonical sessions root is not physical");
     for (const entry of (await readdir(sessionsRoot, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.name.startsWith(".")) continue;
+      if (entry.name.startsWith(".")) throw new Error(`hidden canonical session entries cannot roam: ${entry.name}`);
       if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error(`invalid canonical session entry: ${entry.name}`);
       await collectFiles(state, `sessions/${entry.name}/events`, entries);
     }
@@ -295,8 +295,13 @@ async function validateMergedEvents(state: SharedState, incoming: Map<string, st
   return combined;
 }
 
-async function projectionHash(state: SharedState): Promise<string> {
+async function projectionHash(state: SharedState, incoming: Map<string, string>): Promise<string> {
   const hashes: string[] = [];
+  const includeMemory = [...incoming.keys()].some((item) => item.startsWith("memory/"));
+  const includeOrchestrator = [...incoming.keys()].some((item) => item.startsWith("orchestrator/"));
+  const sessionIds = new Set(
+    [...incoming.keys()].filter((item) => item.startsWith("sessions/")).map((item) => item.split("/")[1]),
+  );
   const visit = async (relativeDirectory: string, accept: (name: string) => boolean): Promise<void> => {
     const directory = path.join(state.stateDir, ...relativeDirectory.split("/"));
     let entries;
@@ -312,21 +317,27 @@ async function projectionHash(state: SharedState): Promise<string> {
       else if (entry.isFile() && accept(entry.name)) hashes.push(`${relativePath}:${sha256(await readFile(path.join(directory, entry.name)))}`);
     }
   };
-  await visit("memory/records", (name) => name.endsWith(".json"));
-  await visit("memory/views", (name) => name.endsWith(".md"));
-  await visit("sessions", (name) => name === "state.json" || name === "transcript.json");
-  await visit("orchestrator", (name) => name === "state.json" || name === "STATE.md");
+  if (includeMemory) {
+    await visit("memory/records", (name) => name.endsWith(".json"));
+    await visit("memory/views", (name) => name.endsWith(".md"));
+  }
+  for (const sessionId of [...sessionIds].sort()) {
+    await visit(`sessions/${sessionId}`, (name) => name === "state.json" || name === "transcript.json");
+  }
+  if (includeOrchestrator) await visit("orchestrator", (name) => name === "state.json" || name === "STATE.md");
   return sha256(hashes.sort().join("\n"));
 }
 
-async function rebuildImportedProjections(state: SharedState, incoming: Map<string, string>): Promise<string> {
-  if ([...incoming.keys()].some((item) => item.startsWith("memory/"))) await rebuildMemoryProjections(state);
+async function rebuildImportedProjectionsWhileLocked(state: SharedState, incoming: Map<string, string>): Promise<string> {
+  if ([...incoming.keys()].some((item) => item.startsWith("memory/"))) await rebuildMemoryProjectionsWhileLocked(state);
   const sessionIds = new Set(
     [...incoming.keys()].filter((item) => item.startsWith("sessions/")).map((item) => item.split("/")[1]),
   );
-  for (const sessionId of [...sessionIds].sort()) await rebuildSessionProjections(state, sessionId);
-  if ([...incoming.keys()].some((item) => item.startsWith("orchestrator/"))) await readOrchestratorState(state);
-  return projectionHash(state);
+  for (const sessionId of [...sessionIds].sort()) await rebuildSessionProjectionsWhileLocked(state, sessionId);
+  if ([...incoming.keys()].some((item) => item.startsWith("orchestrator/"))) {
+    await rebuildOrchestratorProjectionWhileLocked(state);
+  }
+  return projectionHash(state, incoming);
 }
 
 async function withAffectedEventLocks<T>(
@@ -427,13 +438,14 @@ export async function exportEventBundle(state: SharedState, outputPath: string):
     ciphertext: ciphertext.toString("base64"),
   };
   await writeTextAtomic(path.resolve(outputPath), `${JSON.stringify(envelope, null, 2)}\n`);
-  return { payloadHash, entries: entries.length, imported: 0, skipped: 0, projectionHash: await projectionHash(state), idempotent: false };
+  const entryMap = new Map(entries.map((entry) => [entry.path, ""]));
+  return { payloadHash, entries: entries.length, imported: 0, skipped: 0, projectionHash: await projectionHash(state, entryMap), idempotent: false };
 }
 
 export async function importEventBundle(
   state: SharedState,
   inputPath: string,
-  options: { failAfter?: number } = {},
+  options: { failAfter?: number; beforeProjection?: () => Promise<void> } = {},
 ): Promise<EventSyncResult> {
   return withStateFileLock(state, "event-sync-import", async () => {
     const config = await readConfig(state);
@@ -482,7 +494,7 @@ export async function importEventBundle(
     }
     const incoming = decodeEntries(payload.entries);
     const journalPath = path.join(importsDirectory(state), `${payloadHash}.json`);
-    const publication = await withAffectedEventLocks(state, incoming, async () => {
+    return withAffectedEventLocks(state, incoming, async () => {
       let journal: ImportJournal | null = null;
       try {
         journal = JSON.parse(await readFile(journalPath, "utf8")) as ImportJournal;
@@ -503,7 +515,15 @@ export async function importEventBundle(
         }
         if (complete) {
           await validateMergedEvents(state, incoming);
-          return { imported: 0, skipped: incoming.size, idempotent: true, prepared: journal };
+          await options.beforeProjection?.();
+          return {
+            payloadHash,
+            entries: incoming.size,
+            imported: 0,
+            skipped: incoming.size,
+            projectionHash: await rebuildImportedProjectionsWhileLocked(state, incoming),
+            idempotent: true,
+          };
         }
       }
 
@@ -538,34 +558,24 @@ export async function importEventBundle(
           throw new Error("simulated interrupted event import");
         }
       }
-      return { imported, skipped: incoming.size - imported, idempotent: false, prepared };
-    });
-    const finalProjectionHash = await rebuildImportedProjections(state, incoming);
-    if (publication.idempotent) {
+      await options.beforeProjection?.();
+      const finalProjectionHash = await rebuildImportedProjectionsWhileLocked(state, incoming);
+      const committed: ImportJournal = {
+        ...prepared,
+        state: "committed",
+        imported,
+        skipped: incoming.size - imported,
+        projectionHash: finalProjectionHash,
+      };
+      await writeTextAtomic(journalPath, `${JSON.stringify(committed, null, 2)}\n`);
       return {
         payloadHash,
         entries: incoming.size,
-        imported: 0,
-        skipped: incoming.size,
+        imported,
+        skipped: incoming.size - imported,
         projectionHash: finalProjectionHash,
-        idempotent: true,
+        idempotent: false,
       };
-    }
-    const committed: ImportJournal = {
-      ...publication.prepared,
-      state: "committed",
-      imported: publication.imported,
-      skipped: publication.skipped,
-      projectionHash: finalProjectionHash,
-    };
-    await writeTextAtomic(journalPath, `${JSON.stringify(committed, null, 2)}\n`);
-    return {
-      payloadHash,
-      entries: incoming.size,
-      imported: publication.imported,
-      skipped: publication.skipped,
-      projectionHash: finalProjectionHash,
-      idempotent: false,
-    };
+    });
   });
 }
