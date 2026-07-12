@@ -28,6 +28,7 @@ agents sync enable
 agents sync status --json
 agents sync export /private/path/windows-to-mac.bundle.json --json
 agents sync import /private/path/windows-to-mac.bundle.json --json
+agents sync recover --json
 ```
 
 Exchange is symmetric: export and import a bundle in each direction. A bundle
@@ -54,10 +55,11 @@ operation; they do not exchange runtime state.
   before writing any event.
 - Existing paths with identical bytes are no-ops. Existing paths with different
   bytes are immutable-event collisions and abort the import.
-- `sync/imports/<payload-hash>.json` records `prepared` and `committed` phases.
-  A retry resumes a prepared import, verifies already-published bytes, rebuilds
-  projections, and commits the journal. `state doctor` fails while an import is
-  prepared.
+- `sync/imports/<payload-hash>.json` records `prepared` and `committed` phases
+  together with the authenticated, secret-scanned entry bytes and hashes.
+  `agents sync recover` resumes a prepared import without the original external
+  bundle, verifies already-published bytes, rebuilds projections, and commits
+  the journal. `state doctor` fails while an import is prepared.
 - Memory retraction and supersession events are the deletion/tombstone model.
   Authoritative event files are append-only and are never deleted by exchange.
 - Session and orchestrator hash chains are verified per machine. Cross-machine

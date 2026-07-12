@@ -113,6 +113,7 @@ agents sync enable --generate-key
 agents sync status --json
 agents sync export <bundle-file> --json
 agents sync import <bundle-file> --json
+agents sync recover --json
 agents installs --json
 agents identity activate <source-directory> --replace
 agents doctor

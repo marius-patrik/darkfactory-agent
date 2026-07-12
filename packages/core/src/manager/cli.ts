@@ -38,6 +38,7 @@ import {
   eventSyncStatus,
   exportEventBundle,
   importEventBundle,
+  recoverPreparedEventImports,
 } from "./event-sync";
 import {
   createSession,
@@ -109,6 +110,7 @@ Usage:
   agents sync status [--json]
   agents sync export <bundle-file> [--json]
   agents sync import <bundle-file> [--json]
+  agents sync recover [--json]
   agents state init
   agents state env
   agents state doctor [--json]
@@ -301,6 +303,11 @@ async function syncCommand(values: string[], flags: Record<string, string | bool
   if (action === "status") {
     const status = await eventSyncStatus(state);
     console.log(flags.json ? JSON.stringify(status, null, 2) : Object.entries(status).map(([key, value]) => `${key} ${value}`).join("\n"));
+    return;
+  }
+  if (action === "recover") {
+    const results = await recoverPreparedEventImports(state);
+    console.log(flags.json ? JSON.stringify(results, null, 2) : `recovered ${results.length} prepared import(s)`);
     return;
   }
   if (action === "export" || action === "import") {

@@ -19,6 +19,7 @@ import {
   eventSyncStatus,
   exportEventBundle,
   importEventBundle,
+  recoverPreparedEventImports,
 } from "../../src/manager/event-sync";
 
 const key = "7b".repeat(32);
@@ -135,10 +136,13 @@ describe("encrypted cross-machine event exchange", () => {
       await disableEventSync(target);
       expect((await doctorState(target)).checks.find((check) => check.id === "sync_safety")?.ok).toBe(false);
       await enableEventSync(target);
-      const recovered = await importEventBundle(target, bundle);
+      await rm(bundle);
+      const [recovered] = await recoverPreparedEventImports(target);
       expect(recovered.projectionHash).toBeTruthy();
       expect(await eventSyncStatus(target)).toMatchObject({ committedImports: 1, preparedImports: 0 });
-      const replayed = await importEventBundle(target, bundle);
+      const replayBundle = path.join(root, "events.replay.bundle.json");
+      await exportEventBundle(source, replayBundle);
+      const replayed = await importEventBundle(target, replayBundle);
       expect(replayed).toMatchObject({ idempotent: true, imported: 0, skipped: 1 });
       await writeFile(
         path.join(target.stateDir, "sync", "config.json"),

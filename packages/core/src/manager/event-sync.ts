@@ -75,6 +75,7 @@ interface ImportJournal {
   payloadHash: string;
   state: "prepared" | "committed";
   paths: string[];
+  entries?: EventEntry[];
   imported: number;
   skipped: number;
   projectionHash?: string;
@@ -491,6 +492,75 @@ async function withAffectedEventLocks<T>(
   return lockSessions(0);
 }
 
+function encodedEntries(incoming: Map<string, string>): EventEntry[] {
+  return [...incoming.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([relativePath, content]) => ({
+      path: relativePath,
+      sha256: sha256(content),
+      content: Buffer.from(content, "utf8").toString("base64"),
+    }));
+}
+
+function preparedJournalEntries(journal: ImportJournal): Map<string, string> {
+  if (!journal.entries) throw new Error(`prepared event import ${journal.payloadHash} has no durable authenticated entries`);
+  const incoming = decodeEntries(journal.entries);
+  if (journal.paths.length !== incoming.size || journal.paths.some((item, index) => item !== [...incoming.keys()][index])) {
+    throw new Error(`prepared event import ${journal.payloadHash} has inconsistent recovery paths`);
+  }
+  return incoming;
+}
+
+function assertSameIncoming(left: Map<string, string>, right: Map<string, string>): void {
+  if (left.size !== right.size) throw new Error("prepared event import does not match the supplied authenticated bundle");
+  for (const [relativePath, content] of left) {
+    if (right.get(relativePath) !== content) {
+      throw new Error(`prepared event import does not match the supplied authenticated bundle: ${relativePath}`);
+    }
+  }
+}
+
+async function publishPreparedImport(
+  state: SharedState,
+  payloadHash: string,
+  incoming: Map<string, string>,
+  journalPath: string,
+  prepared: ImportJournal,
+  options: { failAfter?: number; beforeProjection?: () => Promise<void> } = {},
+): Promise<EventSyncResult> {
+  await validateMergedEvents(state, incoming);
+  let imported = 0;
+  for (const [relativePath, content] of incoming) {
+    const target = path.join(state.stateDir, ...relativePath.split("/"));
+    await ensurePhysicalDirectoryChain(state.stateDir, path.dirname(target));
+    await assertPhysicalPathUnderRoot(state.stateDir, target, { allowMissing: true, leaf: "file" });
+    if (await writeTextExclusive(target, content)) imported += 1;
+    else if ((await readFile(target, "utf8")) !== content) throw new Error(`immutable event collision: ${relativePath}`);
+    if (options.failAfter !== undefined && imported >= options.failAfter) {
+      throw new Error("simulated interrupted event import");
+    }
+  }
+  await options.beforeProjection?.();
+  const finalProjectionHash = await rebuildImportedProjectionsWhileLocked(state, incoming);
+  const committed: ImportJournal = {
+    ...prepared,
+    state: "committed",
+    imported,
+    skipped: incoming.size - imported,
+    projectionHash: finalProjectionHash,
+  };
+  await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { leaf: "file" });
+  await writeTextAtomic(journalPath, `${JSON.stringify(committed, null, 2)}\n`);
+  return {
+    payloadHash,
+    entries: incoming.size,
+    imported,
+    skipped: incoming.size - imported,
+    projectionHash: finalProjectionHash,
+    idempotent: false,
+  };
+}
+
 export async function enableEventSync(state: SharedState, generateKey = false): Promise<void> {
   if (generateKey) {
     try {
@@ -647,6 +717,9 @@ export async function importEventBundle(
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+      if (journal && (journal.schemaVersion !== 1 || journal.payloadHash !== payloadHash)) {
+        throw new Error(`invalid event import journal: ${payloadHash}`);
+      }
       if (journal?.state === "committed") {
         let complete = true;
         for (const [relativePath, content] of incoming) {
@@ -674,8 +747,13 @@ export async function importEventBundle(
         }
       }
 
+      if (journal?.state === "prepared") {
+        const durableIncoming = preparedJournalEntries(journal);
+        assertSameIncoming(durableIncoming, incoming);
+        return publishPreparedImport(state, payloadHash, durableIncoming, journalPath, journal, options);
+      }
+
       await validateMergedEvents(state, incoming);
-      let imported = 0;
       let skipped = 0;
       for (const [relativePath, content] of incoming) {
         const target = path.join(state.stateDir, ...relativePath.split("/"));
@@ -695,40 +773,44 @@ export async function importEventBundle(
         payloadHash,
         state: "prepared",
         paths: [...incoming.keys()],
+        entries: encodedEntries(incoming),
         imported: 0,
         skipped,
       };
       await writeTextAtomic(journalPath, `${JSON.stringify(prepared, null, 2)}\n`);
-
-      for (const [relativePath, content] of incoming) {
-        const target = path.join(state.stateDir, ...relativePath.split("/"));
-        await ensurePhysicalDirectoryChain(state.stateDir, path.dirname(target));
-        await assertPhysicalPathUnderRoot(state.stateDir, target, { allowMissing: true, leaf: "file" });
-        if (await writeTextExclusive(target, content)) imported += 1;
-        else if ((await readFile(target, "utf8")) !== content) throw new Error(`immutable event collision: ${relativePath}`);
-        if (options.failAfter !== undefined && imported >= options.failAfter) {
-          throw new Error("simulated interrupted event import");
-        }
-      }
-      await options.beforeProjection?.();
-      const finalProjectionHash = await rebuildImportedProjectionsWhileLocked(state, incoming);
-      const committed: ImportJournal = {
-        ...prepared,
-        state: "committed",
-        imported,
-        skipped: incoming.size - imported,
-        projectionHash: finalProjectionHash,
-      };
-      await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { leaf: "file" });
-      await writeTextAtomic(journalPath, `${JSON.stringify(committed, null, 2)}\n`);
-      return {
-        payloadHash,
-        entries: incoming.size,
-        imported,
-        skipped: incoming.size - imported,
-        projectionHash: finalProjectionHash,
-        idempotent: false,
-      };
+      return publishPreparedImport(state, payloadHash, incoming, journalPath, prepared, options);
     });
+  });
+}
+
+export async function recoverPreparedEventImports(state: SharedState): Promise<EventSyncResult[]> {
+  return withStateFileLock(state, "event-sync-import", async () => {
+    const config = await readConfig(state);
+    if (!config.enabled || config.transport !== "encrypted-bundle") throw new Error("event exchange is disabled");
+    await assertPhysicalPathUnderRoot(state.stateDir, importsDirectory(state), { leaf: "directory" });
+    const results: EventSyncResult[] = [];
+    for (const entry of (await readdir(importsDirectory(state), { withFileTypes: true }))
+      .filter((item) => item.isFile() && item.name.endsWith(".json"))
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const journalPath = path.join(importsDirectory(state), entry.name);
+      await assertPhysicalPathUnderRoot(state.stateDir, journalPath, { leaf: "file" });
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as ImportJournal;
+      const filePayloadHash = entry.name.slice(0, -".json".length);
+      if (
+        journal.schemaVersion !== 1 ||
+        journal.payloadHash !== filePayloadHash ||
+        !/^[a-f0-9]{64}$/.test(journal.payloadHash) ||
+        !Array.isArray(journal.paths) ||
+        (journal.state !== "prepared" && journal.state !== "committed")
+      ) {
+        throw new Error(`invalid event import journal: ${entry.name}`);
+      }
+      if (journal.state === "committed") continue;
+      const incoming = preparedJournalEntries(journal);
+      results.push(await withAffectedEventLocks(state, incoming, () => (
+        publishPreparedImport(state, journal.payloadHash, incoming, journalPath, journal)
+      )));
+    }
+    return results;
   });
 }
