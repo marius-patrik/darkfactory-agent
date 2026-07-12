@@ -68,7 +68,16 @@ export async function writeTextAtomic(filePath: string, content: string, mode = 
   } finally {
     await handle.close();
   }
-  await rename(temporary, filePath);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(temporary, filePath);
+      break;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || (code !== "EPERM" && code !== "EACCES") || attempt >= 20) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+    }
+  }
   if (process.platform !== "win32") await chmod(filePath, mode);
 }
 
