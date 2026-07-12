@@ -48,6 +48,29 @@ export interface GraphData {
   edges: { source: string; target: string }[];
 }
 
+export interface TraceStep {
+  seq: number;
+  tool: string;
+  summary: string;
+  paths: string[];
+  write?: boolean;
+}
+
+export interface TraceSummary {
+  id: string;
+  kind: "query" | "mutation" | "chat";
+  input: string;
+  startedAt: string;
+  durationMs: number;
+  notation: string;
+  stepCount: number;
+}
+
+export interface QueryTrace extends TraceSummary {
+  steps: TraceStep[];
+  answer: string;
+}
+
 export interface AppConfig {
   providers: string[];
   defaultProvider: string;
@@ -67,5 +90,7 @@ export const api = {
   log: () => get<LogEntry[]>("/api/log"),
   validate: () => get<ConformanceReport>("/api/validate"),
   graph: () => get<GraphData>("/api/graph"),
+  traces: () => get<TraceSummary[]>("/api/traces"),
+  trace: (id: string) => get<QueryTrace>(`/api/trace?id=${encodeURIComponent(id)}`),
   config: () => get<AppConfig>("/api/config"),
 };

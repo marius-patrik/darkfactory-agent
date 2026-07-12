@@ -3,6 +3,7 @@ import type { KnowledgeBase } from "../okf/index.js";
 import { resolveModel, type ProviderName } from "../providers/index.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildReadTools, buildWriteTools, formatTree } from "./tools.js";
+import { TraceRecorder, TraceStore } from "./trace.js";
 
 const MAX_STEPS = 12;
 
@@ -14,12 +15,14 @@ export interface AgentOptions {
 export interface QueryResult {
   answer: string;
   steps: number;
+  traceId: string;
 }
 
 export interface MutationResult {
   summary: string;
   filesChanged: string[];
   steps: number;
+  traceId: string;
 }
 
 async function promptContext(kb: KnowledgeBase, mode: "query" | "mutate" | "chat") {
@@ -31,6 +34,10 @@ function pickModel(options: AgentOptions): Promise<LanguageModel> {
   return resolveModel(options.provider, options.model);
 }
 
+function traceStore(kb: KnowledgeBase): TraceStore {
+  return new TraceStore(kb.bundle.root);
+}
+
 /** Read-only Q&A over the bundle. */
 export async function runQuery(
   kb: KnowledgeBase,
@@ -38,14 +45,17 @@ export async function runQuery(
   options: AgentOptions = {}
 ): Promise<QueryResult> {
   const ctx = await promptContext(kb, "query");
+  const recorder = new TraceRecorder();
   const result = await generateText({
     model: await pickModel(options),
     system: buildSystemPrompt(ctx),
     prompt: question,
-    tools: buildReadTools(kb),
+    tools: buildReadTools(kb, recorder),
     stopWhen: stepCountIs(MAX_STEPS),
   });
-  return { answer: result.text, steps: result.steps.length };
+  const trace = recorder.finalize("query", question, result.text);
+  await traceStore(kb).save(trace);
+  return { answer: result.text, steps: result.steps.length, traceId: trace.id };
 }
 
 /** Knowledge add/update — full toolset, low temperature. */
@@ -55,16 +65,24 @@ export async function runMutation(
   options: AgentOptions = {}
 ): Promise<MutationResult> {
   const ctx = await promptContext(kb, "mutate");
+  const recorder = new TraceRecorder();
   const filesChanged = new Set<string>();
   const result = await generateText({
     model: await pickModel(options),
     system: buildSystemPrompt(ctx),
     prompt: instruction,
-    tools: { ...buildReadTools(kb), ...buildWriteTools(kb, filesChanged) },
+    tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
     stopWhen: stepCountIs(MAX_STEPS),
     temperature: 0.2,
   });
-  return { summary: result.text, filesChanged: [...filesChanged].sort(), steps: result.steps.length };
+  const trace = recorder.finalize("mutation", instruction, result.text);
+  await traceStore(kb).save(trace);
+  return {
+    summary: result.text,
+    filesChanged: [...filesChanged].sort(),
+    steps: result.steps.length,
+    traceId: trace.id,
+  };
 }
 
 /** Interactive chat — full toolset, streaming. Caller converts to a UI stream response. */
@@ -74,13 +92,30 @@ export async function streamChat(
   options: AgentOptions = {}
 ) {
   const ctx = await promptContext(kb, "chat");
+  const recorder = new TraceRecorder();
   const filesChanged = new Set<string>();
+  // The user turn that started this run, for the trace record.
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  const input =
+    typeof lastUser?.content === "string"
+      ? lastUser.content
+      : lastUser?.content
+          ?.map((part) => (part.type === "text" ? part.text : ""))
+          .join(" ")
+          .trim() ?? "(chat)";
+
   const result = streamText({
     model: await pickModel(options),
     system: buildSystemPrompt(ctx),
     messages,
-    tools: { ...buildReadTools(kb), ...buildWriteTools(kb, filesChanged) },
+    tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
     stopWhen: stepCountIs(MAX_STEPS),
+    onFinish: async ({ text }) => {
+      // Persist only turns that actually touched the bundle.
+      if (recorder.steps.length > 0) {
+        await traceStore(kb).save(recorder.finalize("chat", input, text));
+      }
+    },
   });
   return { result, filesChanged };
 }

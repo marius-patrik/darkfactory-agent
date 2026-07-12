@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { KnowledgeBase } from "../okf/index.js";
 import type { TreeNode } from "../okf/types.js";
+import type { TraceRecorder } from "./trace.js";
 
 /** Bundle-relative concept path, e.g. "/tables/customers.md". */
 const conceptPath = z
@@ -25,7 +26,7 @@ const logSummary = z
     "One past-tense sentence for the update log, with bundle-relative links, e.g. 'Added [Billing API](/apis/billing-api.md).'"
   );
 
-export function buildReadTools(kb: KnowledgeBase) {
+export function buildReadTools(kb: KnowledgeBase, trace?: TraceRecorder) {
   return {
     search_knowledge: tool({
       description:
@@ -37,6 +38,7 @@ export function buildReadTools(kb: KnowledgeBase) {
       }),
       execute: async ({ query, type, tags }) => {
         const hits = await kb.search(query, { type, tags });
+        trace?.record("search_knowledge", query, hits.map((h) => h.path));
         if (hits.length > 0) return hits;
         // Keyword miss ≠ knowledge absent. Put the map in the tool result so
         // the model's next step is to read plausible concepts, not give up.
@@ -54,6 +56,7 @@ export function buildReadTools(kb: KnowledgeBase) {
       inputSchema: z.object({ path: conceptPath }),
       execute: async ({ path }) => {
         const c = await kb.readConcept(path);
+        trace?.record("read_concept", c.path, [c.path]);
         return { path: c.path, frontmatter: c.frontmatter, body: c.body };
       },
     }),
@@ -61,18 +64,24 @@ export function buildReadTools(kb: KnowledgeBase) {
       description:
         "List the bundle's directory tree with concept types/titles/descriptions. Use to understand structure and decide where new concepts belong.",
       inputSchema: z.object({}),
-      execute: async () => formatTree(await kb.listTree()),
+      execute: async () => {
+        trace?.record("list_directory", "", []);
+        return formatTree(await kb.listTree());
+      },
     }),
     lint_knowledge: tool({
       description:
         "Graph health check: orphaned concepts (nothing links to them) and broken links. Use to find what needs wiring into the graph or fixing.",
       inputSchema: z.object({}),
-      execute: async () => kb.lint(),
+      execute: async () => {
+        trace?.record("lint_knowledge", "", []);
+        return kb.lint();
+      },
     }),
   };
 }
 
-export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>) {
+export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, trace?: TraceRecorder) {
   return {
     write_concept: tool({
       description:
@@ -86,6 +95,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>) {
       execute: async ({ path, frontmatter, body, log_summary }) => {
         const c = await kb.writeConcept(path, frontmatter, body, log_summary);
         filesChanged.add(c.path);
+        trace?.record("write_concept", c.path, [c.path], true);
         return { written: c.path };
       },
     }),
@@ -126,6 +136,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>) {
           log_summary
         );
         filesChanged.add(c.path);
+        trace?.record("patch_concept", c.path, [c.path], true);
         return { patched: c.path };
       },
     }),
@@ -139,6 +150,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>) {
       execute: async ({ path, log_summary }) => {
         await kb.deleteConcept(path, log_summary);
         filesChanged.add(path);
+        trace?.record("delete_concept", path, [path], true);
         return { deleted: path };
       },
     }),

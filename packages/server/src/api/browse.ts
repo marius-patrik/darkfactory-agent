@@ -1,5 +1,5 @@
 import express, { type Router } from "express";
-import { BundleError, type KnowledgeBase } from "@okf-agent/core";
+import { BundleError, TraceStore, type KnowledgeBase } from "@okf-agent/core";
 import { availableProviders, loadProviderConfig } from "@okf-agent/core";
 
 /** Deterministic browse API — no LLM involved, browsing never costs tokens. */
@@ -40,6 +40,33 @@ export function browseRouter(kb: KnowledgeBase): Router {
 
   router.get("/graph", async (_req, res) => {
     res.json(await kb.graph());
+  });
+
+  const traces = new TraceStore(kb.bundle.root);
+
+  router.get("/traces", async (_req, res) => {
+    // List view: omit full steps/answers to keep the payload light.
+    const all = await traces.list();
+    res.json(
+      all.map(({ id, kind, input, startedAt, durationMs, notation, steps }) => ({
+        id,
+        kind,
+        input,
+        startedAt,
+        durationMs,
+        notation,
+        stepCount: steps.length,
+      }))
+    );
+  });
+
+  router.get("/trace", async (req, res) => {
+    const trace = await traces.read(String(req.query.id ?? ""));
+    if (!trace) {
+      res.status(404).json({ error: "trace not found" });
+      return;
+    }
+    res.json(trace);
   });
 
   router.get("/types", async (_req, res) => {
