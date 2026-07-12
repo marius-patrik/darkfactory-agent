@@ -279,6 +279,51 @@ test("uses the review API without placing credentials in model input", async () 
   assert.match(request.init.body, /non_blocking_notes/);
   assert.equal(JSON.parse(request.init.body).temperature, 1);
   assert.equal(JSON.parse(request.init.body).max_tokens, 8192);
+  assert.match(JSON.parse(request.init.body).prompt_cache_key, /^[a-f0-9]{64}$/);
+});
+
+test("retries one transient provider failure with the same cached prompt", async () => {
+  const bodies = [];
+  let calls = 0;
+  const fetchImpl = async (_url, init) => {
+    calls += 1;
+    bodies.push(init.body);
+    if (calls === 1) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(validReview) } }] }), {
+      status: 200,
+    });
+  };
+  const waits = [];
+  const review = await requestReview({
+    prompt: "large review",
+    credential: { access_token: "token", expires_at: Math.floor(Date.now() / 1000) + 3600 },
+    fetchImpl,
+    env: {},
+    waitImpl: async (milliseconds) => waits.push(milliseconds),
+  });
+  assert.equal(review.approved, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(waits, [1_000]);
+  assert.equal(bodies[0], bodies[1]);
+});
+
+test("does not retry a non-retryable provider response", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return new Response("bad request", { status: 400 });
+  };
+  await assert.rejects(
+    requestReview({
+      prompt: "review",
+      credential: { access_token: "token", expires_at: Math.floor(Date.now() / 1000) + 3600 },
+      fetchImpl,
+      env: {},
+      waitImpl: async () => assert.fail("non-retryable response must not wait"),
+    }),
+    /HTTP 400/,
+  );
+  assert.equal(calls, 1);
 });
 
 test("reports completion truncation distinctly from malformed JSON", async () => {
