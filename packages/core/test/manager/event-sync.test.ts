@@ -287,6 +287,46 @@ describe("encrypted cross-machine event exchange", () => {
       await expect(
         exportEventBundle(secretOrchestrator, path.join(root, "secret-orchestrator.bundle.json")),
       ).rejects.toThrow("secret-like");
+
+      const alphabeticSecret = "dQwErTyUiOpAsDfGhJkLzXcVbNmQwErTyUiOpAsD";
+      const alphabeticMemory = await exchangeState(path.join(root, "alphabetic-memory"));
+      await rememberMemory(alphabeticMemory, {
+        scope: "project",
+        subject: "Andromeda",
+        predicate: "opaque-value",
+        value: alphabeticSecret,
+        evidence,
+      });
+      await expect(exportEventBundle(alphabeticMemory, path.join(root, "alphabetic-memory.bundle.json"))).rejects.toThrow(
+        "secret-like",
+      );
+
+      const alphabeticSession = await exchangeState(path.join(root, "alphabetic-session"));
+      await createSession(alphabeticSession, {
+        sessionId: "alphabetic-session",
+        provider: "codex",
+        model: "gpt-5",
+        mode: "task",
+        workdir: "/workspace",
+      });
+      await withSessionWriteTransaction(alphabeticSession, "alphabetic-session", async (transaction) => {
+        const turnId = await transaction.beginTurn();
+        await transaction.appendMessage(turnId, { role: "user", content: alphabeticSecret });
+        await transaction.completeTurn(turnId);
+      });
+      await expect(exportEventBundle(alphabeticSession, path.join(root, "alphabetic-session.bundle.json"))).rejects.toThrow(
+        "secret-like",
+      );
+
+      const alphabeticOrchestrator = await exchangeState(path.join(root, "alphabetic-orchestrator"));
+      await initializeOrchestratorState(alphabeticOrchestrator, "alphabetic-orchestrator", "codex", "gpt-5");
+      await appendOrchestratorLedger(alphabeticOrchestrator, "alphabetic-orchestrator", {
+        action: "probe",
+        note: alphabeticSecret,
+      });
+      await expect(
+        exportEventBundle(alphabeticOrchestrator, path.join(root, "alphabetic-orchestrator.bundle.json")),
+      ).rejects.toThrow("secret-like");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

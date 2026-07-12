@@ -255,6 +255,15 @@ function secretLikeText(value: string): boolean {
   for (const candidate of value.match(/[A-Za-z0-9_+\/-]{32,}={0,2}/g) ?? []) {
     if (/^[a-f0-9]{64}$/.test(candidate)) continue;
     if (/[A-Za-z]/.test(candidate) && (/[0-9]/.test(candidate) || /[_+\/-]/.test(candidate))) return true;
+    if (/[a-z]/.test(candidate) && /[A-Z]/.test(candidate)) {
+      const counts = new Map<string, number>();
+      for (const character of candidate) counts.set(character, (counts.get(character) ?? 0) + 1);
+      const entropy = [...counts.values()].reduce((total, count) => {
+        const probability = count / candidate.length;
+        return total - probability * Math.log2(probability);
+      }, 0);
+      if (entropy >= 4) return true;
+    }
   }
   return false;
 }
