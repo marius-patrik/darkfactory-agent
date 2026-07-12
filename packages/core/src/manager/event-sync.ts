@@ -263,10 +263,10 @@ function secretLikeText(value: string): boolean {
   const entropyInput = value
     .replace(/\bfile:\/\/[^\s)]+/gi, "")
     // Canonical GitHub repository URLs and an adjacent, explicitly labelled
-    // repository lineage are identifiers, not bearer material. Keep this
-    // exemption deliberately narrower than arbitrary URL paths: routes,
-    // queries, and unlabelled slash-delimited strings still reach the generic
-    // entropy guard below.
+    // repository lineage are identifiers, not bearer material. The lineage
+    // exemption intentionally accepts one to three identifier segments with at
+    // least two dots or hyphens. Routes, queries, and unlabelled slash-delimited
+    // strings still reach the generic entropy guard below.
     .replace(
       /\bhttps?:\/\/github\.com\/[a-z0-9](?:[a-z0-9.-]{0,38}[a-z0-9])?\/[a-z0-9][a-z0-9._-]{0,99}(?=[\s),;]|$)/gi,
       "",

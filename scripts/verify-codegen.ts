@@ -9,7 +9,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 const core = join(root, "packages/core/src/core");
@@ -41,11 +41,16 @@ function filesUnder(directory: string): string[] {
   return files.sort();
 }
 
-function normalizedGeneratedText(file: string): string {
+const GENERATED_TEXT_EXTENSIONS = new Set([".go", ".py", ".pyi", ".ts"]);
+
+function comparableGeneratedContent(file: string): Buffer {
+  const content = readFileSync(file);
+  if (!GENERATED_TEXT_EXTENSIONS.has(extname(file))) return content;
   // Git may materialize generated text as CRLF on Windows while the pinned
   // generators emit LF. Codegen freshness is a content invariant, so compare
-  // one canonical newline representation without weakening any other byte.
-  return readFileSync(file, "utf8").replaceAll("\r\n", "\n");
+  // one canonical newline representation. Unknown and future binary artifacts
+  // remain byte-exact.
+  return Buffer.from(content.toString("utf8").replaceAll("\r\n", "\n"));
 }
 
 function assertTreesEqual(expected: string, actual: string, label: string): void {
@@ -57,7 +62,7 @@ function assertTreesEqual(expected: string, actual: string, label: string): void
     throw new Error(`${label} file set differs; missing after generation: ${missing.join(", ") || "none"}; stale in checkout: ${stale.join(", ") || "none"}`);
   }
   for (const file of expectedFiles) {
-    if (normalizedGeneratedText(join(expected, file)) !== normalizedGeneratedText(join(actual, file))) {
+    if (!comparableGeneratedContent(join(expected, file)).equals(comparableGeneratedContent(join(actual, file)))) {
       throw new Error(`${label} differs from clean generation: ${file}`);
     }
   }
