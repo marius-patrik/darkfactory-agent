@@ -622,6 +622,12 @@ test("repository doctor performs deterministic diagnosis and explicit per-findin
   assert.match(source, /df:doctor/);
   assert.match(source, /parseDoctorMode/);
   assert.match(source, /mode === "report"/);
+  assert.match(source, /mode === "report"[\s\S]+requiredEnv\("DF_LEDGER_TOKEN"\)/);
+  assert.match(source, /ledgerToken === token/);
+  assert.match(source, /publishDoctorReport\(github, options\.ledgerGithub/);
+  assert.match(source, /writeDoctorLedger\(ledgerGithub/);
+  assert.doesNotMatch(source, /writeDoctorLedger\((?:github|options\.github)/);
+  assert.doesNotMatch(source, /ensureLabels/);
   assert.match(source, /repair mode is not implemented/);
   assert.match(source, /writeRunLedger/);
   assert.match(source, /model_calls:\s*0/);
@@ -632,9 +638,14 @@ test("repository doctor performs deterministic diagnosis and explicit per-findin
 
 test("repository doctor workflow schedules trusted diagnosis with explicit report authority", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-audit.yml", import.meta.url), "utf8");
+  const parsed = loadYaml(workflow);
+  const steps = parsed.jobs["repository-doctor"].steps;
+  const targetToken = steps.find((step: any) => step.name === "Mint least-privilege target doctor token");
+  const ledgerToken = steps.find((step: any) => step.name === "Mint repository-scoped ledger token");
+  const doctorStep = steps.find((step: any) => step.name === "Run deterministic repository doctor");
   const gate = workflow.indexOf("Validate trusted control ref");
   const checkout = workflow.indexOf("Checkout trusted doctor source");
-  const token = workflow.indexOf("Mint least-privilege mp-agents token");
+  const token = workflow.indexOf("Mint least-privilege target doctor token");
 
   assert.match(workflow, /name: DarkFactory Repository Doctor/);
   assert.match(workflow, /^\s+schedule:\s*$/m);
@@ -650,11 +661,19 @@ test("repository doctor workflow schedules trusted diagnosis with explicit repor
   assert.match(workflow, /Validate manual target/);
   assert.match(workflow, /DF_MANUAL_DOCTOR_REPO: \$\{\{ inputs\.repo \}\}/);
   assert.match(workflow, /write_issues:/);
-  assert.match(workflow, /permission-actions:\s+read/);
-  assert.doesNotMatch(workflow, /permission-administration:\s+write/);
-  assert.match(workflow, /permission-contents: \$\{\{/);
-  assert.match(workflow, /permission-issues: \$\{\{/);
-  assert.doesNotMatch(workflow, /permission-pull-requests:\s+write/);
+  assert.equal(targetToken.with["permission-administration"], "read");
+  assert.equal(targetToken.with["permission-actions"], "read");
+  assert.equal(targetToken.with["permission-checks"], "read");
+  assert.equal(targetToken.with["permission-contents"], "read");
+  assert.match(targetToken.with["permission-issues"], /write.*read/);
+  assert.equal(targetToken.with["permission-pull-requests"], "read");
+  assert.equal(targetToken.with["permission-secrets"], "read");
+  assert.equal(targetToken.with["permission-statuses"], "read");
+  assert.equal(ledgerToken.with.repositories, "darkfactory-data");
+  assert.equal(ledgerToken.with["permission-contents"], "write");
+  assert.match(ledgerToken.if, /schedule.*write_issues/);
+  assert.match(doctorStep.env.DF_LEDGER_TOKEN, /ledger-token\.outputs\.token/);
+  assert.equal(steps.some((step: any) => /label/i.test(step.name || "") && /POST|PATCH/.test(step.run || "")), false);
   assert.match(workflow, /DF_DOCTOR_ALL/);
   assert.match(workflow, /DF_DOCTOR_MODE/);
   assert.match(workflow, /repository-doctor-report\.json/);

@@ -13,7 +13,7 @@ The manual workflow it absorbs is a human-driven orchestrator fanning out worker
 
 ## Identity and current state
 
-- GitHub App **mp-agents** (App ID 3827239), installed account-wide (`repository_selection: all`, contents + PRs write). Secrets `DARK_FACTORY_APP_ID` / `DARK_FACTORY_PRIVATE_KEY` configured; `CODEX_AUTH_JSON` available for worker auth.
+- GitHub App **mp-agents** (App ID 3827239), installed account-wide (`repository_selection: all`). Product workflows retain their required contents/actions/issues/PR write grants; repository doctor additionally requires read-only administration, checks, secrets, and commit-status visibility and downscopes each minted token. Secrets `DARK_FACTORY_APP_ID` / `DARK_FACTORY_PRIVATE_KEY` configured; `CODEX_AUTH_JSON` available for worker auth.
 - Existing assets: webhook server (`src/bot.ts`, `src/server.ts`), managed-file sync (`src/managed-sync.ts`, `src/managed-files.ts`), isolated CI Codex reviewer, repository doctor, and repository-setup enforcement. The current managed-sync adapter still carries the pre-Andromeda repository/path contract; #255 migrates it to canonical Andromeda-data at `$AGENTS_HOME`.
 - Runtime strategy: GitHub Actions owns deterministic schedule, dispatch, and control-repository events. Managed repository `df:ready` labels and `/df run` comments are picked up by the orchestrator or webhook path without exposing control-repository secrets. Model-backed workers run only on trusted `df-local` self-hosted runners through the canonical `agents` launcher and Agent OS state.
 

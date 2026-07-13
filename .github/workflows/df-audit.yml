@@ -80,21 +80,37 @@ jobs:
           pwsh -NoLogo -NoProfile -File $agentsLauncher state doctor --json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Mint least-privilege mp-agents token
+      - name: Mint least-privilege target doctor token
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.DARK_FACTORY_APP_ID }}
           private-key: ${{ secrets.DARK_FACTORY_PRIVATE_KEY }}
           owner: marius-patrik
+          permission-administration: read
           permission-actions: read
-          permission-contents: ${{ (github.event_name == 'schedule' || inputs.write_issues) && 'write' || 'read' }}
+          permission-checks: read
+          permission-contents: read
           permission-issues: ${{ (github.event_name == 'schedule' || inputs.write_issues) && 'write' || 'read' }}
           permission-pull-requests: read
+          permission-secrets: read
+          permission-statuses: read
+
+      - name: Mint repository-scoped ledger token
+        if: ${{ github.event_name == 'schedule' || inputs.write_issues }}
+        id: ledger-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DARK_FACTORY_APP_ID }}
+          private-key: ${{ secrets.DARK_FACTORY_PRIVATE_KEY }}
+          owner: marius-patrik
+          repositories: darkfactory-data
+          permission-contents: write
 
       - name: Run deterministic repository doctor
         env:
           DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
+          DF_LEDGER_TOKEN: ${{ steps.ledger-token.outputs.token }}
           DF_CONTROL_REPO: marius-patrik/DarkFactory
           DF_TARGET_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.repo || github.repository }}
           DF_DOCTOR_ALL: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.repo)) && 'true' || 'false' }}

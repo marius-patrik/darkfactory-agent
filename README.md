@@ -44,10 +44,14 @@ Create a GitHub App and configure:
   - `Pull requests`
   - `Ping`
 - Repository permissions:
+  - Administration: Read-only
   - Actions: Read and write
+  - Checks: Read-only
+  - Commit statuses: Read-only
   - Contents: Read and write
   - Issues: Read and write
   - Pull requests: Read and write
+  - Secrets: Read-only
   - Metadata: Read-only, granted by GitHub automatically
 
 `Contents: Read and write` is required so Dark Factory can create managed setup branches. `Pull requests: Read and write` is required so it can open setup PRs. `Actions: Read and write` is required so the deployed webhook server can dispatch the orchestrator workflow for low-latency `df:ready` and `/df run` handling.
@@ -102,9 +106,25 @@ open PR health, issue dependencies, managed-file drift, product layout,
 submodule pointers, trusted launcher/runner prerequisites, and explicitly
 supplied local checkout state. It also checks recent canonical Agent OS worker
 sessions for task-clone cwd isolation when `$AGENTS_HOME` is observable.
+Machine-local absolute paths, Git stderr, and canonical session IDs are never
+serialized into JSON, public findings, or repair issues; those surfaces report
+only aggregate violation classes and counts.
 Managed `Validate`, `Codex Review`, and future `DarkFactory Autoreview` gates
 must use their exact context names and the GitHub Actions producer App ID
 `15368`; a same-name check from any other App is critical drift.
+
+The doctor target token requests only read access to administration, actions,
+checks, contents, pull requests, secrets, and statuses; issue access becomes
+write only in explicit report mode. Report mode mints a second token restricted
+to `darkfactory-data` with contents write for the ledger. The target token is
+never a ledger fallback, diagnosis mints no write token, and report mode never
+creates or patches repository labels. Missing required labels fail preflight so
+the managed taxonomy must be provisioned separately. If Administration: Read is
+not granted to the GitHub App, token minting or protection inspection fails
+visibly; protection is never inferred from an ambient user token.
+Only exact DarkFactory App actors (`darkfactory-agent[bot]` and the retained
+`mp-agents[bot]` identity) can own reconciled `df-doctor:` issues; generic
+`github-actions[bot]` issue text is always treated as untrusted data.
 
 Diagnosis is the default and makes no GitHub writes or repairs. The explicit
 `--write-issues` mode reconciles one issue per stable `df-doctor:` finding and

@@ -200,8 +200,20 @@ async function runDoctor(args: string[]): Promise<void> {
   const credentials = loadAppCredentials();
   const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
   const owner = options.all ? CONTROL_OWNER : options.target.split("/", 1)[0];
-  const octokit = await getInstallationOctokit(app, owner);
+  const octokit = await getScopedInstallationOctokit(app, owner, {
+    administration: "read",
+    actions: "read",
+    checks: "read",
+    contents: "read",
+    issues: options.writeIssues ? "write" : "read",
+    pull_requests: "read",
+    secrets: "read",
+    statuses: "read"
+  });
   const github = createDoctorRequester(octokit);
+  const ledgerGithub = options.writeIssues
+    ? createDoctorRequester(await getScopedInstallationOctokit(app, CONTROL_OWNER, { contents: "write" }, ["darkfactory-data"]))
+    : undefined;
   const moduleUrl = new URL("../.github/scripts/df-audit.mjs", import.meta.url);
   const doctor = await import(moduleUrl.href) as {
     runRepositoryDoctor: (github: unknown, options: Record<string, unknown>) => Promise<unknown[]>;
@@ -214,6 +226,7 @@ async function runDoctor(args: string[]): Promise<void> {
     target: options.target,
     all: options.all,
     mode: options.writeIssues ? "report" : "diagnose",
+    ledgerGithub,
     trigger: "cli",
     localPath: options.localPath,
     agentsHome: options.agentsHome
@@ -224,6 +237,29 @@ async function runDoctor(args: string[]): Promise<void> {
 }
 
 async function getInstallationOctokit(app: App, owner: string): Promise<Octokit> {
+  return app.getInstallationOctokit(await getInstallationId(app, owner));
+}
+
+async function getScopedInstallationOctokit(
+  app: App,
+  owner: string,
+  permissions: Record<string, "read" | "write">,
+  repositoryNames?: string[]
+): Promise<Octokit> {
+  const installationId = await getInstallationId(app, owner);
+  const authentication = await app.octokit.auth({
+    type: "installation",
+    installationId,
+    permissions,
+    ...(repositoryNames ? { repositoryNames } : {})
+  }) as unknown;
+  if (!isRecord(authentication) || typeof authentication.token !== "string" || !authentication.token) {
+    throw new Error("GitHub returned an invalid scoped installation authentication response");
+  }
+  return new Octokit({ auth: authentication.token });
+}
+
+async function getInstallationId(app: App, owner: string): Promise<number> {
   const { data } = await app.octokit.request("GET /app/installations");
 
   if (!Array.isArray(data)) {
@@ -242,7 +278,7 @@ async function getInstallationOctokit(app: App, owner: string): Promise<Octokit>
     throw new Error(`GitHub App is not installed for owner ${owner}`);
   }
 
-  return app.getInstallationOctokit(installation.id);
+  return installation.id;
 }
 
 function createOctokitRequester(octokit: Octokit): GitHubRequester {

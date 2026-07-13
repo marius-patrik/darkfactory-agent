@@ -1,10 +1,7 @@
 import {
   AGENT_OS_DATA_REPO,
   DARK_FACTORY_DATA_REPO,
-  PLANNING_LABELS,
-  WORK_LABELS,
   createGithubClient,
-  ensureLabels,
   findAuditMarker,
   findPrdMarker,
   getBranchProtection,
@@ -55,11 +52,8 @@ const HEALTHY_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 const RED_CONCLUSIONS = new Set(["action_required", "cancelled", "failure", "startup_failure", "stale", "timed_out"]);
 const DOCTOR_MODES = new Set(["diagnose", "report"]);
 const CONTROL_REPO = { owner: "marius-patrik", repo: "DarkFactory" };
-const DOCTOR_ISSUE_AUTHORS = new Set(["darkfactory-agent[bot]", "github-actions[bot]", "mp-agents[bot]"]);
-export const DOCTOR_REPORT_LABELS = [
-  ...PLANNING_LABELS.filter((label) => ["P0", "P1", "P2", "df:doctor"].includes(label.name)),
-  ...WORK_LABELS.filter((label) => label.name === "df:class:mechanical")
-];
+const DOCTOR_ISSUE_AUTHORS = new Set(["darkfactory-agent[bot]", "mp-agents[bot]"]);
+export const DOCTOR_REPORT_LABEL_NAMES = ["P0", "P1", "P2", "df:doctor", "df:class:mechanical"];
 const GENERATED_SEGMENTS = new Set([
   ".cache",
   ".darkfactory-verification",
@@ -86,6 +80,12 @@ async function main() {
   const token = requiredEnv("DARK_FACTORY_TOKEN");
   const controlRepo = parseRepo(requiredEnv("DF_CONTROL_REPO"));
   const mode = parseDoctorMode(process.env.DF_DOCTOR_MODE || "diagnose");
+  let ledgerGithub;
+  if (mode === "report") {
+    const ledgerToken = requiredEnv("DF_LEDGER_TOKEN");
+    if (ledgerToken === token) throw new Error("Repository-doctor target and ledger tokens must be distinct authorities.");
+    ledgerGithub = createGithubClient(ledgerToken, "darkfactory-repository-doctor-ledger");
+  }
   const target = process.env.DF_TARGET_REPO?.trim() || "";
   const reports = await runRepositoryDoctor(createGithubClient(token, "darkfactory-repository-doctor"), {
     controlRepo,
@@ -93,6 +93,7 @@ async function main() {
     target: target || repoName(controlRepo),
     trigger: process.env.DF_TRIGGER || "unknown",
     mode,
+    ledgerGithub,
     localPath: process.env.DF_LOCAL_PATH?.trim() || "",
     agentsHome: (process.env.DF_AGENTS_HOME || process.env.AGENTS_HOME || "").trim(),
     provenSecrets: (process.env.DF_PROVEN_SECRETS || "").split(",").map((item) => item.trim()).filter(Boolean)
@@ -118,6 +119,7 @@ export function parseDoctorMode(value) {
 
 export async function runRepositoryDoctor(github, options = {}) {
   const mode = parseDoctorMode(options.mode || "diagnose");
+  assertDoctorReportAuthorities(mode, github, options.ledgerGithub);
   const controlRepo = options.controlRepo || CONTROL_REPO;
   const registry = options.registry || await readManagedRepoRegistry(options.root || process.cwd());
   const targets = await resolveDoctorTargets(github, controlRepo, registry, options);
@@ -153,14 +155,38 @@ export async function runRepositoryDoctor(github, options = {}) {
     });
 
     if (mode === "report") {
-      await ensureLabels(github, repository, DOCTOR_REPORT_LABELS);
-      report.actions.push(...await reconcileDoctorIssues(github, repository, report.findings));
-      report.actions.push(await writeDoctorLedger(github, repository, report));
+      await publishDoctorReport(github, options.ledgerGithub, repository, report);
     }
     reports.push(report);
   }
 
   return reports;
+}
+
+export function assertDoctorReportAuthorities(mode, targetGithub, ledgerGithub) {
+  if (mode !== "report") return;
+  if (!ledgerGithub) {
+    throw new Error("Repository-doctor report mode requires a distinct repository-scoped ledger client; target authority is never a ledger fallback.");
+  }
+  if (ledgerGithub === targetGithub) {
+    throw new Error("Repository-doctor target and ledger clients must be distinct authorities.");
+  }
+}
+
+export async function assertDoctorReportLabels(github, repository) {
+  const available = await listRepositoryLabelNames(github, repository);
+  const missing = DOCTOR_REPORT_LABEL_NAMES.filter((name) => !available.has(name));
+  if (missing.length) {
+    throw new Error(`Repository-doctor report preflight failed for ${repoName(repository)}: required labels are missing (${missing.join(", ")}); label taxonomy must be provisioned outside report mode.`);
+  }
+}
+
+export async function publishDoctorReport(github, ledgerGithub, repository, report) {
+  await assertDoctorReportLabels(github, repository);
+  report.actions.push(...await reconcileDoctorIssues(github, repository, report.findings));
+  report.actions.push(await writeDoctorLedger(ledgerGithub, repository, report));
+  report.actions.push(...await retireLegacyAuditIssues(github, repository));
+  return report;
 }
 
 async function resolveDoctorTargets(github, controlRepo, registry, options) {
@@ -208,7 +234,7 @@ async function auditTargetRepository(github, repository, metadata, options) {
   findings.push(...await auditRetiredAuthorityNames(github, repository, defaultBranch));
 
   for (const branch of ["main", "dev"].filter((name) => branchNames.has(name))) {
-    findings.push(...await auditHealth(repository, branch, github));
+    findings.push(...await auditHealth(repository, branch, branchSha(branches, branch), github, { now: options.now }));
     findings.push(...await auditSubmoduleState(github, repository, branch));
   }
 
@@ -329,7 +355,7 @@ export async function auditBranchAndReleaseState(github, repository, metadata, c
   findings.push(...pullAudit.findings);
 
   if (!isData && comparison) {
-    findings.push(...auditReleaseLane(repository, comparison, pullAudit.pulls));
+    findings.push(...await auditReleaseLane(github, repository, comparison, pullAudit.pulls));
   }
   return { findings, observations };
 }
@@ -498,28 +524,59 @@ async function auditPullRequests(github, repository, pulls, options = {}) {
   return { findings, pulls: enriched };
 }
 
-function auditReleaseLane(repository, comparison, pulls) {
+async function auditReleaseLane(github, repository, comparison, pulls) {
   const findings = [];
-  const releases = pulls.filter((pull) => pull.base?.ref === "main" && (pull.head?.ref === "dev" || pull.head?.ref?.startsWith("release/")));
+  const releaseCandidates = pulls.filter((pull) => pull.base?.ref === "main" && (pull.head?.ref === "dev" || pull.head?.ref?.startsWith("release/")));
+  const trustedCandidates = releaseCandidates.filter((pull) => sameRepositoryPullHead(pull, repository));
+  const eligible = [];
+
+  for (const pull of releaseCandidates.filter((item) => !sameRepositoryPullHead(item, repository))) {
+    findings.push(doctorFinding(`release-pr-${pull.number}-untrusted-head`, "release lane", `Release PR #${pull.number} does not use a same-repository head and cannot satisfy release policy.`, {
+      severity: "critical", evidence: [{ label: `PR #${pull.number}`, url: pull.html_url }]
+    }));
+  }
+
+  for (const pull of trustedCandidates) {
+    if (pull.head?.ref === "dev") {
+      findings.push(doctorFinding(`release-pr-${pull.number}-uses-dev-head`, "release lane", `Release PR #${pull.number} uses long-lived \`dev\` as its head.`, {
+        severity: "error",
+        evidence: [{ label: `PR #${pull.number}`, url: pull.html_url }],
+        repair: ["Use a protected release/<id> branch so delete-after-merge cannot remove dev."]
+      }));
+      continue;
+    }
+
+    let relation;
+    try {
+      relation = await compareBranches(github, repository, "dev", pull.head?.sha || pull.head?.ref);
+    } catch (error) {
+      if (![403, 404, 409, 422].includes(error?.status)) throw error;
+      findings.push(doctorFinding(`release-pr-${pull.number}-dev-lineage-unobservable`, "release lane", `Current-dev ancestry for release PR #${pull.number} is unobservable; it cannot satisfy release policy.`, {
+        severity: "critical", evidence: [{ label: `PR #${pull.number}`, url: pull.html_url }]
+      }));
+      continue;
+    }
+    if (!["identical", "ahead"].includes(relation?.status)) {
+      findings.push(doctorFinding(`release-pr-${pull.number}-not-current-dev-derived`, "release lane", `Release PR #${pull.number} does not contain current \`dev\` (dev...release is \`${relation?.status || "malformed"}\`).`, {
+        severity: "critical",
+        evidence: [{ label: `PR #${pull.number}`, url: pull.html_url }],
+        repair: ["Recreate or update the release branch from current dev through a reviewed, non-force-pushed branch update."]
+      }));
+      continue;
+    }
+    eligible.push(pull);
+  }
+
   if (comparison.status === "ahead") {
-    if (releases.length === 0) {
-      findings.push(doctorFinding("release-pr-missing", "release lane", "`dev` is ahead of `main`, but no open release PR targets `main`.", {
+    if (eligible.length === 0) {
+      findings.push(doctorFinding("release-pr-missing", "release lane", "`dev` is ahead of `main`, but no eligible current-dev-derived release PR targets `main`.", {
         severity: "error",
         evidence: [compareEvidence(repository, "main", "dev")],
         repair: ["Create or update a protected release branch and reviewed release PR."]
       }));
     }
-    for (const pull of releases) {
-      if (pull.head?.ref === "dev") {
-        findings.push(doctorFinding(`release-pr-${pull.number}-uses-dev-head`, "release lane", `Release PR #${pull.number} uses long-lived \`dev\` as its head.`, {
-          severity: "error",
-          evidence: [{ label: `PR #${pull.number}`, url: pull.html_url }],
-          repair: ["Use a protected release/<id> branch so delete-after-merge cannot remove dev."]
-        }));
-      }
-    }
-  } else if (comparison.status === "identical" && releases.length) {
-    for (const pull of releases) {
+  } else if (comparison.status === "identical" && trustedCandidates.length) {
+    for (const pull of trustedCandidates) {
       findings.push(doctorFinding(`release-pr-${pull.number}-obsolete`, "release lane", `Release PR #${pull.number} remains open although main and dev are identical.`, {
         severity: "warning", evidence: [{ label: `PR #${pull.number}`, url: pull.html_url }]
       }));
@@ -916,21 +973,69 @@ async function auditPrdDrift(github, repository, ref, issues) {
   return findings;
 }
 
-export async function auditHealth(repository, branch, github) {
+export async function auditHealth(repository, branch, headSha, github, options = {}) {
   const findings = [];
+  if (!headSha) {
+    return [doctorFinding(`workflow-${slug(branch)}-head-sha-missing`, "health", `Current \`${branch}\` head SHA is unavailable, so post-branch health is unobservable.`, { severity: "critical" })];
+  }
+  const now = new Date(options.now || Date.now()).getTime();
   const runs = await listWorkflowRuns(repository, branch, github);
+  if (runs === null) {
+    findings.push(doctorFinding(`workflow-${slug(branch)}-runs-unobservable`, "health", `Workflow runs for current \`${branch}\` are inaccessible or malformed.`, { severity: "critical" }));
+  }
+  const currentRuns = (runs || []).filter((run) => run?.head_sha === headSha);
+  if (runs !== null && currentRuns.length === 0) {
+    findings.push(doctorFinding(`workflow-${slug(branch)}-head-runs-missing`, "health", `No workflow run is bound to current \`${branch}\` head \`${headSha.slice(0, 12)}\`.`, { severity: "error" }));
+  }
   const latestByWorkflow = new Map();
-  for (const run of runs) {
+  for (const run of currentRuns) {
     const key = run.name || String(run.workflow_id || run.id || "unknown");
     if (!latestByWorkflow.has(key)) latestByWorkflow.set(key, run);
   }
-  const completed = [...latestByWorkflow.values()].filter((run) => run.status === "completed");
-  if (completed.length === 0) {
-    findings.push(doctorFinding(`workflow-${slug(branch)}-no-completed-runs`, "health", `No completed GitHub Actions workflow runs were found on \`${branch}\`.`, { severity: "warning" }));
-  }
-  for (const run of completed.filter((run) => !HEALTHY_CONCLUSIONS.has(run.conclusion || ""))) {
+  const latestRuns = [...latestByWorkflow.values()];
+  for (const run of latestRuns.filter((item) => item.status === "completed" && !HEALTHY_CONCLUSIONS.has(item.conclusion || ""))) {
     findings.push(doctorFinding(`workflow-${slug(branch)}-${slug(run.name || run.workflow_id)}-red`, "health", `Workflow \`${run.name || run.workflow_id}\` concluded \`${run.conclusion}\` on \`${branch}\`.`, {
       severity: "error", evidence: run.html_url ? [{ label: run.name || "workflow run", url: run.html_url }] : []
+    }));
+  }
+  for (const run of latestRuns.filter((item) => item.status !== "completed")) {
+    const ageHours = ageIn(now, run.run_started_at || run.started_at || run.created_at, 60 * 60 * 1000);
+    const stuck = ageHours >= PENDING_CHECK_HOURS;
+    findings.push(doctorFinding(`workflow-${slug(branch)}-${slug(run.name || run.workflow_id)}-${stuck ? "stuck" : "pending"}`, "health", `Workflow \`${run.name || run.workflow_id}\` is \`${run.status || "unknown"}\` on current \`${branch}\`${stuck ? ` for ${ageHours} hours` : ""}.`, {
+      severity: stuck ? "error" : "warning", evidence: run.html_url ? [{ label: run.name || "workflow run", url: run.html_url }] : []
+    }));
+  }
+
+  const checks = await getCommitChecks(github, repository, headSha);
+  const red = checks.filter((check) => check.state === "red");
+  const unknown = checks.filter((check) => check.state === "unknown");
+  const pending = checks.filter((check) => check.state === "pending");
+  if (checks.length === 0) {
+    findings.push(doctorFinding(`workflow-${slug(branch)}-head-checks-missing`, "health", `Current \`${branch}\` head has no observable checks.`, { severity: "error" }));
+  }
+  const protection = await getBranchProtection(github, repository, branch);
+  if (protection.configured) {
+    const expected = requiredStatusChecks(protection.data).checks;
+    const missing = expected.filter((required) => !checks.some((check) => (
+      check.name === required.context &&
+      (!Number.isInteger(required.appId) || required.appId <= 0 || check.appId === required.appId)
+    )));
+    if (missing.length) {
+      findings.push(doctorFinding(`workflow-${slug(branch)}-head-required-checks-missing`, "health", `Current \`${branch}\` head is missing required app-bound checks: ${missing.map((check) => `${check.context}@app:${check.appId ?? "unbound"}`).join(", ")}.`, {
+        severity: "critical"
+      }));
+    }
+  }
+  if (red.length) {
+    findings.push(doctorFinding(`workflow-${slug(branch)}-head-checks-red`, "health", `Current \`${branch}\` head has failing checks: ${red.map(checkLabel).join(", ")}.`, { severity: "error" }));
+  }
+  if (unknown.length) {
+    findings.push(doctorFinding(`workflow-${slug(branch)}-head-checks-unobservable`, "health", `Current \`${branch}\` head has malformed or inaccessible check evidence: ${unknown.map(checkLabel).join(", ")}.`, { severity: "critical" }));
+  }
+  if (pending.length) {
+    const stuck = pending.filter((check) => ageIn(now, check.startedAt, 60 * 60 * 1000) >= PENDING_CHECK_HOURS);
+    findings.push(doctorFinding(`workflow-${slug(branch)}-head-checks-${stuck.length ? "stuck" : "pending"}`, "health", `Current \`${branch}\` head has ${stuck.length ? "stuck" : "pending"} checks: ${pending.map(checkLabel).join(", ")}.`, {
+      severity: stuck.length ? "error" : "warning"
     }));
   }
   return findings;
@@ -1095,7 +1200,7 @@ export function auditLocalCheckout(localPath, repository) {
   const observations = [];
   const resolved = path.resolve(localPath);
   if (!existsSync(resolved)) {
-    return { findings: [doctorFinding("local-checkout-missing", "local checkout", `Explicit local checkout \`${resolved}\` does not exist.`, { severity: "critical" })], observations };
+    return { findings: [doctorFinding("local-checkout-missing", "local checkout", "The explicitly supplied local checkout does not exist.", { severity: "critical" })], observations };
   }
   const origin = git(resolved, ["remote", "get-url", "origin"]);
   const remote = resolveSubmoduleRepo(repository, origin.stdout.trim());
@@ -1104,7 +1209,7 @@ export function auditLocalCheckout(localPath, repository) {
   }
   const status = git(resolved, ["status", "--porcelain=v2", "--untracked-files=all"]);
   if (!status.ok) {
-    findings.push(doctorFinding("local-status-failed", "local checkout", `Local git status failed: ${status.stderr.trim()}.`, { severity: "critical" }));
+    findings.push(doctorFinding("local-status-failed", "local checkout", "Local git status failed, so checkout state is unobservable.", { severity: "critical" }));
   } else if (status.stdout.trim()) {
     findings.push(doctorFinding("local-checkout-dirty", "local checkout", "Explicit local checkout has modified or untracked state.", {
       severity: "error", repair: ["Preserve user changes; reconcile intentionally before any automated repair."]
@@ -1126,7 +1231,7 @@ export function auditLocalCheckout(localPath, repository) {
       }
     }
   }
-  observations.push(`Local checkout ${resolved} origin and recursive submodule state were inspected read-only.`);
+  observations.push("The explicitly supplied local checkout origin and recursive submodule state were inspected read-only.");
   return { findings, observations };
 }
 
@@ -1136,7 +1241,7 @@ export function auditWorkerSessionIsolation(agentsHome, options = {}) {
   const sessionsRoot = path.join(path.resolve(agentsHome), "sessions");
   if (!existsSync(sessionsRoot)) {
     return {
-      findings: [doctorFinding("worker-session-state-missing", "worker isolation", `Canonical Agent OS session directory is missing at \`${sessionsRoot}\`.`, { severity: "error" })],
+      findings: [doctorFinding("worker-session-state-missing", "worker isolation", "Canonical Agent OS session state is unavailable.", { severity: "error" })],
       observations
     };
   }
@@ -1144,8 +1249,8 @@ export function auditWorkerSessionIsolation(agentsHome, options = {}) {
   const now = new Date(options.now || Date.now()).getTime();
   const cutoff = now - WORKER_SESSION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
   const workerPrompt = "Read .darkfactory/df-task-brief.md and implement that task in the current repository.";
-  const inspected = [];
-  const mismatches = [];
+  let inspectedCount = 0;
+  let mismatchCount = 0;
 
   for (const entry of readdirSync(sessionsRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -1157,23 +1262,19 @@ export function auditWorkerSessionIsolation(agentsHome, options = {}) {
     if (Number.isFinite(lastTurn) && lastTurn < cutoff) continue;
     const firstUserMessage = (transcript.messages || []).find((message) => message?.role === "user")?.content || "";
     if (!String(firstUserMessage).startsWith(workerPrompt)) continue;
-    inspected.push(state.sessionId || entry.name);
+    inspectedCount += 1;
     if (!isIsolatedWorkerWorkdir(state.workdir)) {
-      mismatches.push({ sessionId: state.sessionId || entry.name, workdir: state.workdir || "(missing)" });
+      mismatchCount += 1;
     }
   }
 
-  if (mismatches.length) {
-    const evidence = mismatches
-      .sort((a, b) => a.sessionId.localeCompare(b.sessionId))
-      .map((item) => `${item.sessionId} => ${item.workdir}`)
-      .join("; ");
-    findings.push(doctorFinding("worker-session-workdir-isolation", "worker isolation", `Canonical worker sessions escaped the ephemeral task clone workdir: ${evidence}.`, {
+  if (mismatchCount > 0) {
+    findings.push(doctorFinding("worker-session-workdir-isolation", "worker isolation", `${mismatchCount} canonical worker session(s) used a workdir outside the required ephemeral task-clone boundary.`, {
       severity: "critical",
       repair: ["Fix canonical Agent OS session creation/resume so each df-work turn records and uses the exact ephemeral worker clone as its workdir; do not reuse an unrelated repository session."]
     }));
   }
-  observations.push(`Inspected ${inspected.length} canonical df-work session(s) from the last ${WORKER_SESSION_LOOKBACK_DAYS} days for task-clone cwd isolation.`);
+  observations.push(`Inspected ${inspectedCount} canonical df-work session(s) from the last ${WORKER_SESSION_LOOKBACK_DAYS} days for task-clone cwd isolation.`);
   return { findings, observations };
 }
 
@@ -1308,17 +1409,23 @@ export async function reconcileDoctorIssues(github, repository, findings) {
     }
   }
 
+  return actions;
+}
+
+export async function retireLegacyAuditIssues(github, repository) {
+  const actions = [];
+  const issues = await listIssues(github, repository, "all");
   const legacy = issues.filter((issue) => issue.state === "open" && isTrustedDoctorActor(issue) && findAuditMarker(issue.body || "") === `df-audit:${slug(repoName(repository))}`);
   for (const issue of legacy) {
-    await github.request("POST", `/repos/${repoName(repository)}/issues/${issue.number}/comments`, { body: "Superseded by the per-finding repository doctor (#12); all replacement findings use stable `df-doctor:` markers." });
+    await github.request("POST", `/repos/${repoName(repository)}/issues/${issue.number}/comments`, { body: "Superseded by the per-finding repository doctor ([marius-patrik/DarkFactory#12](https://github.com/marius-patrik/DarkFactory/issues/12)); all replacement findings use stable `df-doctor:` markers." });
     await github.request("PATCH", `/repos/${repoName(repository)}/issues/${issue.number}`, { state: "closed" });
     actions.push({ action: "close-legacy-audit-issue", issue: issueRef(issue) });
   }
   return actions;
 }
 
-async function writeDoctorLedger(github, repository, report) {
-  const written = await writeRunLedger(github, DARK_FACTORY_DATA_REPO, "repo-doctor", repoName(repository), {
+async function writeDoctorLedger(ledgerGithub, repository, report) {
+  const written = await writeRunLedger(ledgerGithub, DARK_FACTORY_DATA_REPO, "repo-doctor", repoName(repository), {
     mode: report.mode,
     trigger: report.trigger,
     source_refs: report.source_refs,
@@ -1379,6 +1486,21 @@ async function listOpenPullRequests(github, repository) {
   return pulls;
 }
 
+async function listRepositoryLabelNames(github, repository) {
+  const labels = new Set();
+  for (let page = 1; page <= 10; page += 1) {
+    const batch = await github.request("GET", `/repos/${repoName(repository)}/labels?per_page=100&page=${page}`);
+    if (!Array.isArray(batch)) {
+      throw new Error(`Repository-doctor report label preflight returned a malformed payload for ${repoName(repository)}.`);
+    }
+    for (const label of batch) {
+      if (typeof label?.name === "string" && label.name.trim()) labels.add(label.name);
+    }
+    if (batch.length < 100) break;
+  }
+  return labels;
+}
+
 async function compareBranches(github, repository, base, head) {
   return await github.request("GET", `/repos/${repoName(repository)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
 }
@@ -1402,6 +1524,7 @@ async function getCommitChecks(github, repository, sha) {
       name,
       state: "unknown",
       conclusion: `HTTP ${result.reason.status}`,
+      appId: null,
       url: "",
       startedAt: ""
     });
@@ -1426,6 +1549,7 @@ async function getCommitChecks(github, repository, sha) {
       name,
       state,
       conclusion: run?.conclusion || run?.status || "malformed",
+      appId: Number.isInteger(run?.app?.id) ? run.app.id : null,
       url: run?.html_url || run?.details_url || "",
       startedAt: run?.started_at || run?.created_at || ""
     });
@@ -1446,6 +1570,7 @@ async function getCommitChecks(github, repository, sha) {
       name: context,
       state,
       conclusion: item?.state || "malformed",
+      appId: null,
       url: item?.target_url || "",
       startedAt: item?.created_at || item?.updated_at || ""
     });
@@ -1485,9 +1610,9 @@ async function listRemoteDirectoryFiles(github, repository, dir, ref) {
 async function listWorkflowRuns(repository, branch, github) {
   try {
     const data = await github.request("GET", `/repos/${repoName(repository)}/actions/runs?branch=${encodeURIComponent(branch)}&per_page=20`);
-    return Array.isArray(data.workflow_runs) ? data.workflow_runs : [];
+    return Array.isArray(data?.workflow_runs) ? data.workflow_runs : null;
   } catch (error) {
-    if (error.status === 403 || error.status === 404) return [];
+    if (error.status === 403 || error.status === 404) return null;
     throw error;
   }
 }
