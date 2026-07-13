@@ -13,7 +13,7 @@ function step(workflow, name) {
 test("managed Validate provisions Go and uv before dependency installation", async () => {
   const workflow = await readFile(ciWorkflowPath, "utf8");
   const go = workflow.indexOf("uses: actions/setup-go@v6");
-  const uv = workflow.indexOf("uses: astral-sh/setup-uv@v8");
+  const uv = workflow.indexOf("uses: astral-sh/setup-uv@v8.3.2");
   const install = workflow.indexOf("- name: Install dependencies");
   assert.ok(go >= 0, "managed Validate must provision Go");
   assert.ok(uv >= 0, "managed Validate must provision uv");
