@@ -10,6 +10,41 @@ const CANONICAL_BRANCH = "main";
 const BACKUP_DIRECTORY = path.join("backups", "events");
 const SAFE_MACHINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REQUIRED_CONTRACT_FILES = [".gitignore", "agent.package.json", "README.md", "scripts/validate.mjs"];
+const ALLOWED_TRACKED_ROOT_FILES = new Set([
+  ".gitignore", "agent.package.json", "agents.md", "package-lock.json", "package.json", "readme.md",
+]);
+const ALLOWED_TRACKED_STATIC_ROOTS = new Set([
+  ".darkfactory", ".github", "context", "managed-repository", "research", "scripts", "wiki",
+]);
+const SENSITIVE_TRACKED_SEGMENTS = new Set([
+  "auth", "binaries", "cache", "caches", "capabilities", "capability", "clis",
+  "credential", "credentials", "keys", "locks", "logs", "memory", "orchestrator",
+  "projection", "projections", "provider", "providers", "runtime", "secret", "secrets",
+  "sessions", "sync", "synchronization", "synchronizations", "temp", "tmp", "token",
+  "tokens", "transcripts",
+]);
+
+function sensitiveTrackedPath(file: string): boolean {
+  const segments = file.toLowerCase().split("/");
+  const leaf = segments.at(-1) ?? "";
+  if (segments.slice(0, -1).some((segment) => SENSITIVE_TRACKED_SEGMENTS.has(segment))) return true;
+  return (
+    /^\.env(?:\..+)?$/.test(leaf) ||
+    /^(?:auth|credential|credentials|key|keys|secret|secrets|token|tokens)(?:[._-].*)?\.json$/.test(leaf) ||
+    /^(?:\.netrc|\.npmrc|\.pypirc|id_rsa|id_ed25519)$/.test(leaf)
+  );
+}
+
+function allowedTrackedFile(file: string): boolean {
+  const canonicalCase = file.toLowerCase();
+  if (sensitiveTrackedPath(canonicalCase)) return false;
+  if (!canonicalCase.includes("/")) return ALLOWED_TRACKED_ROOT_FILES.has(canonicalCase);
+  if (canonicalCase.startsWith(".agents/")) return canonicalCase.startsWith(".agents/.project/");
+  if (canonicalCase.startsWith("backups/")) {
+    return /^backups\/events\/[a-z0-9][a-z0-9._-]{0,127}\/[a-f0-9]{64}\.bundle\.json$/.test(canonicalCase);
+  }
+  return ALLOWED_TRACKED_STATIC_ROOTS.has(canonicalCase.split("/")[0]);
+}
 
 export interface StateRepositoryStatus {
   checkout: boolean;
@@ -129,6 +164,13 @@ export async function inspectStateRepository(state: SharedState): Promise<StateR
     for (const file of REQUIRED_CONTRACT_FILES) {
       const tracked = await git(state, ["ls-files", "--error-unmatch", "--", file], true);
       if (tracked.code !== 0) issues.push(`state repository contract file is not tracked: ${file}`);
+    }
+    const tracked = await git(state, ["ls-files", "-z"]);
+    for (const file of tracked.stdout.split("\0").filter(Boolean)) {
+      const normalized = file.replace(/\\/g, "/");
+      if (!allowedTrackedFile(normalized)) {
+        issues.push(`plaintext runtime state is tracked: ${normalized}`);
+      }
     }
     try {
       const manifest = JSON.parse(await readFile(path.join(state.stateDir, "agent.package.json"), "utf8")) as {

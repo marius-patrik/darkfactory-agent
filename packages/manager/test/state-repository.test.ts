@@ -9,6 +9,7 @@ import {
   backupStateRepository,
   inspectStateRepository,
   restoreStateRepository,
+  syncStateRepository,
 } from "../src/state-repository";
 import { doctorState } from "../src/state-doctor";
 
@@ -174,6 +175,61 @@ describe("Andromeda-data state repository", () => {
       const repositoryCheck = report.checks.find((check) => check.id === "state_repository");
       expect(repositoryCheck?.ok).toBe(false);
       expect((repositoryCheck?.details?.issues as string[]).some((issue) => issue.includes("invalid event exchange envelope"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects force-tracked plaintext runtime state before repository operations", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-state-repository-plaintext-"));
+    try {
+      const state = await repositoryState(root);
+      const forbidden = [
+        "clis/codex/auth.json",
+        "capabilities/rogue/state.json",
+        "cache/provider.db",
+        "Providers/codex/auth.json",
+        "Projections/memory.json",
+        "Binaries/tool.exe",
+        ".Env.Local",
+        "Credentials.JSON",
+        "Auth.json",
+        "Keys.JSON",
+        "synchronization/state.json",
+        "Credential/provider.json",
+        "context/Auth.json",
+        "research/keys.json",
+        ".github/providers/codex/auth.json",
+      ];
+      for (const relative of forbidden) {
+        const file = path.join(state.stateDir, ...relative.split("/"));
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(file, "fixture\n");
+      }
+      await git(state.stateDir, ["add", "-f", "--", ...forbidden]);
+      await git(state.stateDir, ["commit", "-q", "-m", "forbidden fixture"]);
+
+      const status = await inspectStateRepository(state);
+      expect(status.issues).toContain("plaintext runtime state is tracked: clis/codex/auth.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: capabilities/rogue/state.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: cache/provider.db");
+      expect(status.issues).toContain("plaintext runtime state is tracked: Providers/codex/auth.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: Projections/memory.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: Binaries/tool.exe");
+      expect(status.issues).toContain("plaintext runtime state is tracked: .Env.Local");
+      expect(status.issues).toContain("plaintext runtime state is tracked: Credentials.JSON");
+      expect(status.issues).toContain("plaintext runtime state is tracked: Auth.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: Keys.JSON");
+      expect(status.issues).toContain("plaintext runtime state is tracked: synchronization/state.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: Credential/provider.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: context/Auth.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: research/keys.json");
+      expect(status.issues).toContain("plaintext runtime state is tracked: .github/providers/codex/auth.json");
+      const doctor = await doctorState(state);
+      expect(doctor.checks.find((check) => check.id === "state_repository")?.ok).toBe(false);
+      await expect(backupStateRepository(state)).rejects.toThrow("plaintext runtime state is tracked");
+      await expect(restoreStateRepository(state)).rejects.toThrow("plaintext runtime state is tracked");
+      await expect(syncStateRepository(state)).rejects.toThrow("plaintext runtime state is tracked");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
