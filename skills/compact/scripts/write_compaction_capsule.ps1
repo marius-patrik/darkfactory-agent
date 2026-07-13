@@ -364,12 +364,14 @@ function Assert-MemoryStatusSucceeded {
     $recordsIsInteger = @($integerTypes | Where-Object { $_.IsInstanceOfType($Result.records) }).Count -eq 1
     $eventsIsInteger = @($integerTypes | Where-Object { $_.IsInstanceOfType($Result.events) }).Count -eq 1
     if (
-        [string]$Result.agentId -ne $ExpectedAgentId -or
+        $Result.agentId -isnot [string] -or
+        $Result.agentId -cne $ExpectedAgentId -or
         -not $recordsIsInteger -or
         [decimal]$Result.records -lt 0 -or
         -not $eventsIsInteger -or
         [decimal]$Result.events -lt 0 -or
-        [string]$Result.projectionHash -notmatch '^[a-fA-F0-9]{64}$'
+        $Result.projectionHash -isnot [string] -or
+        $Result.projectionHash -notmatch '^[a-fA-F0-9]{64}$'
     ) {
         throw "Canonical memory status is invalid $Context."
     }
@@ -404,8 +406,8 @@ try {
 } catch {
     throw "Canonical Agent OS manifest is invalid: $manifestPath"
 }
-$canonicalAgentId = [string]$canonicalManifest.agentId
-if ([string]::IsNullOrWhiteSpace($canonicalAgentId)) {
+$canonicalAgentId = $canonicalManifest.agentId
+if ($canonicalAgentId -isnot [string] -or [string]::IsNullOrWhiteSpace($canonicalAgentId)) {
     throw "Canonical Agent OS manifest does not identify an agent: $manifestPath"
 }
 $compactLockPath = Join-Path $authority.MemoryRoot ".compact.lock"

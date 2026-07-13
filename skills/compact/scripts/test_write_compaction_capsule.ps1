@@ -57,9 +57,11 @@ if ($CommandArgs[0] -eq "memory" -and $CommandArgs[1] -eq "render") {
     exit 0
 }
 if ($CommandArgs[0] -eq "memory" -and $CommandArgs[1] -eq "status") {
-    $agentId = if ($env:FAKE_MEMORY_AGENT_ID) { $env:FAKE_MEMORY_AGENT_ID } else { "rommie" }
+    if ($env:FAKE_MEMORY_AGENT_ID -eq "array") { $agentId = [object[]]@("rommie") } elseif ($env:FAKE_MEMORY_AGENT_ID) { $agentId = $env:FAKE_MEMORY_AGENT_ID } else { $agentId = "rommie" }
     $records = if ($env:FAKE_MEMORY_RECORDS -eq "boolean") { $true } elseif ($env:FAKE_MEMORY_RECORDS -eq "fractional") { 1.5 } else { 1 }
-    @{ agentId = $agentId; records = $records; events = 1; projectionHash = ("c" * 64) } | ConvertTo-Json -Compress
+    $events = if ($env:FAKE_MEMORY_EVENTS -eq "boolean") { $true } elseif ($env:FAKE_MEMORY_EVENTS -eq "fractional") { 1.5 } else { 1 }
+    if ($env:FAKE_MEMORY_HASH -eq "array") { $projectionHash = [object[]]@("c" * 64) } else { $projectionHash = "c" * 64 }
+    @{ agentId = $agentId; records = $records; events = $events; projectionHash = $projectionHash } | ConvertTo-Json -Depth 4 -Compress
     exit 0
 }
 if ($CommandArgs[0] -eq "state" -and $CommandArgs[1] -eq "sync") {
@@ -124,6 +126,8 @@ try {
     $env:FAKE_SYNC_INVALID_BUNDLE = ""
     $env:FAKE_MEMORY_AGENT_ID = ""
     $env:FAKE_MEMORY_RECORDS = ""
+    $env:FAKE_MEMORY_EVENTS = ""
+    $env:FAKE_MEMORY_HASH = ""
     $result = & $scriptUnderTest -Objective "resume board" -State "ready" -Next "start planned 1" -Validation "green" -Blockers "None" -Repos "repo@abc" -AgentsCommand $primary.Fake -UserHome $primary.Root -ClearCache | ConvertFrom-Json
     Assert-True ($result.ok -eq $true) "primary: expected ok result"
     Assert-True ($result.recordId -eq "record-new") "primary: expected remembered record"
@@ -510,13 +514,15 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $invalidBundle.MemoryRoot "snapshots/compaction"))) "invalid-bundle: snapshot was created before healthy preflight"
     $env:FAKE_SYNC_INVALID_BUNDLE = ""
 
-    foreach ($invalidMemoryStatus in @("wrong-agent", "boolean-count", "fractional-count")) {
+    foreach ($invalidMemoryStatus in @("wrong-agent", "case-agent", "array-agent", "boolean-records", "fractional-records", "boolean-events", "fractional-events", "array-hash")) {
         $memoryStatusCase = Initialize-Case -Name "memory-status-$invalidMemoryStatus"
         $env:FAKE_AGENTS_HOME = $memoryStatusCase.AgentsHome
         $env:FAKE_AGENTS_MEMORY = $memoryStatusCase.MemoryRoot
         $env:FAKE_AGENTS_LOG = $memoryStatusCase.Log
-        $env:FAKE_MEMORY_AGENT_ID = if ($invalidMemoryStatus -eq "wrong-agent") { "other-agent" } else { "" }
-        $env:FAKE_MEMORY_RECORDS = if ($invalidMemoryStatus -eq "boolean-count") { "boolean" } elseif ($invalidMemoryStatus -eq "fractional-count") { "fractional" } else { "" }
+        $env:FAKE_MEMORY_AGENT_ID = if ($invalidMemoryStatus -eq "wrong-agent") { "other-agent" } elseif ($invalidMemoryStatus -eq "case-agent") { "ROMMIE" } elseif ($invalidMemoryStatus -eq "array-agent") { "array" } else { "" }
+        $env:FAKE_MEMORY_RECORDS = if ($invalidMemoryStatus -eq "boolean-records") { "boolean" } elseif ($invalidMemoryStatus -eq "fractional-records") { "fractional" } else { "" }
+        $env:FAKE_MEMORY_EVENTS = if ($invalidMemoryStatus -eq "boolean-events") { "boolean" } elseif ($invalidMemoryStatus -eq "fractional-events") { "fractional" } else { "" }
+        $env:FAKE_MEMORY_HASH = if ($invalidMemoryStatus -eq "array-hash") { "array" } else { "" }
         $memoryStatusMessage = ""
         try {
             & $scriptUnderTest -Objective "must fail" -State "invalid status" -Next "none" -AgentsCommand $memoryStatusCase.Fake -UserHome $memoryStatusCase.Root -CompatibilityRoot $memoryStatusCase.CompatibilityRoot | Out-Null
@@ -528,6 +534,8 @@ try {
     }
     $env:FAKE_MEMORY_AGENT_ID = ""
     $env:FAKE_MEMORY_RECORDS = ""
+    $env:FAKE_MEMORY_EVENTS = ""
+    $env:FAKE_MEMORY_HASH = ""
 
     # Concurrent remote convergence cannot turn a stale capsule into success.
     $convergenceRace = Initialize-Case -Name "convergence-race"
@@ -626,5 +634,7 @@ try {
     Remove-Item Env:FAKE_SYNC_INVALID_BUNDLE -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_MEMORY_AGENT_ID -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_MEMORY_RECORDS -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_MEMORY_EVENTS -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_MEMORY_HASH -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
