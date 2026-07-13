@@ -22,6 +22,10 @@ export interface ActiveRenewableLock {
 
 export type StateLockOptions = RenewableLockOptions;
 
+interface LeaseExpiryRow {
+  expiresAt: number;
+}
+
 const SAFE_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const PROCESS_STARTED_AT = new Date(Date.now() - process.uptime() * 1_000).toISOString();
 const localTails = new Map<string, Promise<void>>();
@@ -114,10 +118,14 @@ export async function acquireRenewableStateLock(
   const token = randomUUID();
   const deadline = Date.now() + waitMs;
   const database = await openLeaseDatabase(state, Math.min(waitMs, 1_000));
-  const acquire = database.query(`
+  const acquire = database.query<LeaseExpiryRow, [string, string, string, number, string, number]>(`
     INSERT INTO renewable_leases (
       key, token, owner, pid, process_started_at, acquired_at, expires_at
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+    ) VALUES (
+      ?1, ?2, ?3, ?4, ?5,
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?6
+    )
     ON CONFLICT(key) DO UPDATE SET
       token = excluded.token,
       owner = excluded.owner,
@@ -125,31 +133,32 @@ export async function acquireRenewableStateLock(
       process_started_at = excluded.process_started_at,
       acquired_at = excluded.acquired_at,
       expires_at = excluded.expires_at
-    WHERE renewable_leases.expires_at <= ?8
+    WHERE renewable_leases.expires_at <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    RETURNING expires_at AS expiresAt
   `);
 
   while (Date.now() < deadline) {
-    const now = Date.now();
     try {
-      const result = acquire.run(
+      const acquired = acquire.get(
         key,
         token,
         owner,
         process.pid,
         PROCESS_STARTED_AT,
-        new Date(now).toISOString(),
-        now + leaseMs,
-        now,
+        leaseMs,
       );
-      if (result.changes === 1) {
+      if (acquired && acquired.expiresAt > Date.now()) {
         let stopped = false;
         let lost: Error | null = null;
-        let knownExpiresAt = now + leaseMs;
+        let knownExpiresAt = acquired.expiresAt;
         let renewal: Promise<void> | null = null;
-        const renew = database.query(`
+        const renew = database.query<LeaseExpiryRow, [number, string, string]>(`
           UPDATE renewable_leases
-          SET expires_at = ?1
-          WHERE key = ?2 AND token = ?3 AND expires_at > ?4
+          SET expires_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?1
+          WHERE key = ?2
+            AND token = ?3
+            AND expires_at > CAST(unixepoch('subsec') * 1000 AS INTEGER)
+          RETURNING expires_at AS expiresAt
         `);
         const remove = database.query("DELETE FROM renewable_leases WHERE key = ?1 AND token = ?2");
 
@@ -163,14 +172,15 @@ export async function acquireRenewableStateLock(
               throw lost;
             }
             try {
-              const nextExpiresAt = renewalTime + leaseMs;
               // The token-qualified update is authoritative. Contention may delay
-              // the verdict, but only a completed update can renew ownership.
-              if (renew.run(nextExpiresAt, key, token, renewalTime).changes !== 1) {
+              // the verdict, but database execution time decides whether the last
+              // confirmed lease was still live when the update actually ran.
+              const renewed = renew.get(leaseMs, key, token);
+              if (!renewed || renewed.expiresAt <= Date.now()) {
                 lost = ownershipLost(key);
                 throw lost;
               }
-              knownExpiresAt = nextExpiresAt;
+              knownExpiresAt = renewed.expiresAt;
               return;
             } catch (error) {
               if (isBusy(error) && Date.now() < knownExpiresAt) {
