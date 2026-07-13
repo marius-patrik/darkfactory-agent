@@ -146,6 +146,39 @@ describe("canonical reflection and dreams", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("bounds per-session and total event admission before reflection or dream processing", async () => {
+    const { root, state } = await fixture();
+    try {
+      await completeSession(state, "bounded-one", "First bounded reflection.");
+      await completeSession(state, "bounded-two", "Second bounded reflection.");
+      await expect(reflectCanonicalSession(state, "bounded-one", { maximumEvents: 4 })).rejects.toThrow(
+        /exceeds maximumEvents 4/,
+      );
+      await expect(
+        reflectCanonicalSession(state, "bounded-one", { maximumEvents: 5, maximumBytes: 1 }),
+      ).rejects.toThrow(/exceeds maximumBytes 1/);
+      await expect(
+        runIdleDreamCycle(state, {
+          now: new Date("2099-01-01T00:00:00.000Z"),
+          minimumIdleMs: 0,
+          maximumEventsPerSession: 5,
+          maximumTotalEvents: 8,
+        }),
+      ).rejects.toThrow(/exceeds maximumEvents 3/);
+      await expect(
+        runIdleDreamCycle(state, {
+          now: new Date("2099-01-01T00:00:00.000Z"),
+          minimumIdleMs: 0,
+          maximumBytesPerSession: 1,
+          maximumTotalBytes: 1,
+        }),
+      ).rejects.toThrow(/exceeds maximumBytes 1/);
+      expect(await listMemoryRecords(state)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("historical corpus admission", () => {
@@ -253,9 +286,9 @@ describe("Dream v1.3 cursor migration", () => {
     version: "1.3",
     last_run: "2026-07-06T13:59:13.0874487+02:00",
     last_processed_file:
-      "20260706113120000|claude|provider_raw|c:\\users\\patrik\\.claude\\projects\\session.jsonl",
+      "20260706113120000|claude|provider_raw|c:\\users\\patrik\\.claude\\projects\\c--users-patrik\\15b5dbfc-c041-4b36-9be5-f4a05bf3e4ae.jsonl",
     processed_total: 368,
-    last_session_title: "session.jsonl",
+    last_session_title: "15b5dbfc-c041-4b36-9be5-f4a05bf3e4ae.jsonl",
     pending_count: 0,
     open_items: [],
     next_work: [],
@@ -317,6 +350,47 @@ describe("Dream v1.3 cursor migration", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(targetFixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects raw and percent-encoded secret fields before cursor URI transformation", async () => {
+    const { root, state } = await fixture();
+    try {
+      const malicious = [
+        {
+          name: "encoded-title",
+          value: { ...cursor, last_session_title: "token%3Dsecret-value-that-must-not-cross" },
+        },
+        {
+          name: "api-key-title",
+          value: { ...cursor, last_session_title: "api-key=secret-value-that-must-not-cross" },
+        },
+        {
+          name: "api-key-path",
+          value: {
+            ...cursor,
+            last_processed_file:
+              "20260706113120000|claude|provider_raw|c:\\users\\api_key=secret-value-that-must-not-cross\\session.jsonl",
+          },
+        },
+        {
+          name: "path-and-title",
+          value: {
+            ...cursor,
+            last_processed_file:
+              "20260706113120000|claude|provider_raw|c:\\users\\token%3Dsecret-value-that-must-not-cross\\session.jsonl",
+            last_session_title: "api%5Fkey%3Dsecret-value-that-must-not-cross",
+          },
+        },
+      ];
+      for (const fixture of malicious) {
+        const source = path.join(root, `${fixture.name}.json`);
+        await writeFile(source, `${JSON.stringify(fixture.value, null, 2)}\n`);
+        await expect(migrateDreamV13Cursor(state, source)).rejects.toThrow(/secret-like content/);
+      }
+      expect(await listMemoryRecords(state, { scope: "memory-plugin" })).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

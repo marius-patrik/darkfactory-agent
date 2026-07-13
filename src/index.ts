@@ -17,7 +17,7 @@ import {
   pluginRuntimeProjectionPath,
   publishPluginRuntimeProjection,
 } from "../../../packages/manager/src/state-v2";
-import { listSessionIds, loadSessionEvents, type SessionEvent } from "../../../packages/harness/session";
+import { listSessionIds, loadSessionEventBatch, type SessionEvent } from "../../../packages/harness/session";
 
 export const MEMORY_PLUGIN_SCHEMA_VERSION = 1 as const;
 export const DREAM_V13_CURSOR_VERSION = "1.3" as const;
@@ -31,6 +31,14 @@ const DEFAULT_MAX_CORPUS_DIRECTORIES = 10_000;
 const DEFAULT_MAX_CORPUS_DEPTH = 64;
 const DEFAULT_MAX_CORPUS_TOTAL_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_SCANNED_SESSIONS = 1_000;
+const DEFAULT_MAX_EVENTS_PER_SESSION = 10_000;
+const DEFAULT_MAX_TOTAL_SESSION_EVENTS = 50_000;
+const DEFAULT_MAX_BYTES_PER_SESSION = 16 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_SESSION_BYTES = 64 * 1024 * 1024;
+const DREAM_SESSION_ARTIFACT =
+  /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.(?:jsonl|json)$/i;
+const SECRET_FIELD_NAME =
+  /(?:password|passwd|pwd|secret|token|api.?key|credential|authorization|private.?key|connection.?string|dsn)/i;
 
 export type MemoryCandidateKind = "reflection" | "dream" | "corpus" | "migration";
 
@@ -194,27 +202,47 @@ function latestEventAt(events: SessionEvent[]): string {
 async function loadBoundedSessionEvents(
   state: SharedState,
   sessionIds: string[],
-  concurrency = 8,
+  options: {
+    maximumEventsPerSession: number;
+    maximumTotalEvents: number;
+    maximumBytesPerSession: number;
+    maximumTotalBytes: number;
+  },
 ): Promise<Array<{ sessionId: string; events: SessionEvent[] }>> {
-  const output = new Array<{ sessionId: string; events: SessionEvent[] }>(sessionIds.length);
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < sessionIds.length) {
-      const index = cursor;
-      cursor += 1;
-      const sessionId = sessionIds[index];
-      output[index] = { sessionId, events: await loadSessionEvents(state, sessionId) };
+  const output: Array<{ sessionId: string; events: SessionEvent[] }> = [];
+  let remainingEvents = options.maximumTotalEvents;
+  let remainingBytes = options.maximumTotalBytes;
+  for (const sessionId of sessionIds) {
+    if (remainingEvents < 1) {
+      throw new Error(`canonical session scan exceeds maximumTotalEvents ${options.maximumTotalEvents}`);
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, sessionIds.length) }, () => worker()));
+    if (remainingBytes < 1) {
+      throw new Error(`canonical session scan exceeds maximumTotalBytes ${options.maximumTotalBytes}`);
+    }
+    const maximumEvents = Math.min(options.maximumEventsPerSession, remainingEvents);
+    const maximumBytes = Math.min(options.maximumBytesPerSession, remainingBytes);
+    const batch = await loadSessionEventBatch(state, sessionId, { maximumEvents, maximumBytes });
+    remainingEvents -= batch.events.length;
+    remainingBytes -= batch.bytes;
+    output.push({ sessionId, events: batch.events });
+  }
   return output;
 }
 
 export async function reflectCanonicalSession(
   state: SharedState,
   sessionId: string,
+  options: { maximumEvents?: number; maximumBytes?: number } = {},
 ): Promise<MemoryCandidate> {
-  const events = await loadSessionEvents(state, sessionId);
+  const maximumEvents = options.maximumEvents ?? DEFAULT_MAX_EVENTS_PER_SESSION;
+  const maximumBytes = options.maximumBytes ?? DEFAULT_MAX_BYTES_PER_SESSION;
+  if (!Number.isSafeInteger(maximumEvents) || maximumEvents < 1) {
+    throw new Error("maximumEvents must be a positive integer");
+  }
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new Error("maximumBytes must be a positive integer");
+  }
+  const { events } = await loadSessionEventBatch(state, sessionId, { maximumEvents, maximumBytes });
   if (events.length === 0) throw new Error(`canonical session not found: ${sessionId}`);
   const completedTurns = events.filter((event) => event.type === "turn.completed").length;
   if (completedTurns === 0) throw new Error(`canonical session has no completed turns: ${sessionId}`);
@@ -290,6 +318,10 @@ export async function runIdleDreamCycle(
     minimumIdleMs?: number;
     maximumSessions?: number;
     maximumScannedSessions?: number;
+    maximumEventsPerSession?: number;
+    maximumTotalEvents?: number;
+    maximumBytesPerSession?: number;
+    maximumTotalBytes?: number;
     authorId?: string;
   } = {},
 ): Promise<DreamCycleResult> {
@@ -297,6 +329,10 @@ export async function runIdleDreamCycle(
   const minimumIdleMs = options.minimumIdleMs ?? DEFAULT_DREAM_IDLE_MS;
   const maximumSessions = options.maximumSessions ?? 8;
   const maximumScannedSessions = options.maximumScannedSessions ?? DEFAULT_MAX_SCANNED_SESSIONS;
+  const maximumEventsPerSession = options.maximumEventsPerSession ?? DEFAULT_MAX_EVENTS_PER_SESSION;
+  const maximumTotalEvents = options.maximumTotalEvents ?? DEFAULT_MAX_TOTAL_SESSION_EVENTS;
+  const maximumBytesPerSession = options.maximumBytesPerSession ?? DEFAULT_MAX_BYTES_PER_SESSION;
+  const maximumTotalBytes = options.maximumTotalBytes ?? DEFAULT_MAX_TOTAL_SESSION_BYTES;
   if (!Number.isFinite(minimumIdleMs) || minimumIdleMs < 0) throw new Error("minimumIdleMs must be non-negative");
   if (!Number.isSafeInteger(maximumSessions) || maximumSessions < 1 || maximumSessions > 100) {
     throw new Error("maximumSessions must be an integer between 1 and 100");
@@ -304,8 +340,25 @@ export async function runIdleDreamCycle(
   if (!Number.isSafeInteger(maximumScannedSessions) || maximumScannedSessions < maximumSessions) {
     throw new Error("maximumScannedSessions must be an integer greater than or equal to maximumSessions");
   }
+  if (!Number.isSafeInteger(maximumEventsPerSession) || maximumEventsPerSession < 1) {
+    throw new Error("maximumEventsPerSession must be a positive integer");
+  }
+  if (!Number.isSafeInteger(maximumTotalEvents) || maximumTotalEvents < maximumEventsPerSession) {
+    throw new Error("maximumTotalEvents must be an integer greater than or equal to maximumEventsPerSession");
+  }
+  if (!Number.isSafeInteger(maximumBytesPerSession) || maximumBytesPerSession < 1) {
+    throw new Error("maximumBytesPerSession must be a positive integer");
+  }
+  if (!Number.isSafeInteger(maximumTotalBytes) || maximumTotalBytes < maximumBytesPerSession) {
+    throw new Error("maximumTotalBytes must be an integer greater than or equal to maximumBytesPerSession");
+  }
   const sessionIds = await listSessionIds(state, { maximumSessions: maximumScannedSessions });
-  const sessions = await loadBoundedSessionEvents(state, sessionIds);
+  const sessions = await loadBoundedSessionEvents(state, sessionIds, {
+    maximumEventsPerSession,
+    maximumTotalEvents,
+    maximumBytesPerSession,
+    maximumTotalBytes,
+  });
   const nonEmpty = sessions.filter((session) => session.events.length > 0);
   if (nonEmpty.length === 0) return { status: "skipped", reason: "no-sessions" };
   const latestAt = nonEmpty
@@ -622,12 +675,76 @@ function cursorPathUri(rawPath: string): { pathStyle: "windows" | "posix"; pathU
   return { pathStyle: "posix", pathUri: pathToFileURL(rawPath).href };
 }
 
+function decodedTextVariants(value: string): string[] {
+  const variants = [value];
+  let decoded = value;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = decoded.replace(/%([a-f0-9]{2})/gi, (_match, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+    if (next === decoded) break;
+    variants.push(next);
+    decoded = next;
+  }
+  return variants;
+}
+
+function assertAdmittedCursorText(
+  value: string,
+  label: string,
+  options: { allowSessionArtifact?: boolean } = {},
+): void {
+  for (const variant of decodedTextVariants(value)) {
+    if (options.allowSessionArtifact && DREAM_SESSION_ARTIFACT.test(variant)) continue;
+    if (SECRET_FIELD_NAME.test(variant) || findSecretLikePath(variant)) {
+      throw new Error(`Dream cursor contains secret-like content at ${label}`);
+    }
+  }
+}
+
+function assertAdmittedCursorPath(rawPath: string): void {
+  for (const variant of decodedTextVariants(rawPath)) {
+    const segments = variant.split(/[\\/]/).filter(Boolean);
+    for (const [index, segment] of segments.entries()) {
+      assertAdmittedCursorText(segment, `last_processed_file.path[${index}]`, { allowSessionArtifact: true });
+    }
+    const withoutSessionArtifacts = variant.replace(
+      /(^|[\\/])[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.(?:jsonl|json)(?=$|[\\/])/gi,
+      "$1session-artifact.jsonl",
+    );
+    if (findSecretLikePath(withoutSessionArtifacts)) {
+      throw new Error("Dream cursor contains secret-like content at last_processed_file.path");
+    }
+  }
+}
+
+function assertDreamCursorAdmission(
+  cursor: DreamV13Cursor,
+  temporal: { provider: string; sourceKind: string; rawPath: string },
+): void {
+  assertAdmittedCursorText(temporal.provider, "last_processed_file.provider");
+  assertAdmittedCursorText(temporal.sourceKind, "last_processed_file.sourceKind");
+  assertAdmittedCursorPath(temporal.rawPath);
+  assertAdmittedCursorText(cursor.last_session_title, "last_session_title", { allowSessionArtifact: true });
+  cursor.open_items.forEach((value, index) => assertAdmittedCursorText(value, `open_items[${index}]`));
+  cursor.next_work.forEach((value, index) => assertAdmittedCursorText(value, `next_work[${index}]`));
+  Object.keys(cursor.source_counts).forEach((value) => assertAdmittedCursorText(value, "source_counts key"));
+  Object.keys(cursor.provider_counts).forEach((value) => assertAdmittedCursorText(value, "provider_counts key"));
+}
+
 function authorityFromCursor(cursor: DreamV13Cursor): DreamCursorAuthority {
   const parts = cursor.last_processed_file.split("|");
   if (parts.length < 4) throw new Error("Dream cursor last_processed_file must use the v1.3 temporal cursor format");
   const [timeKey, provider, sourceKind, ...pathParts] = parts;
   if (!/^\d{17}$/.test(timeKey)) throw new Error("Dream cursor time key must contain 17 digits");
   const rawPath = pathParts.join("|");
+  const validatedProvider = requiredText(provider, "Dream cursor provider");
+  const validatedSourceKind = requiredText(sourceKind, "Dream cursor source kind");
+  assertDreamCursorAdmission(cursor, {
+    provider: validatedProvider,
+    sourceKind: validatedSourceKind,
+    rawPath,
+  });
   const encodedPath = cursorPathUri(rawPath);
   const authority: DreamCursorAuthority = {
     schemaVersion: MEMORY_PLUGIN_SCHEMA_VERSION,
@@ -635,8 +752,8 @@ function authorityFromCursor(cursor: DreamV13Cursor): DreamCursorAuthority {
     lastRun: cursor.last_run,
     lastProcessed: {
       timeKey,
-      provider: requiredText(provider, "Dream cursor provider"),
-      sourceKind: requiredText(sourceKind, "Dream cursor source kind"),
+      provider: validatedProvider,
+      sourceKind: validatedSourceKind,
       ...encodedPath,
     },
     processedTotal: cursor.processed_total,

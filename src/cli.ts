@@ -38,7 +38,10 @@ export async function runMemoryCli(args = process.argv.slice(2)): Promise<unknow
   await ensureSharedState(state);
   if (command === "reflect") {
     if (!operand || operand.startsWith("--")) usage();
-    const candidate = await reflectCanonicalSession(state, operand);
+    const candidate = await reflectCanonicalSession(state, operand, {
+      maximumEvents: positiveInteger(option(args, "--maximum-events"), 10_000, "maximum events"),
+      maximumBytes: positiveInteger(option(args, "--maximum-bytes"), 16 * 1024 * 1024, "maximum bytes"),
+    });
     const record = await applyMemoryCandidate(state, candidate, { authorId: "memory-plugin:reflection" });
     return { candidate, record };
   }
@@ -50,6 +53,26 @@ export async function runMemoryCli(args = process.argv.slice(2)): Promise<unknow
         option(args, "--maximum-scanned-sessions"),
         1_000,
         "maximum scanned sessions",
+      ),
+      maximumEventsPerSession: positiveInteger(
+        option(args, "--maximum-events-per-session"),
+        10_000,
+        "maximum events per session",
+      ),
+      maximumTotalEvents: positiveInteger(
+        option(args, "--maximum-total-events"),
+        50_000,
+        "maximum total events",
+      ),
+      maximumBytesPerSession: positiveInteger(
+        option(args, "--maximum-bytes-per-session"),
+        16 * 1024 * 1024,
+        "maximum bytes per session",
+      ),
+      maximumTotalBytes: positiveInteger(
+        option(args, "--maximum-total-bytes"),
+        64 * 1024 * 1024,
+        "maximum total bytes",
       ),
       authorId: "memory-plugin:dream",
     });
