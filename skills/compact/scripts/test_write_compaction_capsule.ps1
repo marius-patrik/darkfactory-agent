@@ -27,8 +27,10 @@ if ($CommandArgs[0] -eq "memory" -and $CommandArgs[1] -eq "list") {
     if ($env:FAKE_POST_ACTIVE_IDS -and $listCalls -ge 2) {
         @($env:FAKE_POST_ACTIVE_IDS.Split(",") | ForEach-Object { @{ id = $_; status = "active"; value = "remote-value"; sensitivity = "internal" } }) | ConvertTo-Json -Compress
     } elseif ($listCalls -ge 2) {
-        $publishedId = if ((Get-Content -LiteralPath $env:FAKE_AGENTS_LOG) -match '^memory supersede prior-record ') { "record-superseded" } else { "record-new" }
+        $publishedId = if ((Get-Content -LiteralPath $env:FAKE_AGENTS_LOG) -match '^memory supersede (prior-record|preflight-record) ') { "record-superseded" } else { "record-new" }
         @(@{ id = $publishedId; status = "active"; value = "published-value"; sensitivity = "internal" }) | ConvertTo-Json -Compress
+    } elseif ($env:FAKE_PREFLIGHT_ACTIVE_ID) {
+        @(@{ id = $env:FAKE_PREFLIGHT_ACTIVE_ID; status = "active"; value = "preflight-value"; sensitivity = "internal" }) | ConvertTo-Json -Compress
     } elseif ($env:FAKE_ACTIVE_IDS) {
         @($env:FAKE_ACTIVE_IDS.Split(",") | ForEach-Object { @{ id = $_; status = "active"; value = "prior-value"; sensitivity = "internal" } }) | ConvertTo-Json -Compress
     } elseif ($env:FAKE_ACTIVE_ID) {
@@ -111,6 +113,7 @@ try {
     $env:FAKE_SYNC_INVALID_BACKUP = ""
     $env:FAKE_POST_ACTIVE_IDS = ""
     $env:FAKE_BACKUP_COMMITTED = ""
+    $env:FAKE_PREFLIGHT_ACTIVE_ID = ""
     $result = & $scriptUnderTest -Objective "resume board" -State "ready" -Next "start planned 1" -Validation "green" -Blockers "None" -Repos "repo@abc" -AgentsCommand $primary.Fake -UserHome $primary.Root -ClearCache | ConvertFrom-Json
     Assert-True ($result.ok -eq $true) "primary: expected ok result"
     Assert-True ($result.recordId -eq "record-new") "primary: expected remembered record"
@@ -165,6 +168,21 @@ try {
     Assert-True ($edgeResult.recordId -eq "record-superseded") "edge: expected superseding record"
     Assert-True ((Get-Content -Raw $edge.Log) -match "memory supersede prior-record") "edge: prior record was not superseded"
     $env:FAKE_BACKUP_COMMITTED = ""
+
+    # Preflight-imported authority determines remember versus supersede.
+    $preflightImport = Initialize-Case -Name "preflight-import"
+    $env:FAKE_AGENTS_HOME = $preflightImport.AgentsHome
+    $env:FAKE_AGENTS_MEMORY = $preflightImport.MemoryRoot
+    $env:FAKE_AGENTS_LOG = $preflightImport.Log
+    $env:FAKE_ACTIVE_ID = ""
+    $env:FAKE_ACTIVE_IDS = ""
+    $env:FAKE_PREFLIGHT_ACTIVE_ID = "preflight-record"
+    $preflightImportResult = & $scriptUnderTest -Objective "after import" -State "active" -Next "continue" -AgentsCommand $preflightImport.Fake -CompatibilityRoot $preflightImport.CompatibilityRoot | ConvertFrom-Json
+    Assert-True ($preflightImportResult.recordId -eq "record-superseded") "preflight-import: synchronized record was not superseded"
+    $preflightImportLog = @(Get-Content -LiteralPath $preflightImport.Log)
+    Assert-True (($preflightImportLog -join "`n") -match "memory supersede preflight-record") "preflight-import: stale remember path was selected"
+    Assert-True ([array]::IndexOf($preflightImportLog, "state sync --json") -lt [array]::IndexOf($preflightImportLog, "memory list --scope session --subject compaction --predicate current --status active --json")) "preflight-import: authority was listed before synchronization"
+    $env:FAKE_PREFLIGHT_ACTIVE_ID = ""
 
     # Denied path: memory outside AGENTS_HOME is rejected before a snapshot write.
     $denied = Initialize-Case -Name "denied"
@@ -430,5 +448,6 @@ try {
     Remove-Item Env:FAKE_SYNC_INVALID_BACKUP -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_POST_ACTIVE_IDS -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_BACKUP_COMMITTED -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_PREFLIGHT_ACTIVE_ID -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

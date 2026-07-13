@@ -326,6 +326,15 @@ $shortPath = Join-Path $resolvedCompatibilityRoot "SHORT.md"
 Assert-ProjectionBlockShape -Path $handoffPath -Start "<!-- rommie:compact:start -->" -End "<!-- rommie:compact:end -->"
 Assert-ProjectionBlockShape -Path $shortPath -Start "<!-- rommie:compact-short:start -->" -End "<!-- rommie:compact-short:end -->"
 
+$snapshotDirectory = Join-Path (Join-Path $authority.MemoryRoot "snapshots") "compaction"
+Assert-PhysicalDirectoryChain -Root $authority.AgentsHome -Target $snapshotDirectory
+
+# Prove repository health and remote reachability before changing canonical memory.
+$preflightSync = Invoke-AgentsJson -Arguments @("state", "sync", "--json")
+Assert-StateSyncSucceeded -Result $preflightSync
+
+# Preflight sync may import or supersede the scalar, so choose the mutation only
+# from the newly synchronized authority.
 $activeResult = Invoke-AgentsJson -Arguments @(
     "memory", "list",
     "--scope", "session",
@@ -338,13 +347,6 @@ $active = @($activeResult)
 if ($active.Count -gt 1) {
     throw "Canonical memory contains multiple active compaction records; refusing to guess."
 }
-
-$snapshotDirectory = Join-Path (Join-Path $authority.MemoryRoot "snapshots") "compaction"
-Assert-PhysicalDirectoryChain -Root $authority.AgentsHome -Target $snapshotDirectory
-
-# Prove repository health and remote reachability before changing canonical memory.
-$preflightSync = Invoke-AgentsJson -Arguments @("state", "sync", "--json")
-Assert-StateSyncSucceeded -Result $preflightSync
 
 $now = Get-Date -Format o
 $capsuleId = "{0}-{1}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), ([guid]::NewGuid().ToString("N"))
