@@ -345,6 +345,30 @@ function Assert-StateSyncSucceeded {
     }
 }
 
+function Assert-MemoryStatusSucceeded {
+    param(
+        [Parameter(Mandatory=$true)]$Result,
+        [Parameter(Mandatory=$true)][string]$Context
+    )
+
+    $propertyNames = @($Result.PSObject.Properties.Name)
+    foreach ($required in @("agentId", "records", "events", "projectionHash")) {
+        if (-not ($propertyNames -contains $required)) {
+            throw "Canonical memory status is missing $required $Context."
+        }
+    }
+    if (
+        [string]::IsNullOrWhiteSpace([string]$Result.agentId) -or
+        $Result.records -isnot [ValueType] -or
+        [int64]$Result.records -lt 0 -or
+        $Result.events -isnot [ValueType] -or
+        [int64]$Result.events -lt 0 -or
+        [string]$Result.projectionHash -notmatch '^[a-fA-F0-9]{64}$'
+    ) {
+        throw "Canonical memory status is invalid $Context."
+    }
+}
+
 function Save-ProjectionState {
     param([Parameter(Mandatory=$true)][string]$Path)
     Assert-PhysicalFileDestination -Path $Path
@@ -522,9 +546,7 @@ try {
 
     $render = Invoke-AgentsJson -Arguments @("memory", "render", "--json")
     $memoryStatus = Invoke-AgentsJson -Arguments @("memory", "status", "--json")
-    if (-not $memoryStatus.ok) {
-        throw "Canonical memory integrity failed after writing the compaction capsule."
-    }
+    Assert-MemoryStatusSucceeded -Result $memoryStatus -Context "after writing the compaction capsule"
 
     New-Item -ItemType Directory -Path $resolvedCompatibilityRoot -Force | Out-Null
     Assert-PhysicalDirectoryChain -Root $compatibilityAnchor -Target $resolvedCompatibilityRoot
@@ -579,9 +601,7 @@ Last validation: $Validation
     # and prove this capsule is still the one active scalar before reporting success.
     $render = Invoke-AgentsJson -Arguments @("memory", "render", "--json")
     $memoryStatus = Invoke-AgentsJson -Arguments @("memory", "status", "--json")
-    if (-not $memoryStatus.ok) {
-        throw "Canonical memory integrity failed after final repository synchronization."
-    }
+    Assert-MemoryStatusSucceeded -Result $memoryStatus -Context "after final repository synchronization"
     $publishedActiveResult = Invoke-AgentsJson -Arguments @(
         "memory", "list",
         "--scope", "session",
@@ -679,18 +699,14 @@ Last validation: $Validation
             }
             Invoke-AgentsJson -Arguments @("memory", "render", "--json") | Out-Null
             $recoveredStatus = Invoke-AgentsJson -Arguments @("memory", "status", "--json")
-            if (-not $recoveredStatus.ok) {
-                throw "canonical memory integrity remained unhealthy after rollback"
-            }
+            Assert-MemoryStatusSucceeded -Result $recoveredStatus -Context "after rollback"
             $recoverySync = Invoke-AgentsJson -Arguments @("state", "sync", "--json")
             Assert-StateSyncSucceeded -Result $recoverySync
             } else {
                 $recoveryNotes += "rollback skipped because synchronized authority no longer uniquely matches the failed local record"
                 Invoke-AgentsJson -Arguments @("memory", "render", "--json") | Out-Null
                 $preservedStatus = Invoke-AgentsJson -Arguments @("memory", "status", "--json")
-                if (-not $preservedStatus.ok) {
-                    throw "synchronized authority is not healthy after preserving concurrent state"
-                }
+                Assert-MemoryStatusSucceeded -Result $preservedStatus -Context "after preserving concurrent state"
             }
         } catch {
             $recoveryIssues += "canonical rollback failed: $($_.Exception.Message)"

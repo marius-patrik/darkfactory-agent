@@ -57,7 +57,7 @@ if ($CommandArgs[0] -eq "memory" -and $CommandArgs[1] -eq "render") {
     exit 0
 }
 if ($CommandArgs[0] -eq "memory" -and $CommandArgs[1] -eq "status") {
-    @{ ok = $true; projectionHash = "projection-hash" } | ConvertTo-Json -Compress
+    @{ agentId = "rommie"; records = 1; events = 1; projectionHash = ("c" * 64) } | ConvertTo-Json -Compress
     exit 0
 }
 if ($CommandArgs[0] -eq "state" -and $CommandArgs[1] -eq "sync") {
