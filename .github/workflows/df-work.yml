@@ -44,23 +44,25 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
       - name: Validate trusted control ref
-        shell: bash
         run: |
           # Privileged workers receive Codex auth, so they only run in the allowed
           # owner. The job-level guard restricts execution to the control
           # repository; workflow_dispatch may still target another repo by input.
-          if [[ "${GITHUB_REPOSITORY_OWNER}" != "marius-patrik" ]]; then
-            echo "::error::DarkFactory worker can only run in the marius-patrik owner."
+          if ($env:GITHUB_REPOSITORY_OWNER -ne "marius-patrik") {
+            Write-Output "::error::DarkFactory worker can only run in the marius-patrik owner."
             exit 1
-          fi
+          }
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
-            echo "::error::DarkFactory worker workflow_dispatch can only run from refs/heads/main."
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:GITHUB_REF -ne "refs/heads/main") {
+            Write-Output "::error::DarkFactory worker workflow_dispatch can only run from refs/heads/main."
             exit 1
-          fi
+          }
 
       - name: Checkout installed DarkFactory worker
         uses: actions/checkout@v4
@@ -70,10 +72,12 @@ jobs:
           persist-credentials: false
 
       - name: Verify canonical Agent OS
-        shell: bash
         run: |
-          command -v agents
+          Get-Command agents -ErrorAction Stop | Out-Null
           agents state doctor --json
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Mint mp-agents installation token
         id: app-token
@@ -105,10 +109,12 @@ jobs:
         env:
           DF_TARGET_REPO: ${{ inputs.repo }}
           DF_TARGET_ISSUE_NUMBER: ${{ inputs.issue_number }}
-        shell: bash
         run: |
-          mkdir -p .darkfactory-verification
-          node -e "const fs=require('node:fs'); const issue=Number(process.env.DF_TARGET_ISSUE_NUMBER); if (!Number.isInteger(issue) || issue <= 0) throw new Error('invalid issue number'); fs.writeFileSync('.darkfactory-verification/target.json', JSON.stringify({repo:process.env.DF_TARGET_REPO,issue_number:issue})+'\n')"
+          New-Item -ItemType Directory -Path .darkfactory-verification -Force | Out-Null
+          node -e 'const fs=require("node:fs"); const issue=Number(process.env.DF_TARGET_ISSUE_NUMBER); if (!Number.isInteger(issue) || issue <= 0) throw new Error("invalid issue number"); fs.writeFileSync(".darkfactory-verification/target.json", JSON.stringify({repo:process.env.DF_TARGET_REPO,issue_number:issue})+"\n")'
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Upload verification target
         uses: actions/upload-artifact@v4

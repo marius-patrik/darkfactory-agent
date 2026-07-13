@@ -841,6 +841,52 @@ test("df-work delegates local model execution exclusively to canonical Agent OS 
   assert.match(source, /TOKEN\|SECRET\|AUTH_JSON\|PRIVATE_KEY/);
 });
 
+test("df-work runs every Windows worker script through native PowerShell", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
+  const parsed = loadYaml(workflow);
+  const job = parsed.jobs["df-work"];
+  const runSteps = job.steps.filter((step: any) => typeof step.run === "string");
+
+  assert.deepEqual(job["runs-on"], ["self-hosted", "df-local"]);
+  assert.equal(job.defaults.run.shell, "pwsh");
+  assert.deepEqual(runSteps.map((step: any) => step.name), [
+    "Validate trusted control ref",
+    "Verify canonical Agent OS",
+    "Run worker",
+    "Record verification target"
+  ]);
+  assert.ok(runSteps.every((step: any) => step.shell === undefined));
+});
+
+test("df-work Windows bootstrap avoids POSIX shell and path assumptions", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
+
+  assert.doesNotMatch(workflow, /\b(?:bash|sh)\b/i);
+  assert.doesNotMatch(workflow, /\[\[|command -v|mkdir -p|cygpath|wslpath/);
+  assert.match(workflow, /New-Item -ItemType Directory -Path \.darkfactory-verification -Force/);
+  assert.match(workflow, /node darkfactory-control\/\.github\/scripts\/df-work\.mjs/);
+});
+
+test("df-work native gate remains fail closed before checkout and worker execution", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
+  const parsed = loadYaml(workflow);
+  const steps = parsed.jobs["df-work"].steps;
+  const gate = steps.find((step: any) => step.name === "Validate trusted control ref").run;
+  const agentOs = steps.find((step: any) => step.name === "Verify canonical Agent OS").run;
+  const verificationTarget = steps.find((step: any) => step.name === "Record verification target").run;
+
+  assert.match(gate, /\$env:GITHUB_REPOSITORY_OWNER -ne "marius-patrik"/);
+  assert.match(gate, /\$env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and \$env:GITHUB_REF -ne "refs\/heads\/main"/);
+  assert.equal((gate.match(/exit 1/g) ?? []).length, 2);
+  assert.match(agentOs, /Get-Command agents -ErrorAction Stop/);
+  assert.match(agentOs, /agents state doctor --json/);
+  assert.match(agentOs, /if \(\$LASTEXITCODE -ne 0\)\s*\{\s*exit \$LASTEXITCODE/);
+  assert.match(verificationTarget, /node -e/);
+  assert.match(verificationTarget, /if \(\$LASTEXITCODE -ne 0\)\s*\{\s*exit \$LASTEXITCODE/);
+  assert.ok(workflow.indexOf("Validate trusted control ref") < workflow.indexOf("Checkout installed DarkFactory worker"));
+  assert.ok(workflow.indexOf("Verify canonical Agent OS") < workflow.indexOf("Run worker"));
+});
+
 test("df-work failure path comments blocker, marks blocked, and releases the lane", async () => {
   const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
 
