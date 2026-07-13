@@ -121,6 +121,8 @@ test("workflow isolates Codex and Kimi credentials in separate provider steps", 
   assert.match(kimiStep, /KIMI_AUTH_JSON:/);
   assert.doesNotMatch(kimiStep, /CODEX_AUTH_JSON:/);
   assert.match(kimiStep, /steps\.review\.outputs\.takeover == 'true'/);
+  assert.match(codexStep, /pr-workspace:\/workspace:ro/);
+  assert.doesNotMatch(kimiStep, /pr-workspace/);
 });
 
 test("review prompt budgets generated payloads as a file summary", async () => {
@@ -298,12 +300,14 @@ test("uses the review API without placing credentials in model input", async () 
   assert.equal(review.approved, true);
   assert.equal(request.init.headers.authorization, "Bearer top-secret");
   assert.doesNotMatch(request.init.body, /top-secret/);
+  const requestBody = JSON.parse(request.init.body);
   assert.match(request.init.body, /review this diff/);
   assert.match(request.init.body, /blocking_findings/);
   assert.match(request.init.body, /non_blocking_notes/);
-  assert.equal(JSON.parse(request.init.body).temperature, 1);
-  assert.equal(JSON.parse(request.init.body).max_tokens, 16_384);
-  assert.match(JSON.parse(request.init.body).prompt_cache_key, /^[a-f0-9]{64}$/);
+  assert.equal(requestBody.temperature, 1);
+  assert.equal(requestBody.max_tokens, 16_384);
+  assert.match(requestBody.prompt_cache_key, /^[a-f0-9]{64}$/);
+  assert.equal(requestBody.tools, undefined);
 });
 
 test("reviews large prompts in bounded segments and combines findings fail-closed", async () => {

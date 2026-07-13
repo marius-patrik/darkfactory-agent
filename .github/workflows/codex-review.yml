@@ -21,13 +21,62 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
 
     steps:
-      - name: Checkout PR
+      - name: Checkout trusted base
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted review image inputs
+        id: review-image
+        shell: bash
+        run: |
+          required_inputs=(
+            .github/codex-review.Dockerfile
+            .github/codex-review.schema.json
+            .github/scripts/run-codex-review.sh
+          )
+          missing_inputs=()
+          for input in "${required_inputs[@]}"; do
+            if [ ! -f "${input}" ]; then
+              missing_inputs+=("${input}")
+            fi
+          done
+
+          if [ "${#missing_inputs[@]}" -eq 0 ]; then
+            echo "context=." >> "${GITHUB_OUTPUT}"
+            echo "bootstrap=false" >> "${GITHUB_OUTPUT}"
+          else
+            printf 'Trusted base is missing managed review input: %s\n' "${missing_inputs[@]}"
+            echo "context=trusted-review-bootstrap" >> "${GITHUB_OUTPUT}"
+            echo "bootstrap=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Checkout immutable review bootstrap
+        if: steps.review-image.outputs.bootstrap == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: marius-patrik/Andromeda
+          ref: 0040bc60d76ee251feb25d4eacfb04eff1e40e43
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/codex-review.Dockerfile
+            .github/codex-review.schema.json
+            .github/scripts/run-codex-review.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+          path: trusted-review-bootstrap
 
       - name: Build Codex review image
-        run: docker build -f .github/codex-review.Dockerfile -t darkfactory-codex-review .
+        env:
+          REVIEW_IMAGE_CONTEXT: ${{ steps.review-image.outputs.context }}
+        shell: bash
+        run: |
+          docker build \
+            -f "${REVIEW_IMAGE_CONTEXT}/.github/codex-review.Dockerfile" \
+            -t darkfactory-codex-review \
+            "${REVIEW_IMAGE_CONTEXT}"
 
       - name: Checkout PR head
         uses: actions/checkout@v4

@@ -9,6 +9,8 @@ The accepted state contract is documented in
 [Canonical State and Memory v2](docs/state-memory-v2.md). Bootstrap, doctor,
 provider pinning, canonical memory, and managed sessions implement that
 contract directly; retired adoption and snapshot-sync commands do not exist.
+The live branch, review, managed-CI, and Andromeda-data compensating controls
+are recorded in [Managed Enforcement](docs/managed-enforcement.md).
 
 ## Installation
 

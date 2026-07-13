@@ -16,7 +16,7 @@
     "test": "bun test packages/manager/test/*.test.ts",
     "proto:check": "bun scripts/verify-codegen.ts",
     "layout:check": "node scripts/verify-single-product.mjs",
-    "ci": "bun run layout:check && bun run check && bun run test && bun run test:compact && bun run proto:check && node --test .github/scripts/run-kimi-review.test.mjs",
+    "ci": "bun run layout:check && bun run check && bun run test && bun run test:compact && bun run proto:check && node --test .github/scripts/run-kimi-review.test.mjs && node --test .github/scripts/managed-enforcement.test.mjs",
     "test:compact": "pwsh -NoProfile -ExecutionPolicy Bypass -File skills/compact/scripts/test_write_compaction_capsule.ps1",
     "smoke:release": "bun scripts/run-release-smoke.mjs"
   },
