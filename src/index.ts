@@ -35,6 +35,7 @@ const DEFAULT_MAX_EVENTS_PER_SESSION = 10_000;
 const DEFAULT_MAX_TOTAL_SESSION_EVENTS = 50_000;
 const DEFAULT_MAX_BYTES_PER_SESSION = 16 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_SESSION_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_SCANNED_ENTRIES_PER_SESSION = 20_000;
 const DREAM_SESSION_ARTIFACT =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.(?:jsonl|json)$/i;
 const SECRET_FIELD_NAME =
@@ -207,6 +208,7 @@ async function loadBoundedSessionEvents(
     maximumTotalEvents: number;
     maximumBytesPerSession: number;
     maximumTotalBytes: number;
+    maximumScannedEntriesPerSession: number;
   },
 ): Promise<Array<{ sessionId: string; events: SessionEvent[] }>> {
   const output: Array<{ sessionId: string; events: SessionEvent[] }> = [];
@@ -221,7 +223,11 @@ async function loadBoundedSessionEvents(
     }
     const maximumEvents = Math.min(options.maximumEventsPerSession, remainingEvents);
     const maximumBytes = Math.min(options.maximumBytesPerSession, remainingBytes);
-    const batch = await loadSessionEventBatch(state, sessionId, { maximumEvents, maximumBytes });
+    const batch = await loadSessionEventBatch(state, sessionId, {
+      maximumEvents,
+      maximumBytes,
+      maximumScannedEntries: options.maximumScannedEntriesPerSession,
+    });
     remainingEvents -= batch.events.length;
     remainingBytes -= batch.bytes;
     output.push({ sessionId, events: batch.events });
@@ -232,17 +238,25 @@ async function loadBoundedSessionEvents(
 export async function reflectCanonicalSession(
   state: SharedState,
   sessionId: string,
-  options: { maximumEvents?: number; maximumBytes?: number } = {},
+  options: { maximumEvents?: number; maximumBytes?: number; maximumScannedEntries?: number } = {},
 ): Promise<MemoryCandidate> {
   const maximumEvents = options.maximumEvents ?? DEFAULT_MAX_EVENTS_PER_SESSION;
   const maximumBytes = options.maximumBytes ?? DEFAULT_MAX_BYTES_PER_SESSION;
+  const maximumScannedEntries = options.maximumScannedEntries ?? DEFAULT_MAX_SCANNED_ENTRIES_PER_SESSION;
   if (!Number.isSafeInteger(maximumEvents) || maximumEvents < 1) {
     throw new Error("maximumEvents must be a positive integer");
   }
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
     throw new Error("maximumBytes must be a positive integer");
   }
-  const { events } = await loadSessionEventBatch(state, sessionId, { maximumEvents, maximumBytes });
+  if (!Number.isSafeInteger(maximumScannedEntries) || maximumScannedEntries < 1) {
+    throw new Error("maximumScannedEntries must be a positive integer");
+  }
+  const { events } = await loadSessionEventBatch(state, sessionId, {
+    maximumEvents,
+    maximumBytes,
+    maximumScannedEntries,
+  });
   if (events.length === 0) throw new Error(`canonical session not found: ${sessionId}`);
   const completedTurns = events.filter((event) => event.type === "turn.completed").length;
   if (completedTurns === 0) throw new Error(`canonical session has no completed turns: ${sessionId}`);
@@ -322,6 +336,7 @@ export async function runIdleDreamCycle(
     maximumTotalEvents?: number;
     maximumBytesPerSession?: number;
     maximumTotalBytes?: number;
+    maximumScannedEntriesPerSession?: number;
     authorId?: string;
   } = {},
 ): Promise<DreamCycleResult> {
@@ -333,6 +348,8 @@ export async function runIdleDreamCycle(
   const maximumTotalEvents = options.maximumTotalEvents ?? DEFAULT_MAX_TOTAL_SESSION_EVENTS;
   const maximumBytesPerSession = options.maximumBytesPerSession ?? DEFAULT_MAX_BYTES_PER_SESSION;
   const maximumTotalBytes = options.maximumTotalBytes ?? DEFAULT_MAX_TOTAL_SESSION_BYTES;
+  const maximumScannedEntriesPerSession =
+    options.maximumScannedEntriesPerSession ?? DEFAULT_MAX_SCANNED_ENTRIES_PER_SESSION;
   if (!Number.isFinite(minimumIdleMs) || minimumIdleMs < 0) throw new Error("minimumIdleMs must be non-negative");
   if (!Number.isSafeInteger(maximumSessions) || maximumSessions < 1 || maximumSessions > 100) {
     throw new Error("maximumSessions must be an integer between 1 and 100");
@@ -352,12 +369,16 @@ export async function runIdleDreamCycle(
   if (!Number.isSafeInteger(maximumTotalBytes) || maximumTotalBytes < maximumBytesPerSession) {
     throw new Error("maximumTotalBytes must be an integer greater than or equal to maximumBytesPerSession");
   }
+  if (!Number.isSafeInteger(maximumScannedEntriesPerSession) || maximumScannedEntriesPerSession < 1) {
+    throw new Error("maximumScannedEntriesPerSession must be a positive integer");
+  }
   const sessionIds = await listSessionIds(state, { maximumSessions: maximumScannedSessions });
   const sessions = await loadBoundedSessionEvents(state, sessionIds, {
     maximumEventsPerSession,
     maximumTotalEvents,
     maximumBytesPerSession,
     maximumTotalBytes,
+    maximumScannedEntriesPerSession,
   });
   const nonEmpty = sessions.filter((session) => session.events.length > 0);
   if (nonEmpty.length === 0) return { status: "skipped", reason: "no-sessions" };

@@ -41,6 +41,11 @@ export async function runMemoryCli(args = process.argv.slice(2)): Promise<unknow
     const candidate = await reflectCanonicalSession(state, operand, {
       maximumEvents: positiveInteger(option(args, "--maximum-events"), 10_000, "maximum events"),
       maximumBytes: positiveInteger(option(args, "--maximum-bytes"), 16 * 1024 * 1024, "maximum bytes"),
+      maximumScannedEntries: positiveInteger(
+        option(args, "--maximum-scanned-entries"),
+        20_000,
+        "maximum scanned entries",
+      ),
     });
     const record = await applyMemoryCandidate(state, candidate, { authorId: "memory-plugin:reflection" });
     return { candidate, record };
@@ -73,6 +78,11 @@ export async function runMemoryCli(args = process.argv.slice(2)): Promise<unknow
         option(args, "--maximum-total-bytes"),
         64 * 1024 * 1024,
         "maximum total bytes",
+      ),
+      maximumScannedEntriesPerSession: positiveInteger(
+        option(args, "--maximum-scanned-entries-per-session"),
+        20_000,
+        "maximum scanned entries per session",
       ),
       authorId: "memory-plugin:dream",
     });

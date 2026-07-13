@@ -159,6 +159,9 @@ describe("canonical reflection and dreams", () => {
         reflectCanonicalSession(state, "bounded-one", { maximumEvents: 5, maximumBytes: 1 }),
       ).rejects.toThrow(/exceeds maximumBytes 1/);
       await expect(
+        reflectCanonicalSession(state, "bounded-one", { maximumScannedEntries: 1 }),
+      ).rejects.toThrow(/exceeds maximumScannedEntries 1/);
+      await expect(
         runIdleDreamCycle(state, {
           now: new Date("2099-01-01T00:00:00.000Z"),
           minimumIdleMs: 0,
@@ -174,6 +177,13 @@ describe("canonical reflection and dreams", () => {
           maximumTotalBytes: 1,
         }),
       ).rejects.toThrow(/exceeds maximumBytes 1/);
+      await expect(
+        runIdleDreamCycle(state, {
+          now: new Date("2099-01-01T00:00:00.000Z"),
+          minimumIdleMs: 0,
+          maximumScannedEntriesPerSession: 1,
+        }),
+      ).rejects.toThrow(/exceeds maximumScannedEntries 1/);
       expect(await listMemoryRecords(state)).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
