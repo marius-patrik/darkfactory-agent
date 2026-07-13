@@ -19,11 +19,15 @@ repository authorities or documentation trees.
 
 Component ownership:
 
-- `packages/manager` — `agents` CLI, state, providers, sessions, memory,
-  orchestration, package/capability registries, and lifecycle operations.
+- `packages/manager` — `agents` CLI, state, installs, credentials/secrets,
+  providers, sessions, memory, package/capability registries, lifecycle
+  management, and — until the #218 harness migration is implemented and
+  accepted — the orchestrator runtime.
 - `packages/core` — protobuf sources and generated Go, TypeScript, and Python
   contracts.
 - `packages/harness` — canonical session event handling and tool execution.
+  Owner-ruled target (2026-07-13, #218): the operation engine owning
+  orchestration, with the orchestrator runtime migrating from the manager.
 - `packages/gateway` — local model registry, routing, health, quota, and
   transient control-plane relay.
 - `packages/inference` — gateway-backed Python agent loop, status, persistence,
