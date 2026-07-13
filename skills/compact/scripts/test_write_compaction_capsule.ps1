@@ -57,7 +57,11 @@ if ($CommandArgs[0] -eq "memory" -and $CommandArgs[1] -eq "render") {
     exit 0
 }
 if ($CommandArgs[0] -eq "memory" -and $CommandArgs[1] -eq "status") {
-    @{ ok = $true; projectionHash = "projection-hash" } | ConvertTo-Json -Compress
+    if ($env:FAKE_MEMORY_AGENT_ID -eq "array") { $agentId = [object[]]@("rommie") } elseif ($env:FAKE_MEMORY_AGENT_ID) { $agentId = $env:FAKE_MEMORY_AGENT_ID } else { $agentId = "rommie" }
+    $records = if ($env:FAKE_MEMORY_RECORDS -eq "boolean") { $true } elseif ($env:FAKE_MEMORY_RECORDS -eq "fractional") { 1.5 } else { 1 }
+    $events = if ($env:FAKE_MEMORY_EVENTS -eq "boolean") { $true } elseif ($env:FAKE_MEMORY_EVENTS -eq "fractional") { 1.5 } else { 1 }
+    if ($env:FAKE_MEMORY_HASH -eq "array") { $projectionHash = [object[]]@("c" * 64) } else { $projectionHash = "c" * 64 }
+    @{ agentId = $agentId; records = $records; events = $events; projectionHash = $projectionHash } | ConvertTo-Json -Depth 4 -Compress
     exit 0
 }
 if ($CommandArgs[0] -eq "state" -and $CommandArgs[1] -eq "sync") {
@@ -91,6 +95,7 @@ function Initialize-Case {
     New-Item -ItemType Directory -Path $compatibilityRoot -Force | Out-Null
     $log = Join-Path $root "agents.log"
     New-Item -ItemType File -Path $log -Force | Out-Null
+    @{ schemaVersion = 2; agentId = "rommie" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $agentsHome "manifest.json") -Encoding UTF8
     $fake = New-FakeAgents -Root $root
     return [ordered]@{
         Root = $root
@@ -119,6 +124,10 @@ try {
     $env:FAKE_PREFLIGHT_ACTIVE_ID = ""
     $env:FAKE_SYNC_PROJECTION_HASH = ""
     $env:FAKE_SYNC_INVALID_BUNDLE = ""
+    $env:FAKE_MEMORY_AGENT_ID = ""
+    $env:FAKE_MEMORY_RECORDS = ""
+    $env:FAKE_MEMORY_EVENTS = ""
+    $env:FAKE_MEMORY_HASH = ""
     $result = & $scriptUnderTest -Objective "resume board" -State "ready" -Next "start planned 1" -Validation "green" -Blockers "None" -Repos "repo@abc" -AgentsCommand $primary.Fake -UserHome $primary.Root -ClearCache | ConvertFrom-Json
     Assert-True ($result.ok -eq $true) "primary: expected ok result"
     Assert-True ($result.recordId -eq "record-new") "primary: expected remembered record"
@@ -271,6 +280,7 @@ try {
     $aliasedHome = Join-Path $aliasedRoot "home-alias"
     $aliasedCompatibility = Join-Path $aliasedAgentsHome "projections"
     New-Item -ItemType Directory -Path $aliasedMemoryRoot -Force | Out-Null
+    @{ schemaVersion = 2; agentId = "rommie" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $aliasedAgentsHome "manifest.json") -Encoding UTF8
     if ($env:OS -eq "Windows_NT") {
         New-Item -ItemType Junction -Path $aliasedHome -Target $aliasedPhysicalHome | Out-Null
     } else {
@@ -302,6 +312,7 @@ try {
     $nestedHomeAlias = Join-Path $nestedRoot "home-alias"
     $nestedCompatibility = Join-Path $nestedAgentsHome "projections"
     New-Item -ItemType Directory -Path $nestedMemoryRoot -Force | Out-Null
+    @{ schemaVersion = 2; agentId = "rommie" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $nestedAgentsHome "manifest.json") -Encoding UTF8
     if ($env:OS -eq "Windows_NT") {
         New-Item -ItemType Junction -Path $nestedParentAlias -Target $nestedRealContainer | Out-Null
         New-Item -ItemType Junction -Path $nestedHomeAlias -Target (Join-Path $nestedParentAlias "physical-home") | Out-Null
@@ -503,6 +514,29 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $invalidBundle.MemoryRoot "snapshots/compaction"))) "invalid-bundle: snapshot was created before healthy preflight"
     $env:FAKE_SYNC_INVALID_BUNDLE = ""
 
+    foreach ($invalidMemoryStatus in @("wrong-agent", "case-agent", "array-agent", "boolean-records", "fractional-records", "boolean-events", "fractional-events", "array-hash")) {
+        $memoryStatusCase = Initialize-Case -Name "memory-status-$invalidMemoryStatus"
+        $env:FAKE_AGENTS_HOME = $memoryStatusCase.AgentsHome
+        $env:FAKE_AGENTS_MEMORY = $memoryStatusCase.MemoryRoot
+        $env:FAKE_AGENTS_LOG = $memoryStatusCase.Log
+        $env:FAKE_MEMORY_AGENT_ID = if ($invalidMemoryStatus -eq "wrong-agent") { "other-agent" } elseif ($invalidMemoryStatus -eq "case-agent") { "ROMMIE" } elseif ($invalidMemoryStatus -eq "array-agent") { "array" } else { "" }
+        $env:FAKE_MEMORY_RECORDS = if ($invalidMemoryStatus -eq "boolean-records") { "boolean" } elseif ($invalidMemoryStatus -eq "fractional-records") { "fractional" } else { "" }
+        $env:FAKE_MEMORY_EVENTS = if ($invalidMemoryStatus -eq "boolean-events") { "boolean" } elseif ($invalidMemoryStatus -eq "fractional-events") { "fractional" } else { "" }
+        $env:FAKE_MEMORY_HASH = if ($invalidMemoryStatus -eq "array-hash") { "array" } else { "" }
+        $memoryStatusMessage = ""
+        try {
+            & $scriptUnderTest -Objective "must fail" -State "invalid status" -Next "none" -AgentsCommand $memoryStatusCase.Fake -UserHome $memoryStatusCase.Root -CompatibilityRoot $memoryStatusCase.CompatibilityRoot | Out-Null
+        } catch {
+            $memoryStatusMessage = $_.Exception.Message
+        }
+        Assert-True ($memoryStatusMessage -match "Canonical memory status is invalid") "memory-status: $invalidMemoryStatus was accepted"
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $memoryStatusCase.MemoryRoot ".compact-state.json"))) "memory-status: success state was written for $invalidMemoryStatus"
+    }
+    $env:FAKE_MEMORY_AGENT_ID = ""
+    $env:FAKE_MEMORY_RECORDS = ""
+    $env:FAKE_MEMORY_EVENTS = ""
+    $env:FAKE_MEMORY_HASH = ""
+
     # Concurrent remote convergence cannot turn a stale capsule into success.
     $convergenceRace = Initialize-Case -Name "convergence-race"
     $env:FAKE_AGENTS_HOME = $convergenceRace.AgentsHome
@@ -598,5 +632,9 @@ try {
     Remove-Item Env:FAKE_PREFLIGHT_ACTIVE_ID -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_SYNC_PROJECTION_HASH -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_SYNC_INVALID_BUNDLE -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_MEMORY_AGENT_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_MEMORY_RECORDS -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_MEMORY_EVENTS -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_MEMORY_HASH -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

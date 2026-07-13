@@ -52,6 +52,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\skills\compact\scripts\write_com
    backup evidence requires an authenticated `backups/events/` bundle whose
    filename matches its payload hash. After sync, the script must rerender
    memory and prove its exact record is still the sole active compaction scalar.
+   `agents memory status --json` is validated by its real contract: the exact
+   manifest agent ID, true non-negative integer record/event counts, and a
+   SHA-256 projection hash; it does not expose a top-level `ok` field.
 5. If the script detects authority drift, multiple active compaction records,
    projection-integrity failure, or state-sync failure, stop. Repair this skill
    and add a regression case before compacting; do not work around the defect.
