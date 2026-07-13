@@ -20,6 +20,48 @@ async function waitForFile(file: string, timeoutMs = 2_000): Promise<void> {
 }
 
 describe("canonical mutable-state locks", () => {
+  test("transient database contention delays verification without forfeiting ownership", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-state-lock-busy-"));
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const lock = await acquireRenewableStateLock(state, "race:busy", {
+        leaseMs: 2_000,
+        heartbeatMs: 1_500,
+        waitMs: 50,
+      });
+      const ready = path.join(root, "blocker-ready");
+      const code = `
+        import { Database } from "bun:sqlite";
+        const database = new Database(process.argv[1]);
+        database.exec("BEGIN EXCLUSIVE");
+        await Bun.write(process.argv[2], "ready\\n");
+        Bun.sleepSync(250);
+        database.exec("COMMIT");
+        database.close();
+      `;
+      const blocker = Bun.spawn(
+        [process.execPath, "-e", code, renewableLockDatabasePath(state), ready],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      try {
+        await waitForFile(ready);
+        await lock.verify();
+        const [codeResult, stderr] = await Promise.all([
+          blocker.exited,
+          new Response(blocker.stderr).text(),
+        ]);
+        expect({ code: codeResult, stderr }).toEqual({ code: 0, stderr: "" });
+      } finally {
+        blocker.kill();
+        await blocker.exited;
+        await lock.release();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
+  });
+
   test("heartbeat holds one writer beyond the nominal lease", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-state-lock-heartbeat-"));
     try {
@@ -51,7 +93,7 @@ describe("canonical mutable-state locks", () => {
         database.close();
       }
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
 
@@ -120,7 +162,7 @@ describe("canonical mutable-state locks", () => {
         await successor.release();
       }
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
 
@@ -147,7 +189,7 @@ describe("canonical mutable-state locks", () => {
       await replacement.release();
       expect(await Bun.file(renewableLockDatabasePath(state)).exists()).toBe(true);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
 
@@ -183,7 +225,7 @@ describe("canonical mutable-state locks", () => {
       expect(results).toEqual(results.map(() => ({ code: 0, stderr: "" })));
       expect((await readFile(counter, "utf8")).trim()).toBe("8");
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
 
@@ -201,7 +243,7 @@ describe("canonical mutable-state locks", () => {
       expect(manifest.machineId).toBeTruthy();
       expect((await readdir(path.join(root, ".agents"))).some((name) => name.includes(".tmp"))).toBe(false);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
 });

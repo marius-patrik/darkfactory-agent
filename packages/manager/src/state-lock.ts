@@ -22,11 +22,6 @@ export interface ActiveRenewableLock {
 
 export type StateLockOptions = RenewableLockOptions;
 
-interface LeaseRow {
-  token: string;
-  expiresAt: number;
-}
-
 const SAFE_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const PROCESS_STARTED_AT = new Date(Date.now() - process.uptime() * 1_000).toISOString();
 const localTails = new Map<string, Promise<void>>();
@@ -149,59 +144,89 @@ export async function acquireRenewableStateLock(
       if (result.changes === 1) {
         let stopped = false;
         let lost: Error | null = null;
+        let knownExpiresAt = now + leaseMs;
+        let renewal: Promise<void> | null = null;
         const renew = database.query(`
           UPDATE renewable_leases
           SET expires_at = ?1
           WHERE key = ?2 AND token = ?3 AND expires_at > ?4
         `);
         const remove = database.query("DELETE FROM renewable_leases WHERE key = ?1 AND token = ?2");
-        const read = database.query<LeaseRow, [string]>(
-          "SELECT token, expires_at AS expiresAt FROM renewable_leases WHERE key = ?1",
-        );
 
-        const renewOrLose = (): void => {
-          if (stopped) throw ownershipLost(key);
-          if (lost) throw lost;
-          const renewalTime = Date.now();
-          try {
-            if (renew.run(renewalTime + leaseMs, key, token, renewalTime).changes !== 1) {
+        const renewOrLose = async (): Promise<void> => {
+          while (true) {
+            if (stopped) throw ownershipLost(key);
+            if (lost) throw lost;
+            const renewalTime = Date.now();
+            if (renewalTime >= knownExpiresAt) {
               lost = ownershipLost(key);
               throw lost;
             }
-          } catch (error) {
-            lost = error instanceof Error ? error : new Error(String(error));
-            throw lost;
+            try {
+              const nextExpiresAt = renewalTime + leaseMs;
+              // The token-qualified update is authoritative. Contention may delay
+              // the verdict, but only a completed update can renew ownership.
+              if (renew.run(nextExpiresAt, key, token, renewalTime).changes !== 1) {
+                lost = ownershipLost(key);
+                throw lost;
+              }
+              knownExpiresAt = nextExpiresAt;
+              return;
+            } catch (error) {
+              if (isBusy(error) && Date.now() < knownExpiresAt) {
+                await delay(Math.min(10, Math.max(1, knownExpiresAt - Date.now())));
+                continue;
+              }
+              lost = isBusy(error)
+                ? ownershipLost(key)
+                : error instanceof Error
+                  ? error
+                  : new Error(String(error));
+              throw lost;
+            }
           }
+        };
+
+        const renewCurrentLease = (): Promise<void> => {
+          if (!renewal) {
+            renewal = renewOrLose().finally(() => {
+              renewal = null;
+            });
+          }
+          return renewal;
         };
 
         const timer = setInterval(() => {
           if (stopped || lost) return;
-          try {
-            renewOrLose();
-          } catch {
+          void renewCurrentLease().catch(() => {
             // The next explicit verification reports the stored failure.
-          }
+          });
         }, heartbeatMs);
         timer.unref?.();
 
         return {
           key,
           verify: async () => {
-            renewOrLose();
-            const current = read.get(key);
-            if (!current || current.token !== token || current.expiresAt <= Date.now()) {
-              lost = ownershipLost(key);
-              throw lost;
-            }
+            await renewCurrentLease();
           },
           release: async () => {
             if (stopped) return;
             stopped = true;
             clearInterval(timer);
             try {
+              if (renewal) await renewal.catch(() => undefined);
               // Token-qualified deletion is the ABA boundary: an expired owner can
               // never delete a lease installed by a later conditional UPSERT.
-              remove.run(key, token);
+              while (true) {
+                try {
+                  remove.run(key, token);
+                  break;
+                } catch (error) {
+                  if (!isBusy(error)) throw error;
+                  if (Date.now() >= knownExpiresAt) break;
+                  await delay(Math.min(10, Math.max(1, knownExpiresAt - Date.now())));
+                }
+              }
             } finally {
               database.close();
             }
