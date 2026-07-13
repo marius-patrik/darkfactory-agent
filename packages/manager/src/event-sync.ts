@@ -303,9 +303,103 @@ function secretLikeText(value: string): boolean {
   return false;
 }
 
+function hasDuplicateJsonObjectKeys(source: string): boolean {
+  let offset = 0;
+  let duplicate = false;
+  const skipWhitespace = (): void => {
+    while (/\s/.test(source[offset] ?? "")) offset += 1;
+  };
+  const parseString = (): string => {
+    const start = offset;
+    offset += 1;
+    while (offset < source.length) {
+      if (source[offset] === "\\") {
+        offset += 2;
+        continue;
+      }
+      if (source[offset] === '"') {
+        offset += 1;
+        return JSON.parse(source.slice(start, offset)) as string;
+      }
+      offset += 1;
+    }
+    throw new Error("unterminated JSON string");
+  };
+  const parseValue = (): void => {
+    skipWhitespace();
+    if (source[offset] === "{") {
+      offset += 1;
+      skipWhitespace();
+      const keys = new Set<string>();
+      if (source[offset] === "}") {
+        offset += 1;
+        return;
+      }
+      while (offset < source.length) {
+        skipWhitespace();
+        const key = parseString();
+        if (keys.has(key)) duplicate = true;
+        keys.add(key);
+        skipWhitespace();
+        offset += 1;
+        parseValue();
+        skipWhitespace();
+        if (source[offset] === "}") {
+          offset += 1;
+          return;
+        }
+        offset += 1;
+      }
+      return;
+    }
+    if (source[offset] === "[") {
+      offset += 1;
+      skipWhitespace();
+      if (source[offset] === "]") {
+        offset += 1;
+        return;
+      }
+      while (offset < source.length) {
+        parseValue();
+        skipWhitespace();
+        if (source[offset] === "]") {
+          offset += 1;
+          return;
+        }
+        offset += 1;
+      }
+      return;
+    }
+    if (source[offset] === '"') {
+      parseString();
+      return;
+    }
+    while (offset < source.length && !/[\s,}\]]/.test(source[offset])) offset += 1;
+  };
+  parseValue();
+  return duplicate;
+}
+
 function secretFieldPath(value: unknown, field = "", path = ""): string | null {
   if (typeof value === "string") {
     if (STRUCTURAL_STRING_FIELDS.has(field) && (UUID.test(value) || CANONICAL_HASH_OR_ID.test(value))) return null;
+    const trimmed = value.trim();
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      let structured: unknown;
+      try {
+        structured = JSON.parse(trimmed) as unknown;
+      } catch {
+        return secretLikeText(value) ? path || field || "<root>" : null;
+      }
+      if (structured !== null && typeof structured === "object") {
+        try {
+          if (hasDuplicateJsonObjectKeys(trimmed)) return path || field || "<root>";
+          return secretFieldPath(structured, field, path);
+        } catch {
+          return path || field || "<root>";
+        }
+      }
+    }
     return secretLikeText(value) ? path || field || "<root>" : null;
   }
   if (Array.isArray(value)) {
