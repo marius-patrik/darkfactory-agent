@@ -185,6 +185,13 @@ grep -F 'preserve-me' "$LEGACY_AGENTS_HOME/memory/legacy-marker"
 legacy_backups=("$LEGACY_USER_HOME"/.agents.pre-andromeda-data-*)
 [ "${#legacy_backups[@]}" -eq 1 ]
 grep -F 'preserve-me' "${legacy_backups[0]}/memory/legacy-marker"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) ;;
+  *) [ "$(stat -c '%a' "$LEGACY_AGENTS_HOME/memory/legacy-marker")" = "600" ] || {
+    echo "error: migrated legacy state is not private" >&2
+    exit 1
+  } ;;
+esac
 
 # An existing worktree with the wrong origin must remain a hard failure.
 DENIED_USER_HOME="$SANDBOX/denied-home"
