@@ -302,6 +302,12 @@ describe("operator entrypoint", () => {
 });
 
 describe("Dream v1.3 cursor migration", () => {
+  const repeatedlyEncode = (value: string, passes = 6): string => {
+    let encoded = value;
+    for (let pass = 0; pass < passes; pass += 1) encoded = encodeURIComponent(encoded);
+    return encoded;
+  };
+
   const cursor: DreamV13Cursor = {
     version: "1.3",
     last_run: "2026-07-06T13:59:13.0874487+02:00",
@@ -408,6 +414,61 @@ describe("Dream v1.3 cursor migration", () => {
         await writeFile(source, `${JSON.stringify(fixture.value, null, 2)}\n`);
         await expect(migrateDreamV13Cursor(state, source)).rejects.toThrow(/secret-like content/);
       }
+      expect(await listMemoryRecords(state, { scope: "memory-plugin" })).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects deeply nested percent-encoded secrets in every admitted cursor text and path field", async () => {
+    const { root, state } = await fixture();
+    const planted = repeatedlyEncode("api_key=secret-value-that-must-not-cross");
+    try {
+      const malicious: Array<{ name: string; value: DreamV13Cursor }> = [
+        {
+          name: "provider",
+          value: {
+            ...cursor,
+            last_processed_file: `20260706113120000|${planted}|provider_raw|c:\\users\\patrik\\session.jsonl`,
+          },
+        },
+        {
+          name: "source-kind",
+          value: {
+            ...cursor,
+            last_processed_file: `20260706113120000|claude|${planted}|c:\\users\\patrik\\session.jsonl`,
+          },
+        },
+        {
+          name: "path",
+          value: {
+            ...cursor,
+            last_processed_file: `20260706113120000|claude|provider_raw|c:\\users\\${planted}\\session.jsonl`,
+          },
+        },
+        { name: "title", value: { ...cursor, last_session_title: planted } },
+        { name: "open-items", value: { ...cursor, open_items: [planted] } },
+        { name: "next-work", value: { ...cursor, next_work: [planted] } },
+        { name: "source-count-key", value: { ...cursor, source_counts: { [planted]: 368 } } },
+        { name: "provider-count-key", value: { ...cursor, provider_counts: { [planted]: 368 } } },
+      ];
+      for (const fixture of malicious) {
+        const source = path.join(root, `deep-${fixture.name}.json`);
+        await writeFile(source, `${JSON.stringify(fixture.value, null, 2)}\n`);
+        await expect(migrateDreamV13Cursor(state, source)).rejects.toThrow(/secret-like content/);
+      }
+      expect(await listMemoryRecords(state, { scope: "memory-plugin" })).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects malformed percent encoding before canonical cursor mutation", async () => {
+    const { root, state } = await fixture();
+    try {
+      const source = path.join(root, "malformed-percent.json");
+      await writeFile(source, `${JSON.stringify({ ...cursor, last_session_title: "safe-title%2" }, null, 2)}\n`);
+      await expect(migrateDreamV13Cursor(state, source)).rejects.toThrow(/malformed percent encoding/);
       expect(await listMemoryRecords(state, { scope: "memory-plugin" })).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });

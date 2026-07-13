@@ -37,6 +37,8 @@ const DEFAULT_MAX_TOTAL_SESSION_EVENTS = 50_000;
 const DEFAULT_MAX_BYTES_PER_SESSION = 16 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_SESSION_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_SCANNED_ENTRIES_PER_SESSION = 20_000;
+const MAX_DREAM_CURSOR_SOURCE_BYTES = 1024 * 1024;
+const MAX_DREAM_CURSOR_DECODE_WORK_BYTES = 4 * MAX_DREAM_CURSOR_SOURCE_BYTES;
 const DREAM_SESSION_ARTIFACT =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.(?:jsonl|json)$/i;
 const SECRET_FIELD_NAME =
@@ -711,18 +713,34 @@ function cursorPathUri(rawPath: string): { pathStyle: "windows" | "posix"; pathU
   return { pathStyle: "posix", pathUri: pathToFileURL(rawPath).href };
 }
 
-function decodedTextVariants(value: string): string[] {
-  const variants = [value];
+function visitDecodedTextVariants(value: string, label: string, visit: (variant: string) => void): void {
+  if (Buffer.byteLength(value, "utf8") > MAX_DREAM_CURSOR_SOURCE_BYTES) {
+    throw new Error(`${label} exceeds the Dream cursor text admission limit`);
+  }
   let decoded = value;
-  for (let pass = 0; pass < 3; pass += 1) {
-    const next = decoded.replace(/%([a-f0-9]{2})/gi, (_match, hex: string) =>
-      String.fromCharCode(Number.parseInt(hex, 16)),
-    );
-    if (next === decoded) break;
-    variants.push(next);
+  let decodedWorkBytes = 0;
+  // Every changing decode removes at least two source characters, so the input
+  // length is a strict upper bound without imposing a bypassable fixed pass cap.
+  for (let pass = 0; pass <= value.length; pass += 1) {
+    visit(decoded);
+    if (!decoded.includes("%")) return;
+    decodedWorkBytes += Buffer.byteLength(decoded, "utf8");
+    if (decodedWorkBytes > MAX_DREAM_CURSOR_DECODE_WORK_BYTES) {
+      throw new Error(`${label} exceeds the Dream cursor percent-decoding work limit`);
+    }
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      throw new Error(`${label} contains malformed percent encoding`);
+    }
+    if (Buffer.byteLength(next, "utf8") > MAX_DREAM_CURSOR_SOURCE_BYTES) {
+      throw new Error(`${label} exceeds the Dream cursor decoded-text admission limit`);
+    }
+    if (next === decoded) return;
     decoded = next;
   }
-  return variants;
+  throw new Error(`${label} exceeds the Dream cursor percent-decoding limit`);
 }
 
 function assertAdmittedCursorText(
@@ -730,16 +748,16 @@ function assertAdmittedCursorText(
   label: string,
   options: { allowSessionArtifact?: boolean } = {},
 ): void {
-  for (const variant of decodedTextVariants(value)) {
-    if (options.allowSessionArtifact && DREAM_SESSION_ARTIFACT.test(variant)) continue;
+  visitDecodedTextVariants(value, label, (variant) => {
+    if (options.allowSessionArtifact && DREAM_SESSION_ARTIFACT.test(variant)) return;
     if (SECRET_FIELD_NAME.test(variant) || findSecretLikePath(variant)) {
       throw new Error(`Dream cursor contains secret-like content at ${label}`);
     }
-  }
+  });
 }
 
 function assertAdmittedCursorPath(rawPath: string): void {
-  for (const variant of decodedTextVariants(rawPath)) {
+  visitDecodedTextVariants(rawPath, "last_processed_file.path", (variant) => {
     const segments = variant.split(/[\\/]/).filter(Boolean);
     for (const [index, segment] of segments.entries()) {
       assertAdmittedCursorText(segment, `last_processed_file.path[${index}]`, { allowSessionArtifact: true });
@@ -751,7 +769,7 @@ function assertAdmittedCursorPath(rawPath: string): void {
     if (findSecretLikePath(withoutSessionArtifacts)) {
       throw new Error("Dream cursor contains secret-like content at last_processed_file.path");
     }
-  }
+  });
 }
 
 function assertDreamCursorAdmission(
@@ -829,7 +847,7 @@ function cursorFromAuthority(value: unknown): DreamV13Cursor {
   const titleUri = new URL(requiredText(authority.lastSessionTitleUri, "Dream cursor authority title URI"));
   if (titleUri.protocol !== "file:") throw new Error("Dream cursor authority title URI must use file:");
   const title = decodeURIComponent(titleUri.pathname.split("/").at(-1) ?? "");
-  return validateDreamV13Cursor({
+  const cursor = validateDreamV13Cursor({
     version: DREAM_V13_CURSOR_VERSION,
     last_run: authority.lastRun,
     last_processed_file: [
@@ -846,6 +864,8 @@ function cursorFromAuthority(value: unknown): DreamV13Cursor {
     source_counts: authority.sourceCounts,
     provider_counts: authority.providerCounts,
   });
+  authorityFromCursor(cursor);
+  return cursor;
 }
 
 function migratedEnvelope(record: MemoryRecord): MigratedDreamCursor {
@@ -887,7 +907,7 @@ export async function migrateDreamV13Cursor(
   const sourcePath = path.resolve(sourcePathInput);
   const sourceInfo = await lstat(sourcePath);
   if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink()) throw new Error("Dream cursor source must be a regular file");
-  if (sourceInfo.size > 1024 * 1024) throw new Error("Dream cursor source exceeds the admission size limit");
+  if (sourceInfo.size > MAX_DREAM_CURSOR_SOURCE_BYTES) throw new Error("Dream cursor source exceeds the admission size limit");
   const sourceHandle = await open(sourcePath, "r");
   let sourceBytes: Buffer;
   try {
