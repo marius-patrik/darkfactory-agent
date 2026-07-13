@@ -134,3 +134,37 @@ test("denied failure: a newline-bearing data gitlink cannot disappear during ind
   const rawIndex = `160000 ${fixtureGitlinkOid} 0\t${roguePath}\0`;
   assert.deepEqual(parseIndexedGitlinks(rawIndex), [roguePath]);
 });
+
+test("denied failure: a quoted data declaration with a trailing comment cannot evade the allowlist", () => {
+  const target = fixture();
+  try {
+    const gitmodulesPath = path.join(target, ".gitmodules");
+    writeFileSync(
+      gitmodulesPath,
+      `${requireText(gitmodulesPath)}[submodule "rogue"]\n\tpath = "data/rogue name" # parsed by git config\n\turl = https://example.test/rogue.git\n`,
+    );
+    assert.match(
+      inventoryIssues(target).join("\n"),
+      /data repository declaration is not allowlisted: data\/rogue name/,
+    );
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: duplicate allowlisted data declarations cannot pass", () => {
+  const target = fixture();
+  try {
+    const gitmodulesPath = path.join(target, ".gitmodules");
+    writeFileSync(
+      gitmodulesPath,
+      `${requireText(gitmodulesPath)}[submodule "duplicate-data"]\n\tpath = data/andromeda\n\turl = https://example.test/duplicate.git\n`,
+    );
+    assert.match(
+      inventoryIssues(target).join("\n"),
+      /allowlisted data repository is declared multiple times: data\/andromeda/,
+    );
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});

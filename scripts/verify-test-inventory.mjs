@@ -36,6 +36,25 @@ function indexedGitlinks(root) {
   return parseIndexedGitlinks(execFileSync("git", ["-C", root, "ls-files", "--stage", "-z"]).toString("utf8"));
 }
 
+function declaredSubmodulePaths(root) {
+  const output = execFileSync("git", [
+    "config",
+    "-z",
+    "--file",
+    path.join(root, ".gitmodules"),
+    "--get-regexp",
+    "^submodule\\..*\\.path$",
+  ]).toString("utf8");
+  return output
+    .split("\0")
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf("\n");
+      if (separator < 0) throw new Error("git config returned a malformed submodule path record");
+      return entry.slice(separator + 1);
+    });
+}
+
 function workflowHasLeg(workflow, suite, runner) {
   const escapedSuite = suite.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const escapedRunner = runner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -84,7 +103,7 @@ export function inventoryIssues(root = repositoryRoot) {
     if (!actualPackages.includes(packagePath)) issues.push(`CI inventory package is missing: ${packagePath}`);
   }
 
-  const gitmodules = fs.readFileSync(path.join(root, ".gitmodules"), "utf8");
+  const declaredGitlinks = declaredSubmodulePaths(root);
   const activeGitlinks = activeComponents
     .filter((entry) => entry.submodule === true)
     .map((entry) => entry.path)
@@ -93,9 +112,7 @@ export function inventoryIssues(root = repositoryRoot) {
     ["plugin", "plugins/", parkedPlugins],
     ["app", "apps/", parkedApps],
   ]) {
-    const gitlinks = [...gitmodules.matchAll(new RegExp(`^\\s*path\\s*=\\s*(${prefix}[^\\s]+)\\s*$`, "gm"))]
-      .map((match) => match[1])
-      .sort();
+    const gitlinks = declaredGitlinks.filter((entry) => entry.startsWith(prefix)).sort();
     const active = activeGitlinks.filter((entry) => entry.startsWith(prefix));
     const classified = [...active, ...parked].sort();
     for (const gitlinkPath of gitlinks) {
@@ -107,9 +124,7 @@ export function inventoryIssues(root = repositoryRoot) {
   }
 
   const allowedDataGitlinks = ["data/andromeda", "data/darkfactory"];
-  const declaredDataGitlinks = [...gitmodules.matchAll(/^\s*path\s*=\s*(data\/[^\s]+)\s*$/gm)]
-    .map((match) => match[1])
-    .sort();
+  const declaredDataGitlinks = declaredGitlinks.filter((entry) => entry.startsWith("data/")).sort();
   const actualDataGitlinks = indexedGitlinks(root).filter((entry) => entry.startsWith("data/"));
   for (const declaredPath of declaredDataGitlinks) {
     if (!allowedDataGitlinks.includes(declaredPath)) issues.push(`data repository declaration is not allowlisted: ${declaredPath}`);
@@ -118,7 +133,9 @@ export function inventoryIssues(root = repositoryRoot) {
     if (!allowedDataGitlinks.includes(gitlinkPath)) issues.push(`data repository gitlink is not allowlisted: ${gitlinkPath}`);
   }
   for (const allowedPath of allowedDataGitlinks) {
-    if (!declaredDataGitlinks.includes(allowedPath)) issues.push(`allowlisted data repository is not declared in .gitmodules: ${allowedPath}`);
+    const declarationCount = declaredDataGitlinks.filter((entry) => entry === allowedPath).length;
+    if (declarationCount === 0) issues.push(`allowlisted data repository is not declared in .gitmodules: ${allowedPath}`);
+    if (declarationCount > 1) issues.push(`allowlisted data repository is declared multiple times: ${allowedPath}`);
     if (!actualDataGitlinks.includes(allowedPath)) issues.push(`allowlisted data repository is not a repository gitlink: ${allowedPath}`);
   }
 
