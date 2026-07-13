@@ -1,0 +1,7 @@
+interface:
+  display_name: "Compact"
+  short_description: "Persist and sync canonical compaction state"
+  default_prompt: "Use $compact to persist the current work state in canonical Agent OS memory, synchronize its backup, and prepare safe compatibility projections."
+
+
+
