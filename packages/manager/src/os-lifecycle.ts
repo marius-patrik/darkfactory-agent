@@ -121,7 +121,7 @@ export function containerEnv(dataRepos: DataRepoRegistration[]): Record<string, 
 }
 
 export function containerDataRepoPath(repo: DataRepoRegistration): string {
-  if (repo.id === "agent-os-data") return "/agents/data/agent-os";
+  if (repo.id === "agent-os-data") return "/agents/state";
   return `/agents/data/${repo.id}`;
 }
 

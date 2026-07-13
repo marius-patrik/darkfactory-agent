@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -435,6 +436,11 @@ describe("install CLI", () => {
       const verified = await runAgents(root, ["identity", "activate", source]);
       expect(verified.code).toBe(0);
       expect(verified.stdout).toContain("verified identity rommie sha256=");
+      const relocatedSource = path.join(root, "relocated-identity-source");
+      await cp(source, relocatedSource, { recursive: true });
+      const relocated = await runAgents(root, ["identity", "activate", relocatedSource]);
+      expect(relocated.code).toBe(0);
+      expect(relocated.stdout).toContain("verified identity rommie sha256=");
       const migrations = await readdir(
         path.join(root, ".agents", "provenance", "migrations"),
       );

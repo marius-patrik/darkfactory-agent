@@ -17,7 +17,8 @@ Agent OS remains one product inside or outside a container:
   brain.
 - `plugins/life-support`, `plugins/skyblock-agent`, and
   `plugins/singularity` are managed packages.
-- `data/agent-os/` is the sole managed data checkout, never an alternate Agent OS state root.
+- Andromeda-data is checked out at `AGENTS_HOME`; it is the same physical root
+  as `AGENTS_SYSTEM_DATA_ROOT`, not an alternate state authority.
 
 The container is replaceable compute. It must mount the one authoritative
 `AGENTS_HOME`; it must never seed or maintain another writable identity,
@@ -51,6 +52,7 @@ Required rules:
 
 - provider homes remain `AGENTS_HOME/clis/<provider>`;
 - raw provider databases, models, caches, logs, and locks are local-only;
+- Git-backed state sync commits authenticated encrypted event bundles only;
 - secret names/scopes may appear in plans, but values never do;
 - mounted source/data/workspaces use absolute host paths;
 - container removal never removes mounted data without a separate explicit

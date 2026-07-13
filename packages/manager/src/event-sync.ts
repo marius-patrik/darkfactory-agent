@@ -102,6 +102,11 @@ export interface EventSyncResult {
   idempotent: boolean;
 }
 
+export interface EventBundleInspection {
+  payloadHash: string;
+  entries: number;
+}
+
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -280,7 +285,7 @@ function secretLikeText(value: string): boolean {
     .replace(/\bhttps?:\/\/(?:\[[^\]]+\]|[^\s/:@]+)(?::\d+)?(?=\/)/gi, "");
   for (const candidate of entropyInput.match(/[A-Za-z0-9_+.\/-]{32,}={0,2}/g) ?? []) {
     if (UUID.test(candidate)) continue;
-    if (/^[a-f0-9]{40}$|^[a-f0-9]{64}$/.test(candidate)) continue;
+    if (/^(?:[a-f0-9]{40}|[a-f0-9]{64})\.?$/.test(candidate)) continue;
     // Bare GitHub-style owner/repository slugs in prose are identifiers. Requiring
     // repository punctuation avoids exempting arbitrary lowercase slash tokens.
     if (CANONICAL_REPO_SLUG.test(candidate) && /[.-]/.test(candidate)) continue;
@@ -509,6 +514,19 @@ async function authenticateBundleEnvelope(
     payload: completePayload,
     incoming: decodeEntries(completePayload.entries),
   };
+}
+
+async function readAuthenticatedEventBundle(state: SharedState, inputPath: string) {
+  const resolved = path.resolve(inputPath);
+  const inputInfo = await lstat(resolved);
+  if (!inputInfo.isFile() || inputInfo.isSymbolicLink()) throw new Error("event exchange bundle must be a physical file");
+  if (inputInfo.size > MAX_BUNDLE_BYTES * 2) throw new Error("event exchange envelope is too large");
+  return authenticateBundleEnvelope(state, JSON.parse(await readFile(resolved, "utf8")));
+}
+
+export async function inspectEventBundle(state: SharedState, inputPath: string): Promise<EventBundleInspection> {
+  const authenticated = await readAuthenticatedEventBundle(state, inputPath);
+  return { payloadHash: authenticated.payloadHash, entries: authenticated.incoming.size };
 }
 
 async function validateMergedEvents(state: SharedState, incoming: Map<string, string>): Promise<Map<string, string>> {
@@ -836,13 +854,7 @@ export async function importEventBundle(
   return withStateFileLock(state, "event-sync-import", async () => {
     const config = await readConfig(state);
     if (!config.enabled || config.transport !== "encrypted-bundle") throw new Error("event exchange is disabled");
-    const inputInfo = await lstat(path.resolve(inputPath));
-    if (!inputInfo.isFile() || inputInfo.isSymbolicLink()) throw new Error("event exchange bundle must be a physical file");
-    if (inputInfo.size > MAX_BUNDLE_BYTES * 2) throw new Error("event exchange envelope is too large");
-    const authenticated = await authenticateBundleEnvelope(
-      state,
-      JSON.parse(await readFile(path.resolve(inputPath), "utf8")),
-    );
+    const authenticated = await readAuthenticatedEventBundle(state, inputPath);
     const { payloadHash, incoming } = authenticated;
     const journalPath = path.join(importsDirectory(state), `${payloadHash}.json`);
     await ensurePhysicalDirectoryChain(state.stateDir, importsDirectory(state));

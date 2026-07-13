@@ -24,7 +24,7 @@ projected container paths.
 | `AGENTS_ROOT` | `/opt/agents-os` | Read-only distribution/package root |
 | `AGENTS_HOME` | `/agents/state` | The one canonical state root |
 | `AGENTS_USER_HOME` | `/home/agents` | Runtime account home, not state |
-| `AGENTS_SYSTEM_DATA_ROOT` | `/agents/data/agent-os` | Registered Agent OS system-data checkout |
+| `AGENTS_SYSTEM_DATA_ROOT` | `/agents/state` | The same Andromeda-data checkout as `AGENTS_HOME` |
 | `AGENTS_WORKSPACE` | `/workspace/agents` | Private Agent OS runtime workspaces |
 | `AGENTS_CLIS` | `/agents/state/clis` | Opaque provider homes |
 | `AGENTS_IDENTITY` | `/agents/state/identity` | Single Rommie identity and worker roles |
@@ -54,15 +54,15 @@ state roots. A minimum plan maps:
 | --- | --- | --- |
 | `$AGENTS_HOME` | `/agents/state` | read-write, private |
 | `$AGENTS_ROOT` or packaged distribution | `/opt/agents-os` | read-only |
-| each registered data repo | declared `/agents/data/<id>` | package-declared |
+| each additional registered data repo | declared `/agents/data/<id>` | package-declared |
 | the active registered workspace | declared `/workspace/<id>` | package-declared |
 
-The personal source checkout is `/Users/user/Projects/agents-manager`; it is
-not inferred from `HOME` or cwd. The sole Agent OS data checkout is
-`/Users/user/Projects/agents-manager/data/agent-os`, recorded exactly once as
-`agent-os-data`. Runtime workspaces live under
-`/Users/user/.agents/runtime/workspaces`. Product validation rejects a missing,
-renamed, relocated, or aliased system-data record.
+The personal source checkout is separate from state and is not inferred from
+`HOME` or cwd. The sole Agent OS data checkout is `$AGENTS_HOME`, recorded
+exactly once as `agent-os-data`; `AGENTS_SYSTEM_DATA_ROOT` must equal that same
+path. Runtime workspaces live under `$AGENTS_HOME/runtime/workspaces`. Product
+validation rejects a missing, renamed, relocated, or aliased system-data
+record.
 
 ## Package declarations
 
@@ -84,6 +84,8 @@ identity, memory, or orchestration authority.
 - Container logs and event payloads must redact secret-bearing arguments and
   values.
 - Ordinary cross-machine exchange never includes the secret class.
+- The Andromeda-data Git history carries only authenticated encrypted event
+  bundles under `backups/events/`; the local sync key is never committed.
 
 ## Removal and recovery
 

@@ -23,3 +23,8 @@ lane; Planned 2 resumes Claude, Codex, Kimi, and Agy through DarkFactory; Planne
 3 repairs and completes the global `agents` entrypoint and TUI UX. There is no
 Backlog row. The final Parked row, now including the interrupted Mac convergence
 tail, remains frozen until Patrik explicitly reopens an item.
+
+The personal `.agents` directory is the Andromeda-data checkout and the sole
+state/data authority. `agents state backup|restore|sync` operates on
+authenticated encrypted event bundles in that repository; never commit
+plaintext credentials, provider homes, keys, locks, caches, or projections.

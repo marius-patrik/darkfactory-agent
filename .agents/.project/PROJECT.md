@@ -6,7 +6,8 @@ the implementation; `agents` is the only operator/runtime CLI and
 
 Implementation components are direct children of `packages/`: `manager`,
 `core`, `harness`, `gateway`, and `inference`. Managed product repositories are
-Git submodules under `plugins/`; the sole data submodule is `data/agent-os`.
+Git submodules under `plugins/`; `data/agent-os` pins the Andromeda-data source
+contract for development, while the runtime checkout is `$AGENTS_HOME` itself.
 Their names identify components, not alternate Agent OS products or state
 authorities.
 
@@ -31,6 +32,11 @@ Component ownership:
 Historical product names, provider-home paths, launchers, and variables are
 recovery evidence only. Do not add aliases, bridges, forwarding shims, or
 fallback loaders.
+
+`AGENTS_SYSTEM_DATA_ROOT` and `$AGENTS_HOME` must resolve to the same physical
+Andromeda-data checkout. Plaintext runtime state remains local and ignored;
+authenticated encrypted bundles under `backups/events/` are the only Git-backed
+state backup and synchronization surface.
 
 Branch policy: active implementation uses a feature branch and a PR into `dev`.
 Release synchronization then propagates the tested `dev` tip to `main` through a

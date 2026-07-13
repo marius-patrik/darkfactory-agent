@@ -13,6 +13,7 @@ import { inspectSourceInstall } from "./source-install";
 import { readPackageRegistrations } from "./packages";
 import { readDataRepos } from "./data-repos";
 import { readPackagesAndEnvironmentsState } from "./environments";
+import { inspectStateRepository } from "./state-repository";
 
 export interface StateDoctorCheck {
   id:
@@ -30,7 +31,8 @@ export interface StateDoctorCheck {
     | "source_install"
     | "permissions"
     | "generated_env"
-    | "sync_safety";
+    | "sync_safety"
+    | "state_repository";
   ok: boolean;
   message: string;
   details?: Record<string, unknown>;
@@ -362,6 +364,19 @@ async function syncSafetyCheck(state: SharedState): Promise<StateDoctorCheck> {
   };
 }
 
+async function stateRepositoryCheck(state: SharedState): Promise<StateDoctorCheck> {
+  const inspection = await inspectStateRepository(state);
+  return {
+    id: "state_repository",
+    ok: inspection.issues.length === 0,
+    message:
+      inspection.issues.length === 0
+        ? `AGENTS_HOME is the clean ${inspection.repository} ${inspection.branch} checkout with ${inspection.backupBundles} encrypted backup bundle(s)`
+        : "AGENTS_HOME is not the canonical clean Andromeda-data checkout",
+    details: { ...inspection },
+  };
+}
+
 async function providerRegistryCheck(state: SharedState, tools: ToolStatus[]): Promise<StateDoctorCheck> {
   try {
     const registry = await readProviderRegistry(state);
@@ -544,7 +559,7 @@ async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
       ["AGENTS_USER_HOME", state.userHome],
       ["AGENTS_ROOT", state.root],
       ["AGENTS_WORKSPACE", state.workspaceDir],
-      ["AGENTS_SYSTEM_DATA_ROOT", systemDataPath(state.root)],
+      ["AGENTS_SYSTEM_DATA_ROOT", systemDataPath(state)],
     ] as const) {
       const binding = windows ? `$env:${name} = ${powerShellQuote(value)}` : `export ${name}=${shellQuote(value)}`;
       if (!content.includes(binding)) {
@@ -615,7 +630,7 @@ export async function doctorState(state: SharedState): Promise<StateDoctorReport
       `AGENTS_WORKSPACE=${state.workspaceDir}`,
       `AGENTS_IDENTITY=${path.join(state.stateDir, "identity")}`,
       `AGENTS_MEMORY=${path.join(state.stateDir, "memory")}`,
-      `AGENTS_SYSTEM_DATA_ROOT=${systemDataPath(state.root)}`,
+      `AGENTS_SYSTEM_DATA_ROOT=${systemDataPath(state)}`,
     ];
     generatedEnvIssues = expected.filter((line) => !generatedEnv.split("\n").includes(line));
     if (/^AGENTS_DATA=/m.test(generatedEnv)) generatedEnvIssues.push("duplicate AGENTS_DATA parent path is present");
@@ -679,6 +694,7 @@ export async function doctorState(state: SharedState): Promise<StateDoctorReport
       details: { missingFiles: missingRequiredFiles, envIssues: generatedEnvIssues },
     },
     await syncSafetyCheck(state),
+    await stateRepositoryCheck(state),
   ];
 
   return {
