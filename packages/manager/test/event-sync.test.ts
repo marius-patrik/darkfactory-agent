@@ -393,6 +393,7 @@ describe("encrypted cross-machine event exchange", () => {
         predicate: "current",
         value: JSON.stringify({
           schemaVersion: 2,
+          capsuleId: "20260713-041342-a6578aaf9ed84b448d7c41008e04a2e2",
           blocker: "DarkFactory CODEX_AUTH_JSON GitHub secret is expired and must be refreshed",
           repository: "marius-patrik/Andromeda",
           commit: "6175e4d0b5736d2ebbfc6f21a9d8111e1ba83525",
@@ -413,6 +414,18 @@ describe("encrypted cross-machine event exchange", () => {
       });
       await expect(
         exportEventBundle(structuredSecretSource, path.join(root, "structured-secret.bundle.json")),
+      ).rejects.toThrow("secret-like");
+
+      const capsuleIdSecretSource = await exchangeState(path.join(root, "capsule-id-secret"));
+      await rememberMemory(capsuleIdSecretSource, {
+        scope: "session",
+        subject: "compaction",
+        predicate: "current",
+        value: JSON.stringify({ capsuleId: "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789" }),
+        evidence,
+      });
+      await expect(
+        exportEventBundle(capsuleIdSecretSource, path.join(root, "capsule-id-secret.bundle.json")),
       ).rejects.toThrow("secret-like");
 
       const duplicateStructuredSecret = await exchangeState(path.join(root, "duplicate-structured-secret"));
