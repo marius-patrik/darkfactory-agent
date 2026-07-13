@@ -10,9 +10,10 @@ single management and runtime surface.
 
 Andromeda is one program, not a collection of adjacent tools. Every component
 in this repository — the management core (state, installs, credentials), the
-operation harness (orchestration, session events, tool execution), the
-model/execution substrate, and the GitHub control plane — is a layer of the
-same system and is specified, validated, and released as such.
+harness (session events and tool execution, owner-ruled to become the
+operation engine per #218), the model/execution substrate, and the GitHub
+control plane — is a layer of the same system and is specified, validated, and
+released as such.
 
 [Canonical State and Memory v2](docs/state-memory-v2.md) is the authoritative
 state specification. This PRD defines the product boundary, the system
@@ -57,19 +58,21 @@ retire. They are not supported aliases or compatibility contracts.
 | Component | Role |
 | --- | --- |
 | `packages/core` | Protobuf sources and generated Go, TypeScript, and Python contracts |
-| `packages/manager` | `agents` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface |
-| `packages/harness` | The operation engine: orchestration, canonical session event handling, and tool execution. The orchestrator runtime currently implemented in the manager migrates here per the harness roadmap (#218) |
+| `packages/manager` | `agents` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
+| `packages/harness` | Canonical session event handling and tool execution today. Owner-ruled target (2026-07-13, #218): the operation engine owning orchestration, with the orchestrator runtime migrating from the manager |
 | `packages/gateway` | Local model registry, routing, health, quota, and transient control-plane relay; switcher control plane and cloud OAuth dispatch |
 | `packages/inference` | Gateway-backed Python agent loop, status, persistence, redaction, and package validation; engine discovery and serve profiles |
 | `plugins/darkfactory` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
 
-Binding architecture rule: the manager manages and the harness operates. Local
-system management (state, installs, credentials, registries, lifecycle) is
-implemented in the manager and consumed by DarkFactory — no parallel
-implementations in the control plane. Operation (orchestration, session
-execution, tool execution) is harness-owned, while gateway and inference own
-their assigned local runtime responsibilities. GitHub is the remote control
-plane; the `agents` CLI is the local one.
+Binding architecture rule: the manager manages and the harness operates — as
+the owner-ruled target architecture. Local system management (state, installs,
+credentials, registries, lifecycle) is implemented in the manager and consumed
+by DarkFactory — no parallel implementations in the control plane. Operation
+(orchestration, session execution, tool execution) becomes harness-owned when
+the #218 migration is implemented and accepted; until then orchestration
+remains manager-owned. Gateway and inference own their assigned local runtime
+responsibilities. GitHub is the remote control plane; the `agents` CLI is the
+local one.
 
 ## Goals
 
