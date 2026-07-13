@@ -184,6 +184,16 @@ describe("canonical reflection and dreams", () => {
           maximumScannedEntriesPerSession: 1,
         }),
       ).rejects.toThrow(/exceeds maximumScannedEntries 1/);
+      await mkdir(path.join(state.sessionsDir, ".ignored"));
+      await expect(
+        runIdleDreamCycle(state, {
+          now: new Date("2099-01-01T00:00:00.000Z"),
+          minimumIdleMs: 0,
+          maximumSessions: 2,
+          maximumScannedSessions: 2,
+          maximumScannedSessionEntries: 2,
+        }),
+      ).rejects.toThrow(/exceeds maximumScannedEntries 2/);
       expect(await listMemoryRecords(state)).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });

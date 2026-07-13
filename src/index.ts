@@ -31,6 +31,7 @@ const DEFAULT_MAX_CORPUS_DIRECTORIES = 10_000;
 const DEFAULT_MAX_CORPUS_DEPTH = 64;
 const DEFAULT_MAX_CORPUS_TOTAL_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_SCANNED_SESSIONS = 1_000;
+const DEFAULT_MAX_SCANNED_SESSION_ENTRIES = 2_000;
 const DEFAULT_MAX_EVENTS_PER_SESSION = 10_000;
 const DEFAULT_MAX_TOTAL_SESSION_EVENTS = 50_000;
 const DEFAULT_MAX_BYTES_PER_SESSION = 16 * 1024 * 1024;
@@ -332,6 +333,7 @@ export async function runIdleDreamCycle(
     minimumIdleMs?: number;
     maximumSessions?: number;
     maximumScannedSessions?: number;
+    maximumScannedSessionEntries?: number;
     maximumEventsPerSession?: number;
     maximumTotalEvents?: number;
     maximumBytesPerSession?: number;
@@ -344,6 +346,8 @@ export async function runIdleDreamCycle(
   const minimumIdleMs = options.minimumIdleMs ?? DEFAULT_DREAM_IDLE_MS;
   const maximumSessions = options.maximumSessions ?? 8;
   const maximumScannedSessions = options.maximumScannedSessions ?? DEFAULT_MAX_SCANNED_SESSIONS;
+  const maximumScannedSessionEntries =
+    options.maximumScannedSessionEntries ?? DEFAULT_MAX_SCANNED_SESSION_ENTRIES;
   const maximumEventsPerSession = options.maximumEventsPerSession ?? DEFAULT_MAX_EVENTS_PER_SESSION;
   const maximumTotalEvents = options.maximumTotalEvents ?? DEFAULT_MAX_TOTAL_SESSION_EVENTS;
   const maximumBytesPerSession = options.maximumBytesPerSession ?? DEFAULT_MAX_BYTES_PER_SESSION;
@@ -356,6 +360,14 @@ export async function runIdleDreamCycle(
   }
   if (!Number.isSafeInteger(maximumScannedSessions) || maximumScannedSessions < maximumSessions) {
     throw new Error("maximumScannedSessions must be an integer greater than or equal to maximumSessions");
+  }
+  if (
+    !Number.isSafeInteger(maximumScannedSessionEntries) ||
+    maximumScannedSessionEntries < maximumScannedSessions
+  ) {
+    throw new Error(
+      "maximumScannedSessionEntries must be an integer greater than or equal to maximumScannedSessions",
+    );
   }
   if (!Number.isSafeInteger(maximumEventsPerSession) || maximumEventsPerSession < 1) {
     throw new Error("maximumEventsPerSession must be a positive integer");
@@ -372,7 +384,10 @@ export async function runIdleDreamCycle(
   if (!Number.isSafeInteger(maximumScannedEntriesPerSession) || maximumScannedEntriesPerSession < 1) {
     throw new Error("maximumScannedEntriesPerSession must be a positive integer");
   }
-  const sessionIds = await listSessionIds(state, { maximumSessions: maximumScannedSessions });
+  const sessionIds = await listSessionIds(state, {
+    maximumSessions: maximumScannedSessions,
+    maximumScannedEntries: maximumScannedSessionEntries,
+  });
   const sessions = await loadBoundedSessionEvents(state, sessionIds, {
     maximumEventsPerSession,
     maximumTotalEvents,

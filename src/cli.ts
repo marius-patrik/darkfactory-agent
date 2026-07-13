@@ -59,6 +59,11 @@ export async function runMemoryCli(args = process.argv.slice(2)): Promise<unknow
         1_000,
         "maximum scanned sessions",
       ),
+      maximumScannedSessionEntries: positiveInteger(
+        option(args, "--maximum-scanned-session-entries"),
+        2_000,
+        "maximum scanned session entries",
+      ),
       maximumEventsPerSession: positiveInteger(
         option(args, "--maximum-events-per-session"),
         10_000,
