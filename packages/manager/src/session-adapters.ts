@@ -14,6 +14,7 @@ import { sharedStateAt, type SharedState } from "./state";
 import { rebuildMemoryProjections } from "./memory";
 import { commandInvocation } from "./process-command";
 import { readProviderRegistry, sha256File, verifyProviderRegistration, type ProviderRegistration } from "./provider-registry";
+import type { KimiAcpTimeouts } from "./kimi-acp";
 
 export interface CliAdapterOptions {
   id: string;
@@ -336,12 +337,11 @@ export function buildProviderArgs(
 ): string[] {
   if (!model.trim() || model.includes("\0")) throw new Error("provider model must be a concrete non-empty identifier");
   if (model === "default") throw new Error("retired default model sentinel is forbidden");
+  if (provider === "kimi") return ["acp"];
   const prompt = transcriptAsPrompt(request, transcript);
   const modelArgs = ["--model", model];
 
   switch (provider) {
-    case "kimi":
-      return [...modelArgs, "--prompt", prompt];
     case "claude":
       return ["--print", ...modelArgs, prompt];
     case "codex":
@@ -355,6 +355,52 @@ export function buildProviderArgs(
       const { concreteModel } = resolveAgyModel(model);
       return ["--model", concreteModel, "--print", prompt];
     }
+  }
+}
+
+class KimiAcpProviderAdapter implements ProviderAdapter {
+  readonly id = "kimi";
+  readonly displayName = "Kimi";
+  readonly supportsStreaming = false;
+
+  constructor(
+    private readonly binary: string,
+    private readonly timeouts?: Partial<KimiAcpTimeouts>,
+  ) {}
+
+  async startSession(_descriptor: SessionDescriptor): Promise<void> {}
+
+  async continueSession(_descriptor: SessionDescriptor, _transcript: SessionTranscript): Promise<void> {}
+
+  async runTurn(
+    descriptor: SessionDescriptor,
+    transcript: SessionTranscript,
+    request: TurnRequest,
+  ): Promise<TurnResult> {
+    let startup: string;
+    try {
+      startup = await loadCanonicalStartup(descriptor);
+    } catch (error) {
+      return {
+        content: "",
+        role: "assistant",
+        error: `canonical startup memory unavailable: ${(error as Error).message}`,
+      };
+    }
+    const env = { ...canonicalChildEnvironment(), ...canonicalProviderEnv("kimi", descriptor) };
+    // Keep the provider-specific ACP/Zod boundary off unrelated manager
+    // startup paths; a managed Kimi turn loads it only after canonical startup
+    // and provider environment preparation have succeeded.
+    const { runKimiAcpTurn } = await import("./kimi-acp");
+    return runKimiAcpTurn({
+      binary: this.binary,
+      descriptor,
+      transcript,
+      request,
+      startup,
+      env,
+      timeouts: this.timeouts,
+    });
   }
 }
 
@@ -375,15 +421,13 @@ function resolveBinary(provider: CliSessionProvider, names: string[], binaryOver
   return path.resolve(binaryOverride);
 }
 
-export function kimiSessionAdapter(binaryOverride?: string): ProviderAdapter {
+export function kimiSessionAdapter(
+  binaryOverride?: string,
+  timeouts?: Partial<KimiAcpTimeouts>,
+): ProviderAdapter {
   const binary = resolveBinary("kimi", ["kimi"], binaryOverride);
   if (!binary) throw new Error("kimi binary not found in the canonical Agent OS provider home");
-  return new CliProviderAdapter({
-    id: "kimi",
-    displayName: "Kimi",
-    binary,
-    buildArgs: (request, transcript, descriptor) => buildProviderArgs("kimi", descriptor.model, request, transcript),
-  });
+  return new KimiAcpProviderAdapter(binary, timeouts);
 }
 
 export function claudeSessionAdapter(binaryOverride?: string): ProviderAdapter {

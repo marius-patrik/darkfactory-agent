@@ -78,6 +78,7 @@ export const CI_SUITE_NAMES = Object.freeze([
   "inference",
   "manager",
   "darkfactory",
+  "memory",
   "release",
   "sync",
   "review",
@@ -162,6 +163,16 @@ const suites = {
     const cwd = path.join(root, "plugins", "DarkFactory");
     runNpm("DarkFactory dependency install", ["ci"], cwd);
     runNpm("DarkFactory full check", ["run", "check"], cwd);
+  },
+  memory() {
+    run("initialize pinned Memory", "git", ["submodule", "update", "--init", "--depth", "1", "plugins/Memory"]);
+    run("Memory types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "plugins/Memory/tsconfig.json"]);
+    run("Memory integration", "bun", [
+      "test",
+      "--timeout=30000",
+      "--max-concurrency=1",
+      "plugins/Memory/test/memory-plugin.test.ts",
+    ]);
   },
   release() {
     run("installer and release smoke", "bun", ["scripts/run-release-smoke.mjs"]);

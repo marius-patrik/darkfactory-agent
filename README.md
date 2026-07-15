@@ -168,8 +168,8 @@ older snapshot-sync or provider-adoption command to fall back to.
   [gateway documentation](docs/gateway-runtime.md).
 - `packages/inference/` — agent loop and inference runtime; see
   [inference documentation](docs/inference.md).
-- `plugins/DarkFactory/`, `plugins/LifeQuest/`, and `plugins/SkyAgent/` —
-  managed product plugins.
+- `plugins/DarkFactory/`, `plugins/Memory/`, `plugins/LifeQuest/`, and
+  `plugins/SkyAgent/` — managed product plugins.
 - `apps/Singularity/` and `apps/Fabrica/` — managed product applications.
 - `skills/`, `hooks/`, `roles/`, and `commands/` — authored capability roots;
   `persona.md` is the authored identity persona.

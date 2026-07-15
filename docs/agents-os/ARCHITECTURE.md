@@ -17,6 +17,8 @@ Agent OS remains one product inside or outside a container:
   and `packages/inference` are implementation components, not separate products.
 - `plugins/DarkFactory` is a GitHub control-plane package, not a second agent
   brain.
+- `plugins/Memory` is the cognitive memory-operations plugin; it reads and
+  mutates memory only through manager-owned canonical contracts.
 - `plugins/LifeQuest` and `plugins/SkyAgent` are managed plugins;
   `apps/Singularity` and `apps/Fabrica` are managed applications.
 - `data/andromeda` and `data/darkfactory` pin the separate Andromeda and

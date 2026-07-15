@@ -3,7 +3,7 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { SessionEvent, SessionTranscript, TurnRequest } from "../../harness/session";
+import type { ProviderAdapter, SessionEvent, SessionTranscript, TurnRequest } from "../../harness/session";
 import { createSession, loadSessionEvents, loadTranscript, runSessionTurn, streamSessionTurn } from "../../harness/session";
 import {
   agySessionAdapter,
@@ -11,6 +11,7 @@ import {
   canonicalProviderEnv,
   CliProviderAdapter,
   codexSessionAdapter,
+  kimiSessionAdapter,
   loadCanonicalStartup,
   providerBinarySafetyReason,
   resolveAgyModel,
@@ -51,7 +52,7 @@ describe("provider CLI session arguments", () => {
     const prompt = "User: next question\n\nAssistant:";
 
     expect(buildProviderArgs("codex", "gpt-test", request, current)).toEqual(["exec", "--model", "gpt-test", prompt]);
-    expect(buildProviderArgs("kimi", "kimi-test", request, current)).toEqual(["--model", "kimi-test", "--prompt", prompt]);
+    expect(buildProviderArgs("kimi", "kimi-test", request, current)).toEqual(["acp"]);
     expect(buildProviderArgs("claude", "claude-test", request, current)).toEqual(["--print", "--model", "claude-test", prompt]);
     expect(buildProviderArgs("agy", "agy-test", request, current)).toEqual(["--model", "agy-test", "--print", prompt]);
   });
@@ -65,12 +66,7 @@ describe("provider CLI session arguments", () => {
       "gpt-test",
       request.prompt,
     ]);
-    expect(buildProviderArgs("kimi", "kimi-test", request, empty)).toEqual([
-      "--model",
-      "kimi-test",
-      "--prompt",
-      request.prompt,
-    ]);
+    expect(buildProviderArgs("kimi", "kimi-test", request, empty)).toEqual(["acp"]);
     expect(buildProviderArgs("claude", "claude-test", request, empty)).toEqual([
       "--print",
       "--model",
@@ -89,6 +85,8 @@ describe("provider CLI session arguments", () => {
     const empty = transcript();
     expect(() => buildProviderArgs("codex", "", request, empty)).toThrow("concrete non-empty identifier");
     expect(() => buildProviderArgs("codex", "default", request, empty)).toThrow("retired default model sentinel");
+    expect(() => buildProviderArgs("kimi", "", request, empty)).toThrow("concrete non-empty identifier");
+    expect(() => buildProviderArgs("kimi", "default", request, empty)).toThrow("retired default model sentinel");
   });
 
   test("passes prototype-shaped explicit Agy model identifiers through as strings", () => {
@@ -122,17 +120,21 @@ describe("provider CLI session arguments", () => {
 });
 
 describe("canonical startup projection", () => {
-  test("injects canonical Agent OS startup exactly once for every provider prompt", () => {
+  test("injects canonical Agent OS startup exactly once for each argv-based provider prompt", () => {
     const startup = "# Canonical startup context\n\n- product-count = 1";
     const once = withCanonicalStartup(transcript(), startup);
     const twice = withCanonicalStartup(once, startup);
     expect(twice.messages.filter((message) => message.content === startup)).toHaveLength(1);
 
-    for (const provider of ["codex", "kimi", "claude", "agy"] as const) {
+    for (const provider of ["codex", "claude", "agy"] as const) {
       const args = buildProviderArgs(provider, `${provider}-test`, request, twice);
       expect(args.join("\n")).toContain(startup);
       expect(args.join("\n").match(/product-count = 1/g)?.length).toBe(1);
     }
+
+    // Kimi receives startup and current-turn content through ACP stdin; its
+    // argv remains constant regardless of canonical context size.
+    expect(buildProviderArgs("kimi", "kimi-test", request, twice)).toEqual(["acp"]);
   });
 
   test("loads only canonical identity, memory, and capabilities while ignoring provider-native history", async () => {
@@ -438,6 +440,647 @@ async function seedCanonicalStartup(state: ReturnType<typeof sharedStateAt>, sta
     },
   });
 }
+
+interface FakeKimiAcpCapture {
+  argv: string[];
+  agentsHome: string | null;
+  kimiCodeHome: string | null;
+  requests: Array<{ method: string; params: Record<string, unknown> }>;
+}
+
+async function seedKimiCanonicalStartup(
+  state: ReturnType<typeof sharedStateAt>,
+  stateDir: string,
+): Promise<void> {
+  await ensureSharedState(state);
+  await Bun.write(path.join(stateDir, "identity", "persona.md"), "# Rommie\n");
+  await Bun.write(path.join(stateDir, "identity", "capabilities.md"), "# Canonical capabilities\n\n## kimi-probe\n");
+  await rememberMemory(state, {
+    scope: "profile",
+    subject: "user",
+    predicate: "kimi-probe",
+    value: "KIMI-CANONICAL-CONTEXT",
+    evidence: {
+      uri: "user://instruction/kimi-probe",
+      contentHash: "c".repeat(64),
+      sourceClass: "verified",
+      confidence: 1,
+    },
+  });
+}
+
+async function fakeKimiAcpBinary(
+  stateDir: string,
+  capturePath: string,
+  opts: {
+    resumeError?: boolean;
+    resumeModel?: string;
+    malformedNewSession?: boolean;
+    malformedProtocolJson?: boolean;
+    wrongSessionUpdate?: boolean;
+    hangAt?: "initialize" | "prompt";
+  } = {},
+): Promise<string> {
+  const binDir = path.join(stateDir, "clis", "kimi", "bin");
+  await mkdir(binDir, { recursive: true });
+  const server = path.join(binDir, "fake-kimi-acp.mjs");
+  const behavior = JSON.stringify(opts);
+  const source = `
+import { writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+
+const capturePath = ${JSON.stringify(capturePath)};
+const behavior = ${behavior};
+const requests = [];
+let activeSessionId = "native-kimi-session";
+let model = "kimi-test";
+let mode = "manual";
+
+function configOptions() {
+  return [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: model,
+      options: [{ name: model, value: model }],
+    },
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: mode,
+      options: [{ name: "Auto", value: "auto" }, { name: "Manual", value: "manual" }],
+    },
+  ];
+}
+
+function capture() {
+  writeFileSync(capturePath, JSON.stringify({
+    argv: process.argv.slice(2),
+    agentsHome: process.env.AGENTS_HOME ?? null,
+    kimiCodeHome: process.env.KIMI_CODE_HOME ?? null,
+    requests,
+  }));
+}
+
+function send(message) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+}
+
+const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+let stop = false;
+for await (const line of lines) {
+  if (!line.trim()) continue;
+  const message = JSON.parse(line);
+  if (typeof message.method !== "string") continue;
+  const params = message.params ?? {};
+  requests.push({ method: message.method, params });
+  capture();
+  switch (message.method) {
+    case "initialize":
+      if (behavior.hangAt === "initialize") break;
+      if (behavior.malformedProtocolJson) {
+        process.stdout.write("RAW-SENSITIVE-MALFORMED-SENTIN\\n");
+        stop = true;
+        lines.close();
+        break;
+      }
+      send({ id: message.id, result: {
+        protocolVersion: 1,
+        agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
+        authMethods: [],
+      } });
+      break;
+    case "session/new":
+      if (behavior.malformedNewSession) {
+        send({ id: message.id, result: { sessionId: 42 } });
+      } else {
+        send({ id: message.id, result: { sessionId: activeSessionId, configOptions: configOptions() } });
+      }
+      break;
+    case "session/resume":
+      activeSessionId = params.sessionId;
+      if (behavior.resumeModel) model = behavior.resumeModel;
+      if (behavior.resumeError) {
+        send({ id: message.id, error: { code: -32602, message: "unknown session with provider detail" } });
+      } else {
+        send({ id: message.id, result: {
+          configOptions: configOptions(),
+        } });
+      }
+      break;
+    case "session/set_config_option":
+      if (params.configId === "model") model = params.value;
+      if (params.configId === "mode") mode = params.value;
+      send({ id: message.id, result: { configOptions: configOptions() } });
+      break;
+    case "session/prompt":
+      if (behavior.hangAt === "prompt") break;
+      send({ method: "session/update", params: {
+        sessionId: behavior.wrongSessionUpdate ? "provider-secret-wrong-session" : activeSessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "kimi-probe-ok" },
+        },
+      } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+      break;
+    default:
+      send({ id: message.id, error: { code: -32601, message: "method not found" } });
+  }
+  if (stop) break;
+}
+capture();
+`;
+  await Bun.write(server, source);
+
+  if (process.platform === "win32") {
+    const binary = path.join(binDir, "kimi.ps1");
+    const bun = process.execPath.replaceAll("'", "''");
+    const script = server.replaceAll("'", "''");
+    await Bun.write(
+      binary,
+      `$ErrorActionPreference = 'Stop'\r\n& '${bun}' '${script}' @args\r\nexit $LASTEXITCODE\r\n`,
+    );
+    return binary;
+  }
+
+  const binary = path.join(binDir, "kimi");
+  const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
+  await Bun.write(binary, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(server)} "$@"\n`);
+  await chmod(binary, 0o700);
+  return binary;
+}
+
+function nativeKimiReceipt(providerSessionId = "native-kimi-session"): Record<string, unknown> {
+  return {
+    provider: "kimi",
+    model: "kimi-test",
+    transport: "acp",
+    providerSessionId,
+  };
+}
+
+function bootstrapKimiAdapter(receipt?: Record<string, unknown>): ProviderAdapter {
+  return {
+    id: "kimi",
+    displayName: "Kimi bootstrap fixture",
+    supportsStreaming: false,
+    async startSession() {},
+    async continueSession() {},
+    async runTurn() {
+      return {
+        content: "bootstrap-ok",
+        role: "assistant",
+        finishReason: "stop",
+        ...(receipt ? { receipt } : {}),
+      };
+    },
+  };
+}
+
+describe("managed Kimi native continuation (issue #254)", () => {
+  test("success: a fresh Kimi turn uses ACP stdin and records only the native continuity receipt", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-new-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath);
+      const adapter = kimiSessionAdapter(binary);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+
+      const result = await runSessionTurn(state, adapter, descriptor, {
+        prompt: "Reply with the single word ok.",
+        systemPrompt: "Keep this session precise.",
+      });
+      expect(result.content).toBe("kimi-probe-ok");
+      expect(result.error).toBeUndefined();
+      expect(result.receipt).toEqual(nativeKimiReceipt());
+
+      const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
+      expect(captured.argv).toEqual(["acp"]);
+      expect(captured.agentsHome).toBe(stateDir);
+      expect(captured.kimiCodeHome).toBe(path.join(stateDir, "clis", "kimi"));
+      expect(captured.requests.map(({ method }) => method)).toEqual([
+        "initialize",
+        "session/new",
+        "session/set_config_option",
+        "session/set_config_option",
+        "session/prompt",
+      ]);
+      const promptRequest = captured.requests.at(-1)!.params.prompt as Array<{ text: string }>;
+      expect(promptRequest[0]!.text).toContain("KIMI-CANONICAL-CONTEXT");
+      expect(promptRequest[0]!.text).toContain("Keep this session precise.");
+      expect(promptRequest[0]!.text).toContain("Reply with the single word ok.");
+      expect(promptRequest[0]!.text.match(/Reply with the single word ok\./g)?.length).toBe(1);
+
+      const canonical = await loadTranscript(state, descriptor.sessionId);
+      const assistant = canonical?.messages.at(-1);
+      expect(assistant?.metadata?.receipt).toEqual(nativeKimiReceipt());
+      expect(completedTurnEvent(await loadSessionEvents(state, descriptor.sessionId)).data.receipt).toEqual(
+        nativeKimiReceipt(),
+      );
+      expect(Object.keys(result.receipt!).sort()).toEqual(["model", "provider", "providerSessionId", "transport"]);
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("edge: transcript beyond the Windows argv budget resumes the same native session without replay", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-long-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+      const longSentinel = `LONG-TRANSCRIPT-MUST-NOT-REPLAY:${"x".repeat(96 * 1024)}`;
+      expect(Buffer.byteLength(longSentinel, "utf8")).toBeGreaterThan(32_767);
+      await runSessionTurn(state, bootstrapKimiAdapter(nativeKimiReceipt()), descriptor, { prompt: longSentinel });
+
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath);
+      const result = await runSessionTurn(state, kimiSessionAdapter(binary), descriptor, {
+        prompt: "Continue from the same native session.",
+      });
+      expect(result.content).toBe("kimi-probe-ok");
+      expect(result.receipt).toEqual(nativeKimiReceipt());
+
+      const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
+      expect(captured.argv).toEqual(["acp"]);
+      expect(captured.requests.map(({ method }) => method)).toEqual([
+        "initialize",
+        "session/resume",
+        "session/set_config_option",
+        "session/prompt",
+      ]);
+      expect(captured.requests[1]!.params.sessionId).toBe("native-kimi-session");
+      const promptRequest = captured.requests.at(-1)!.params.prompt as Array<{ text: string }>;
+      expect(promptRequest[0]!.text).toContain("Continue from the same native session.");
+      expect(promptRequest[0]!.text).not.toContain("LONG-TRANSCRIPT-MUST-NOT-REPLAY");
+      expect(JSON.stringify(captured)).not.toContain("LONG-TRANSCRIPT-MUST-NOT-REPLAY");
+
+      const canonical = await loadTranscript(state, descriptor.sessionId);
+      expect(canonical?.provider).toBe("kimi");
+      expect(canonical?.model).toBe("kimi-test");
+      expect(canonical?.messages.at(-1)?.metadata?.receipt).toEqual(nativeKimiReceipt());
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("edge: a system instruction introduced on resume is projected once without replaying history", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-resume-system-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+      await runSessionTurn(state, bootstrapKimiAdapter(nativeKimiReceipt()), descriptor, {
+        prompt: "prior native turn",
+      });
+
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath);
+      await runSessionTurn(state, kimiSessionAdapter(binary), descriptor, {
+        prompt: "obey the new instruction",
+        systemPrompt: "LATE-CANONICAL-SYSTEM-INSTRUCTION",
+      });
+
+      const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
+      expect(captured.argv).toEqual(["acp"]);
+      expect(captured.requests.map(({ method }) => method)).toEqual([
+        "initialize",
+        "session/resume",
+        "session/set_config_option",
+        "session/prompt",
+      ]);
+      const promptRequest = captured.requests.at(-1)!.params.prompt as Array<{ text: string }>;
+      expect(promptRequest[0]!.text).toContain("LATE-CANONICAL-SYSTEM-INSTRUCTION");
+      expect(promptRequest[0]!.text.match(/LATE-CANONICAL-SYSTEM-INSTRUCTION/g)?.length).toBe(1);
+      expect(promptRequest[0]!.text).not.toContain("prior native turn");
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("denied: missing or malformed native receipts fail before spawn instead of creating a replacement", async () => {
+    for (const [name, receipt, expected] of [
+      ["missing", undefined, "latest canonical continuation boundary lacks a native receipt"],
+      ["malformed", { ...nativeKimiReceipt(), extra: "forbidden" }, "unexpected shape"],
+    ] as const) {
+      const root = await mkdtemp(path.join(os.tmpdir(), `agents-kimi-acp-${name}-`));
+      const stateDir = path.join(root, ".agents");
+      const userHome = path.join(root, "user-home");
+      const capturePath = path.join(root, "kimi-acp.json");
+      const restore = withDisposableHome(stateDir, userHome);
+      try {
+        const state = sharedStateAt(root, stateDir, userHome);
+        await seedKimiCanonicalStartup(state, stateDir);
+        const descriptor = await createSession(state, {
+          provider: "kimi",
+          model: "kimi-test",
+          mode: "chat",
+          workdir: root,
+        });
+        await runSessionTurn(state, bootstrapKimiAdapter(receipt), descriptor, { prompt: "first" });
+        const binary = await fakeKimiAcpBinary(stateDir, capturePath);
+        await expect(
+          runSessionTurn(state, kimiSessionAdapter(binary), descriptor, { prompt: "must not replace" }),
+        ).rejects.toThrow(expected);
+        expect(await pathExists(capturePath)).toBe(false);
+      } finally {
+        restore();
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }, 30_000);
+
+  test("denied: an intervening unreceipted canonical turn cannot fall back to an older native receipt", async () => {
+    for (const kind of ["successful", "failed"] as const) {
+      const root = await mkdtemp(path.join(os.tmpdir(), `agents-kimi-acp-intervening-${kind}-`));
+      const stateDir = path.join(root, ".agents");
+      const userHome = path.join(root, "user-home");
+      const capturePath = path.join(root, "kimi-acp.json");
+      const restore = withDisposableHome(stateDir, userHome);
+      try {
+        const state = sharedStateAt(root, stateDir, userHome);
+        await seedKimiCanonicalStartup(state, stateDir);
+        const descriptor = await createSession(state, {
+          provider: "kimi",
+          model: "kimi-test",
+          mode: "chat",
+          workdir: root,
+        });
+        await runSessionTurn(state, bootstrapKimiAdapter(nativeKimiReceipt()), descriptor, { prompt: "receipted" });
+        if (kind === "successful") {
+          await runSessionTurn(state, bootstrapKimiAdapter(), descriptor, { prompt: "unreceipted success" });
+        } else {
+          const ambiguousFailure: ProviderAdapter = {
+            ...bootstrapKimiAdapter(),
+            async runTurn() {
+              throw new Error("ambiguous provider failure");
+            },
+          };
+          await expect(
+            runSessionTurn(state, ambiguousFailure, descriptor, { prompt: "unreceipted failure" }),
+          ).rejects.toThrow("ambiguous provider failure");
+        }
+
+        const canonicalBeforeResume = await loadTranscript(state, descriptor.sessionId);
+        expect(canonicalBeforeResume?.messages.at(-1)?.metadata?.receipt).toBeUndefined();
+        const binary = await fakeKimiAcpBinary(stateDir, capturePath);
+        await expect(
+          runSessionTurn(state, kimiSessionAdapter(binary), descriptor, { prompt: "must not use the older receipt" }),
+        ).rejects.toThrow("latest canonical continuation boundary lacks a native receipt");
+        expect(await pathExists(capturePath)).toBe(false);
+      } finally {
+        restore();
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }, 30_000);
+
+  test("denied: an upstream resume failure never falls back to session creation or records success", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-resume-error-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+      await runSessionTurn(state, bootstrapKimiAdapter(nativeKimiReceipt()), descriptor, { prompt: "first" });
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath, { resumeError: true });
+
+      await expect(
+        runSessionTurn(state, kimiSessionAdapter(binary), descriptor, { prompt: "resume exactly" }),
+      ).rejects.toThrow("Kimi ACP session resume failed; native session was not replaced");
+      const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
+      expect(captured.requests.map(({ method }) => method)).toEqual(["initialize", "session/resume"]);
+      expect(captured.requests.some(({ method }) => method === "session/new")).toBe(false);
+
+      const canonical = await loadTranscript(state, descriptor.sessionId);
+      const latestAssistant = canonical?.messages.at(-1);
+      expect(latestAssistant?.metadata?.error).toBe(true);
+      expect(latestAssistant?.metadata?.receipt).toBeUndefined();
+      expect(latestAssistant?.content).not.toContain("unknown session with provider detail");
+      const completed = (await loadSessionEvents(state, descriptor.sessionId)).filter(
+        (event): event is CompletedTurnEvent => event.type === "turn.completed",
+      );
+      expect(completed.at(-1)?.data.receipt).toBeUndefined();
+      expect(completed.at(-1)?.data.error).toBe("Kimi ACP session resume failed; native session was not replaced");
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("denied: resumed native model drift fails closed before mode configuration or prompt", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-model-drift-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+      await runSessionTurn(state, bootstrapKimiAdapter(nativeKimiReceipt()), descriptor, { prompt: "first" });
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath, { resumeModel: "drifted-model" });
+
+      await expect(
+        runSessionTurn(state, kimiSessionAdapter(binary), descriptor, { prompt: "must not cross model drift" }),
+      ).rejects.toThrow("did not confirm the requested model configuration");
+      const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
+      expect(captured.requests.map(({ method }) => method)).toEqual(["initialize", "session/resume"]);
+      expect(captured.requests.some(({ method }) => method === "session/prompt")).toBe(false);
+      expect((await loadTranscript(state, descriptor.sessionId))?.messages.at(-1)?.metadata?.receipt).toBeUndefined();
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("denied: malformed ACP session creation output is rejected without a receipt", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-malformed-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath, { malformedNewSession: true });
+      await expect(runSessionTurn(state, kimiSessionAdapter(binary), descriptor, { prompt: "first" })).rejects.toThrow(
+        "Kimi ACP session creation response has an invalid provider session id",
+      );
+      const canonical = await loadTranscript(state, descriptor.sessionId);
+      expect(canonical?.messages.at(-1)?.metadata?.receipt).toBeUndefined();
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("denied: malformed provider protocol output fails closed without echoing raw bytes", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-malformed-json-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath, { malformedProtocolJson: true });
+
+      await expect(runSessionTurn(state, kimiSessionAdapter(binary), descriptor, { prompt: "first" })).rejects.toThrow(
+        "Kimi ACP initialization failed",
+      );
+      expect(consoleError).not.toHaveBeenCalled();
+      const canonical = await loadTranscript(state, descriptor.sessionId);
+      expect(canonical?.messages.at(-1)?.metadata?.receipt).toBeUndefined();
+      expect(canonical?.messages.at(-1)?.content).not.toContain("RAW-SENSITIVE-MALFORMED-SENTIN");
+    } finally {
+      consoleError.mockRestore();
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("denied: hung ACP control and prompt requests terminate within their sanitized deadlines", async () => {
+    for (const [hangAt, expected, expectedMethods] of [
+      ["initialize", "Kimi ACP initialization timed out", ["initialize"]],
+      [
+        "prompt",
+        "Kimi ACP prompt timed out",
+        ["initialize", "session/new", "session/set_config_option", "session/set_config_option", "session/prompt"],
+      ],
+    ] as const) {
+      const root = await mkdtemp(path.join(os.tmpdir(), `agents-kimi-acp-timeout-${hangAt}-`));
+      const stateDir = path.join(root, ".agents");
+      const userHome = path.join(root, "user-home");
+      const capturePath = path.join(root, "kimi-acp.json");
+      const restore = withDisposableHome(stateDir, userHome);
+      try {
+        const state = sharedStateAt(root, stateDir, userHome);
+        await seedKimiCanonicalStartup(state, stateDir);
+        const descriptor = await createSession(state, {
+          provider: "kimi",
+          model: "kimi-test",
+          mode: "chat",
+          workdir: root,
+        });
+        const binary = await fakeKimiAcpBinary(stateDir, capturePath, { hangAt });
+        const adapter = kimiSessionAdapter(binary, {
+          // Allow the PowerShell launcher and fake ACP process to become
+          // observable before exercising the deliberately short deadline.
+          controlRequestMs: 2_000,
+          promptMs: 200,
+          shutdownMs: 100,
+        });
+        const startedAt = Date.now();
+        await expect(runSessionTurn(state, adapter, descriptor, { prompt: "must finish bounded" })).rejects.toThrow(
+          expected,
+        );
+        expect(Date.now() - startedAt).toBeLessThan(5_000);
+
+        const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
+        expect(captured.requests.map(({ method }) => method)).toEqual([...expectedMethods]);
+        const canonical = await loadTranscript(state, descriptor.sessionId);
+        expect(canonical?.messages.at(-1)?.content).toBe(expected);
+        expect(canonical?.messages.at(-1)?.metadata?.receipt).toBeUndefined();
+      } finally {
+        restore();
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }, 30_000);
+
+  test("denied: a cross-session update fails closed without SDK logging or a receipt", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-wrong-session-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const restore = withDisposableHome(stateDir, userHome);
+    const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "chat",
+        workdir: root,
+      });
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath, { wrongSessionUpdate: true });
+
+      await expect(runSessionTurn(state, kimiSessionAdapter(binary), descriptor, { prompt: "first" })).rejects.toThrow(
+        "Kimi ACP emitted an update for an unexpected native session",
+      );
+      expect(consoleError).not.toHaveBeenCalled();
+      const canonical = await loadTranscript(state, descriptor.sessionId);
+      expect(canonical?.messages.at(-1)?.metadata?.receipt).toBeUndefined();
+      expect(canonical?.messages.at(-1)?.content).not.toContain("provider-secret-wrong-session");
+    } finally {
+      consoleError.mockRestore();
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
 
 async function pinFakeAgy(
   state: ReturnType<typeof sharedStateAt>,

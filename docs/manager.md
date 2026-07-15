@@ -62,8 +62,28 @@ The complete authority and migration contract is
 
 A managed session spawns the pinned provider CLI from
 `AGENTS_HOME/clis/<provider>/bin` with provider-native environment variables
-projected into that home. The Agy (`antigravity-cli`) boundary is enforced per
-launch:
+projected into that home.
+
+Kimi turns use the CLI's official ACP stdio server. The process argv is always
+the bounded `acp` subcommand; canonical startup and the current request travel
+over ACP stdin, and historical transcript content is never rendered into argv.
+On resume, any canonical system instruction introduced after the last native
+assistant boundary travels with the current request without replaying older
+conversation content.
+A fresh provider session may be created only when the canonical transcript has
+no prior conversation. Every successful turn records an exact non-secret
+receipt containing the provider, canonical model, `acp` transport, and opaque
+native session id. A later turn must resume that id, verify the resumed native
+model still matches the canonical model, and keep the same receipt. Missing,
+malformed, conflicting, or model-mismatched receipts fail before launch; an
+ACP resume failure never falls back to `session/new`. The adapter selects Kimi's
+automatic permission mode for headless parity and cancels any permission request
+that still reaches the non-interactive client. ACP control requests have a
+30-second deadline, prompts have a 10-minute deadline, and process exit plus
+stderr draining use bounded one-second cleanup windows; an expired phase
+terminates the provider and records only a sanitized timeout failure.
+
+The Agy (`antigravity-cli`) boundary is enforced per launch:
 
 - **Argv.** `--print` consumes the immediately-following token as the prompt, so
   flags must precede it: `--model <concrete> --print <prompt>`. A flag placed
