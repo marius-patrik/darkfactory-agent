@@ -386,6 +386,11 @@ function normalizedBoundaryFailure(phase: string): Error {
  */
 export async function runKimiAcpTurn(options: KimiAcpTurnOptions): Promise<TurnResult> {
   assertConcreteModel(options.descriptor.model);
+  const executionPolicy = options.request.executionPolicy ?? "read-only";
+  if (executionPolicy !== "read-only" && executionPolicy !== "workspace-write") {
+    throw new KimiContinuityError("Kimi execution policy is unsupported");
+  }
+  const providerMode = executionPolicy === "read-only" ? "plan" : "auto";
   const timeouts = resolveTimeouts(options.timeouts);
   const priorReceipt = nativeReceiptForContinuation(
     options.transcript,
@@ -498,14 +503,14 @@ export async function runKimiAcpTurn(options: KimiAcpTurnOptions): Promise<TurnR
       connection.setSessionConfigOption({
         sessionId: activeSessionId!,
         configId: "mode",
-        value: "auto",
+        value: providerMode,
       }),
       timeouts.controlRequestMs,
       phase,
       proc,
     );
     assertConfigValue(modeConfig.configOptions, "model", options.descriptor.model);
-    assertConfigValue(modeConfig.configOptions, "mode", "auto");
+    assertConfigValue(modeConfig.configOptions, "mode", providerMode);
 
     phase = "prompt";
     const response = await withPhaseDeadline(
@@ -521,7 +526,7 @@ export async function runKimiAcpTurn(options: KimiAcpTurnOptions): Promise<TurnR
       throw new KimiContinuityError("Kimi ACP emitted an update for an unexpected native session");
     }
     if (unexpectedPermissionRequest) {
-      throw new KimiContinuityError("Kimi ACP requested permission despite confirmed automatic mode");
+      throw new KimiContinuityError("Kimi ACP requested permission despite the confirmed execution policy");
     }
     if (response.stopReason === "cancelled") {
       throw new KimiContinuityError("Kimi ACP cancelled the managed turn");
@@ -531,6 +536,7 @@ export async function runKimiAcpTurn(options: KimiAcpTurnOptions): Promise<TurnR
       content: output.join(""),
       role: "assistant",
       finishReason: response.stopReason,
+      resolvedExecutionPolicy: executionPolicy,
       receipt: {
         provider: "kimi",
         model: options.descriptor.model,

@@ -7,6 +7,7 @@ import type { ProviderAdapter, SessionEvent, SessionTranscript, TurnRequest } fr
 import { createSession, loadSessionEvents, loadTranscript, runSessionTurn, streamSessionTurn } from "../../harness/session";
 import {
   agySessionAdapter,
+  attestCodexExecutionPolicy,
   buildProviderArgs,
   canonicalProviderEnv,
   CliProviderAdapter,
@@ -14,7 +15,10 @@ import {
   kimiSessionAdapter,
   loadCanonicalStartup,
   providerBinarySafetyReason,
+  parseClaudeJsonResult,
+  parseCodexJsonResult,
   resolveAgyModel,
+  transcriptAsPrompt,
   withCanonicalStartup,
 } from "../src/session-adapters";
 import type { SessionDescriptor } from "../../harness/session";
@@ -51,29 +55,75 @@ describe("provider CLI session arguments", () => {
     const current = transcript([{ role: "user", content: request.prompt }]);
     const prompt = "User: next question\n\nAssistant:";
 
-    expect(buildProviderArgs("codex", "gpt-test", request, current)).toEqual(["exec", "--model", "gpt-test", prompt]);
+    expect(buildProviderArgs("codex", "gpt-test", request, current)).toEqual([
+      "--ask-for-approval",
+      "never",
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--strict-config",
+      "--model",
+      "gpt-test",
+      "--json",
+      "-",
+    ]);
     expect(buildProviderArgs("kimi", "kimi-test", request, current)).toEqual(["acp"]);
-    expect(buildProviderArgs("claude", "claude-test", request, current)).toEqual(["--print", "--model", "claude-test", prompt]);
-    expect(buildProviderArgs("agy", "agy-test", request, current)).toEqual(["--model", "agy-test", "--print", prompt]);
+    expect(buildProviderArgs("claude", "claude-test", request, current)).toEqual([
+      "--print",
+      "--model",
+      "claude-test",
+      "--permission-mode",
+      "plan",
+      "--tools",
+      "Read,Glob,Grep",
+      "--no-session-persistence",
+      "--output-format",
+      "json",
+    ]);
+    expect(buildProviderArgs("agy", "agy-test", request, current)).toEqual([
+      "--sandbox",
+      "--mode",
+      "plan",
+      "--model",
+      "agy-test",
+      "--print",
+      prompt,
+    ]);
+    expect(transcriptAsPrompt(request, current)).toBe(prompt);
   });
 
   test("passes an explicitly selected model for every provider", () => {
     const empty = transcript();
 
     expect(buildProviderArgs("codex", "gpt-test", request, empty)).toEqual([
+      "--ask-for-approval",
+      "never",
       "exec",
+      "--sandbox",
+      "read-only",
+      "--strict-config",
       "--model",
       "gpt-test",
-      request.prompt,
+      "--json",
+      "-",
     ]);
     expect(buildProviderArgs("kimi", "kimi-test", request, empty)).toEqual(["acp"]);
     expect(buildProviderArgs("claude", "claude-test", request, empty)).toEqual([
       "--print",
       "--model",
       "claude-test",
-      request.prompt,
+      "--permission-mode",
+      "plan",
+      "--tools",
+      "Read,Glob,Grep",
+      "--no-session-persistence",
+      "--output-format",
+      "json",
     ]);
     expect(buildProviderArgs("agy", "agy-test", request, empty)).toEqual([
+      "--sandbox",
+      "--mode",
+      "plan",
       "--model",
       "agy-test",
       "--print",
@@ -98,6 +148,9 @@ describe("provider CLI session arguments", () => {
         effort: null,
       });
       expect(buildProviderArgs("agy", model, request, empty)).toEqual([
+        "--sandbox",
+        "--mode",
+        "plan",
         "--model",
         model,
         "--print",
@@ -113,24 +166,263 @@ describe("provider CLI session arguments", () => {
       { role: "user", content: request.prompt },
     ]);
 
-    const args = buildProviderArgs("codex", "gpt-test", request, current);
-    expect(args[3]).toBe("User: earlier\n\nAssistant: answer\n\nUser: next question\n\nAssistant:");
-    expect(args[3].match(/next question/g)?.length).toBe(1);
+    const prompt = transcriptAsPrompt(request, current);
+    expect(prompt).toBe("User: earlier\n\nAssistant: answer\n\nUser: next question\n\nAssistant:");
+    expect(prompt.match(/next question/g)?.length).toBe(1);
+    expect(buildProviderArgs("codex", "gpt-test", request, current)).not.toContain(prompt);
+  });
+
+  test("maps independent effort and narrow execution policy without putting Codex or Claude prompts in argv", () => {
+    const current = transcript([{ role: "user", content: "SECRET_PROMPT_SENTINEL" }]);
+    const implementation: TurnRequest = {
+      prompt: "SECRET_PROMPT_SENTINEL",
+      effort: "high",
+      executionPolicy: "workspace-write",
+      agentPreset: "Sol",
+    };
+    const codex = buildProviderArgs("codex", "gpt-5.6-sol", implementation, current);
+    expect(codex).toEqual([
+      "--ask-for-approval",
+      "never",
+      "exec",
+      "--sandbox",
+      "workspace-write",
+      "--config",
+      'model_reasoning_effort="high"',
+      "--strict-config",
+      "--model",
+      "gpt-5.6-sol",
+      "--json",
+      "-",
+    ]);
+    expect(codex.join(" ")).not.toContain(implementation.prompt);
+
+    const claude = buildProviderArgs("claude", "claude-fable-5", implementation, current);
+    expect(claude).toEqual([
+      "--print",
+      "--model",
+      "claude-fable-5",
+      "--effort",
+      "high",
+      "--permission-mode",
+      "acceptEdits",
+      "--tools",
+      "Read,Glob,Grep,Edit,Write",
+      "--no-session-persistence",
+      "--output-format",
+      "json",
+    ]);
+    expect(claude.join(" ")).not.toContain(implementation.prompt);
+
+    expect(
+      buildProviderArgs(
+        "agy",
+        "Gemini 3.5 Flash (Low)",
+        { ...implementation, effort: "low" },
+        current,
+      ),
+    ).toContain("accept-edits");
+    expect(() =>
+      buildProviderArgs("agy", "Gemini 3.5 Flash (Low)", implementation, current),
+    ).toThrow("cannot represent the requested independent effort");
+  });
+
+  test("rejects broader or unknown execution policy before provider spawn", () => {
+    const unsafe = { prompt: "no", executionPolicy: "danger-full-access" } as unknown as TurnRequest;
+    expect(() => buildProviderArgs("codex", "gpt-test", unsafe, transcript())).toThrow(
+      "execution policy is unsupported",
+    );
+    const bypass = { prompt: "no", executionPolicy: "bypass" } as unknown as TurnRequest;
+    expect(() => buildProviderArgs("claude", "claude-test", bypass, transcript())).toThrow(
+      "execution policy is unsupported",
+    );
+  });
+
+  test("normalizes structured Codex and Claude outputs without provider stderr leakage", () => {
+    const codex = parseCodexJsonResult(
+      [
+        JSON.stringify({ type: "thread.started", thread_id: "thread-1" }),
+        JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }),
+        JSON.stringify({ type: "turn.completed", usage: { input_tokens: 9, output_tokens: 4 } }),
+      ].join("\n"),
+      "",
+      0,
+    );
+    expect(codex).toMatchObject({
+      content: "done",
+      usage: { tokensIn: 9, tokensOut: 4, totalTokens: 13 },
+      finishReason: "stop",
+    });
+    const claude = parseClaudeJsonResult(
+      JSON.stringify({ result: "fixed", usage: { input_tokens: 5, output_tokens: 2 } }),
+      "",
+      0,
+    );
+    expect(claude).toMatchObject({
+      content: "fixed",
+      usage: { tokensIn: 5, tokensOut: 2, totalTokens: 7 },
+      finishReason: "stop",
+    });
+    const secret = "PROVIDER_SECRET_STDERR";
+    expect(parseCodexJsonResult("not-json", secret, 0).error).toBe("provider returned malformed structured output");
+    expect(parseClaudeJsonResult("not-json", secret, 0).error).toBe("provider returned malformed structured output");
+  });
+});
+
+describe("Codex resolved execution-policy attestation (issue #257)", () => {
+  async function writeCodexRollout(
+    root: string,
+    descriptor: SessionDescriptor,
+    request: TurnRequest,
+    options: { sandbox?: string; effort?: string; duplicateContext?: boolean } = {},
+  ): Promise<string> {
+    const threadId = "019f-policy-attestation-0001";
+    const now = new Date();
+    const directory = path.join(
+      descriptor.stateDir,
+      "clis",
+      "codex",
+      "sessions",
+      String(now.getUTCFullYear()).padStart(4, "0"),
+      String(now.getUTCMonth() + 1).padStart(2, "0"),
+      String(now.getUTCDate()).padStart(2, "0"),
+    );
+    await mkdir(directory, { recursive: true });
+    const context = {
+      timestamp: now.toISOString(),
+      type: "turn_context",
+      payload: {
+        turn_id: "turn-1",
+        cwd: root,
+        workspace_roots: [root],
+        approval_policy: "never",
+        sandbox_policy: { type: options.sandbox ?? request.executionPolicy ?? "read-only" },
+        model: descriptor.model,
+        effort: options.effort ?? request.effort,
+      },
+    };
+    const events = [
+      {
+        timestamp: now.toISOString(),
+        type: "session_meta",
+        payload: {
+          session_id: threadId,
+          id: threadId,
+          cwd: root,
+          source: "exec",
+          cli_version: "0.144.1",
+        },
+      },
+      context,
+      ...(options.duplicateContext ? [context] : []),
+    ];
+    await writeFile(
+      path.join(directory, `rollout-${now.toISOString().replaceAll(":", "-")}-${threadId}.jsonl`),
+      `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    );
+    return threadId;
+  }
+
+  test("primary: exact native context attests read-only and workspace-write requests", async () => {
+    for (const executionPolicy of ["read-only", "workspace-write"] as const) {
+      const root = await mkdtemp(path.join(os.tmpdir(), `agents-codex-policy-${executionPolicy}-`));
+      try {
+        const descriptor: SessionDescriptor = {
+          sessionId: `canonical-${executionPolicy}`,
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          mode: "task",
+          workdir: root,
+          stateDir: path.join(root, ".agents"),
+        };
+        const policyRequest: TurnRequest = {
+          prompt: "fixture",
+          effort: "high",
+          executionPolicy,
+        };
+        const threadId = await writeCodexRollout(root, descriptor, policyRequest);
+        expect(await attestCodexExecutionPolicy(descriptor, policyRequest, threadId)).toBe(executionPolicy);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("edge: malformed or duplicate native context fails with fixed diagnostics", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-codex-policy-malformed-"));
+    try {
+      const descriptor: SessionDescriptor = {
+        sessionId: "canonical-malformed",
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        mode: "task",
+        workdir: root,
+        stateDir: path.join(root, ".agents"),
+      };
+      const policyRequest: TurnRequest = {
+        prompt: "fixture",
+        effort: "medium",
+        executionPolicy: "read-only",
+      };
+      const threadId = await writeCodexRollout(root, descriptor, policyRequest, { duplicateContext: true });
+      await expect(attestCodexExecutionPolicy(descriptor, policyRequest, threadId)).rejects.toThrow(
+        "native execution receipt is malformed",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("denied: requested workspace-write resolving read-only blocks with no native path or id leakage", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-codex-policy-denied-"));
+    try {
+      const descriptor: SessionDescriptor = {
+        sessionId: "canonical-denied",
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        mode: "task",
+        workdir: root,
+        stateDir: path.join(root, ".agents"),
+      };
+      const policyRequest: TurnRequest = {
+        prompt: "fixture",
+        effort: "high",
+        executionPolicy: "workspace-write",
+      };
+      const threadId = await writeCodexRollout(root, descriptor, policyRequest, { sandbox: "read-only" });
+      try {
+        await attestCodexExecutionPolicy(descriptor, policyRequest, threadId);
+        throw new Error("expected policy mismatch");
+      } catch (error) {
+        expect((error as Error).message).toBe(
+          "Codex resolved execution policy does not match the requested policy",
+        );
+        expect((error as Error).message).not.toContain(root);
+        expect((error as Error).message).not.toContain(threadId);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
 describe("canonical startup projection", () => {
-  test("injects canonical Agent OS startup exactly once for each argv-based provider prompt", () => {
+  test("injects canonical Agent OS startup exactly once without exposing stdin provider prompts in argv", () => {
     const startup = "# Canonical startup context\n\n- product-count = 1";
     const once = withCanonicalStartup(transcript(), startup);
     const twice = withCanonicalStartup(once, startup);
     expect(twice.messages.filter((message) => message.content === startup)).toHaveLength(1);
 
-    for (const provider of ["codex", "claude", "agy"] as const) {
+    const stdinPrompt = transcriptAsPrompt(request, twice);
+    expect(stdinPrompt).toContain(startup);
+    expect(stdinPrompt.match(/product-count = 1/g)?.length).toBe(1);
+    for (const provider of ["codex", "claude"] as const) {
       const args = buildProviderArgs(provider, `${provider}-test`, request, twice);
-      expect(args.join("\n")).toContain(startup);
-      expect(args.join("\n").match(/product-count = 1/g)?.length).toBe(1);
+      expect(args.join("\n")).not.toContain(startup);
     }
+    const agyArgs = buildProviderArgs("agy", "agy-test", request, twice);
+    expect(agyArgs.join("\n")).toContain(startup);
+    expect(agyArgs.join("\n").match(/product-count = 1/g)?.length).toBe(1);
 
     // Kimi receives startup and current-turn content through ACP stdin; its
     // argv remains constant regardless of canonical context size.
@@ -287,11 +579,14 @@ function fakeAgyBinary(
       `$capture = '${capture}'`,
       `$autoUpdateEntries = @(Get-ChildItem Env: | Where-Object { $_.Name -ieq 'AGY_CLI_DISABLE_AUTO_UPDATE' })`,
       ...startupUpdater,
-      `$prompt64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$args[3]))`,
+      `$prompt64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$args[6]))`,
       `$lines = @(`,
       `  "argv0=$($args[0])",`,
       `  "argv1=$($args[1])",`,
       `  "argv2=$($args[2])",`,
+      `  "argv3=$($args[3])",`,
+      `  "argv4=$($args[4])",`,
+      `  "argv5=$($args[5])",`,
       `  "argc=$($args.Count)",`,
       `  "prompt64=$prompt64",`,
       `  "geminiDir=$env:GEMINI_DIR",`,
@@ -344,11 +639,14 @@ function fakeAgyBinary(
     ...startupUpdater,
     `agy_auto_update_keys=$(env | awk -F= 'toupper($1) == "AGY_CLI_DISABLE_AUTO_UPDATE" { print $1 }' | paste -sd, -)`,
     `agy_auto_update_count=$(env | awk -F= 'toupper($1) == "AGY_CLI_DISABLE_AUTO_UPDATE" { count++ } END { print count + 0 }')`,
-    `prompt64=$(printf '%s' "$4" | base64 | tr -d '\\n')`,
+    `prompt64=$(printf '%s' "$7" | base64 | tr -d '\\n')`,
     `{`,
     `  printf 'argv0=%s\\n' "$1"`,
     `  printf 'argv1=%s\\n' "$2"`,
     `  printf 'argv2=%s\\n' "$3"`,
+    `  printf 'argv3=%s\\n' "$4"`,
+    `  printf 'argv4=%s\\n' "$5"`,
+    `  printf 'argv5=%s\\n' "$6"`,
     `  printf 'argc=%s\\n' "$#"`,
     `  printf 'prompt64=%s\\n' "$prompt64"`,
     `  printf 'geminiDir=%s\\n' "$GEMINI_DIR"`,
@@ -512,7 +810,11 @@ function configOptions() {
       category: "mode",
       type: "select",
       currentValue: mode,
-      options: [{ name: "Auto", value: "auto" }, { name: "Manual", value: "manual" }],
+      options: [
+        { name: "Auto", value: "auto" },
+        { name: "Plan", value: "plan" },
+        { name: "Manual", value: "manual" },
+      ],
     },
   ];
 }
@@ -1247,10 +1549,13 @@ describe("managed Agy provider boundary (issue #252)", () => {
 
       // The exact prompt and the concrete Low model reach the provider boundary.
       const captured = parseCapture(await readFile(capture, "utf8"));
-      expect(captured.argv0).toBe("--model");
-      expect(captured.argv1).toBe(AGY_LOW_MODEL);
-      expect(captured.argv2).toBe("--print");
-      expect(captured.argc).toBe("4");
+      expect(captured.argv0).toBe("--sandbox");
+      expect(captured.argv1).toBe("--mode");
+      expect(captured.argv2).toBe("plan");
+      expect(captured.argv3).toBe("--model");
+      expect(captured.argv4).toBe(AGY_LOW_MODEL);
+      expect(captured.argv5).toBe("--print");
+      expect(captured.argc).toBe("7");
       const reachedPrompt = decodePrompt(captured);
       expect(reachedPrompt).toContain(promptText);
       expect(reachedPrompt).toContain("AGY-CANONICAL-CONTEXT");
@@ -1329,8 +1634,8 @@ describe("managed Agy provider boundary (issue #252)", () => {
 
       // Executed exactly once.
       const captured = parseCapture(await readFile(capture, "utf8"));
-      expect(captured.argc).toBe("4");
-      expect(captured.argv1).toBe(AGY_LOW_MODEL);
+      expect(captured.argc).toBe("7");
+      expect(captured.argv4).toBe(AGY_LOW_MODEL);
       const reachedPrompt = decodePrompt(captured);
       expect(reachedPrompt).toContain(promptText);
 
@@ -1377,7 +1682,15 @@ describe("managed Agy provider boundary (issue #252)", () => {
       // The low tier resolves to the concrete authenticated Low model.
       expect(resolveAgyModel("low")).toMatchObject({ concreteModel: AGY_LOW_MODEL, effort: "low" });
       const args = buildProviderArgs("agy", "low", { prompt: "hello edge" }, transcript());
-      expect(args).toEqual(["--model", AGY_LOW_MODEL, "--print", "hello edge"]);
+      expect(args).toEqual([
+        "--sandbox",
+        "--mode",
+        "plan",
+        "--model",
+        AGY_LOW_MODEL,
+        "--print",
+        "hello edge",
+      ]);
     } finally {
       restore();
       await rm(root, { recursive: true, force: true });

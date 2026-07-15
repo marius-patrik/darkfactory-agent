@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { lstat, open, readFile, realpath, type FileHandle } from "node:fs/promises";
+import { lstat, open, readFile, readdir, realpath, type FileHandle } from "node:fs/promises";
 import type {
   ProviderAdapter,
   SessionDescriptor,
@@ -21,10 +21,18 @@ export interface CliAdapterOptions {
   displayName: string;
   binary: string;
   buildArgs: (request: TurnRequest, transcript: SessionTranscript, descriptor: SessionDescriptor) => string[];
+  /** Optional stdin payload. Used when provider prompt secrecy cannot be preserved through argv. */
+  buildStdin?: (request: TurnRequest, transcript: SessionTranscript, descriptor: SessionDescriptor) => string;
   supportsStreaming?: boolean;
   env?: Record<string, string>;
   cwd?: string;
   parseResult?: (stdout: string, stderr: string, code: number) => TurnResult;
+  /** Provider-native effective-policy attestation after structured output parsing. */
+  resolveExecutionPolicy?: (
+    descriptor: SessionDescriptor,
+    request: TurnRequest,
+    result: TurnResult,
+  ) => Promise<"read-only" | "workspace-write">;
   /**
    * Captures immutable per-run authority before canonical launch preparation.
    * This is the only phase allowed to bind to mutable provider registry state.
@@ -43,7 +51,11 @@ export interface CliAdapterOptions {
    */
   postflight?: (descriptor: SessionDescriptor, attestation: unknown) => Promise<void>;
   /** Manager-recorded receipt describing the concrete request sent for this launch. */
-  receipt?: (descriptor: SessionDescriptor) => Record<string, unknown>;
+  receipt?: (
+    descriptor: SessionDescriptor,
+    request: TurnRequest,
+    result: TurnResult,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
 function defaultParseResult(stdout: string, stderr: string, code: number): TurnResult {
@@ -109,6 +121,7 @@ export class CliProviderAdapter implements ProviderAdapter {
       };
     }
     const args = this.options.buildArgs(request, effectiveTranscript, descriptor);
+    const stdinText = this.options.buildStdin?.(request, effectiveTranscript, descriptor);
     const cwd = this.options.cwd ?? descriptor.workdir;
     const env = { ...canonicalChildEnvironment(), ...canonicalProviderEnv(this.id, descriptor), ...this.options.env };
     forceAgyAutoUpdateDisabled(env, this.id);
@@ -116,7 +129,7 @@ export class CliProviderAdapter implements ProviderAdapter {
     const spawnOptions = {
       cwd,
       env,
-      stdin: "inherit" as const,
+      stdin: stdinText === undefined ? ("inherit" as const) : ("pipe" as const),
       stdout: "pipe" as const,
       stderr: "pipe" as const,
     };
@@ -124,6 +137,10 @@ export class CliProviderAdapter implements ProviderAdapter {
       await this.options.verifyPreSpawn(descriptor, attestationS0);
     }
     const proc = Bun.spawn(invocation, spawnOptions);
+    if (stdinText !== undefined && proc.stdin && typeof proc.stdin !== "number") {
+      proc.stdin.write(stdinText);
+      proc.stdin.end();
+    }
     // Once a provider is spawned, process completion and postflight attestation
     // are mandatory. An early stdout/stderr failure must not escape before the
     // process settles or bypass the S0 drift check.
@@ -143,7 +160,10 @@ export class CliProviderAdapter implements ProviderAdapter {
     const stderr = stderrRead.value;
     const code = processExit.value;
     const result = (this.options.parseResult ?? defaultParseResult)(stdout, stderr, code);
-    if (this.options.receipt) result.receipt = this.options.receipt(descriptor);
+    result.resolvedExecutionPolicy = this.options.resolveExecutionPolicy
+      ? await this.options.resolveExecutionPolicy(descriptor, request, result)
+      : request.executionPolicy ?? "read-only";
+    if (this.options.receipt) result.receipt = await this.options.receipt(descriptor, request, result);
     return result;
   }
 }
@@ -245,7 +265,7 @@ function findBinary(names: string[], provider?: CliSessionProvider): string | nu
   return null;
 }
 
-function transcriptAsPrompt(request: TurnRequest, transcript: SessionTranscript): string {
+export function transcriptAsPrompt(request: TurnRequest, transcript: SessionTranscript): string {
   const lines = renderTranscriptForCli(transcript);
   const lastMessage = transcript.messages.at(-1);
   if (lastMessage?.role === "user" && lastMessage.content === request.prompt) {
@@ -340,12 +360,44 @@ export function buildProviderArgs(
   if (provider === "kimi") return ["acp"];
   const prompt = transcriptAsPrompt(request, transcript);
   const modelArgs = ["--model", model];
+  const executionPolicy = request.executionPolicy ?? "read-only";
+  if (executionPolicy !== "read-only" && executionPolicy !== "workspace-write") {
+    throw new Error("provider execution policy is unsupported");
+  }
+  const effortArgs = request.effort ? ["--effort", request.effort] : [];
 
   switch (provider) {
-    case "claude":
-      return ["--print", ...modelArgs, prompt];
-    case "codex":
-      return ["exec", ...modelArgs, prompt];
+    case "claude": {
+      const permissionMode = executionPolicy === "read-only" ? "plan" : "acceptEdits";
+      const tools = executionPolicy === "read-only" ? "Read,Glob,Grep" : "Read,Glob,Grep,Edit,Write";
+      return [
+        "--print",
+        ...modelArgs,
+        ...effortArgs,
+        "--permission-mode",
+        permissionMode,
+        "--tools",
+        tools,
+        "--no-session-persistence",
+        "--output-format",
+        "json",
+      ];
+    }
+    case "codex": {
+      const codexEffort = request.effort ? [`model_reasoning_effort=\"${request.effort}\"`] : [];
+      return [
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--sandbox",
+        executionPolicy,
+        ...(codexEffort.length > 0 ? ["--config", ...codexEffort] : []),
+        "--strict-config",
+        ...modelArgs,
+        "--json",
+        "-",
+      ];
+    }
     case "agy": {
       // Agy's --print consumes the immediately-following argv token as the
       // prompt, so any flag placed after it is swallowed as user input and the
@@ -353,8 +405,238 @@ export function buildProviderArgs(
       // first and place "--print <prompt>" last so the exact prompt and the
       // requested model both apply.
       const { concreteModel } = resolveAgyModel(model);
-      return ["--model", concreteModel, "--print", prompt];
+      const resolution = resolveAgyModel(model);
+      if (request.effort && resolution.effort && request.effort !== resolution.effort) {
+        throw new Error("Agy configured model cannot represent the requested independent effort");
+      }
+      return [
+        "--sandbox",
+        "--mode",
+        executionPolicy === "read-only" ? "plan" : "accept-edits",
+        "--model",
+        concreteModel,
+        "--print",
+        prompt,
+      ];
     }
+  }
+}
+
+function safeNonNegativeInteger(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : undefined;
+}
+
+export function parseCodexJsonResult(stdout: string, stderr: string, code: number): TurnResult {
+  if (code !== 0) return defaultParseResult("", stderr, code);
+  let content = "";
+  let usage: TurnResult["usage"];
+  let providerThreadId: string | null = null;
+  try {
+    for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.type === "thread.started") {
+        if (
+          providerThreadId !== null ||
+          typeof event.thread_id !== "string" ||
+          !/^[A-Za-z0-9-]{1,128}$/.test(event.thread_id)
+        ) {
+          throw new Error("malformed thread identity");
+        }
+        providerThreadId = event.thread_id;
+      }
+      if (event.type === "item.completed" && event.item && typeof event.item === "object") {
+        const item = event.item as Record<string, unknown>;
+        if (item.type === "agent_message" && typeof item.text === "string") content += item.text;
+      }
+      if (event.type === "turn.completed" && event.usage && typeof event.usage === "object") {
+        const raw = event.usage as Record<string, unknown>;
+        const tokensIn = safeNonNegativeInteger(raw.input_tokens);
+        const tokensOut = safeNonNegativeInteger(raw.output_tokens);
+        if (tokensIn === undefined || tokensOut === undefined) throw new Error("malformed usage");
+        usage = { tokensIn, tokensOut, totalTokens: tokensIn + tokensOut };
+      }
+    }
+  } catch {
+    return { content: "", role: "assistant", error: "provider returned malformed structured output" };
+  }
+  if (!providerThreadId || !content || !usage) {
+    return { content: "", role: "assistant", error: "provider returned malformed structured output" };
+  }
+  return {
+    content,
+    role: "assistant",
+    usage,
+    finishReason: "stop",
+    receipt: { providerThreadId },
+  };
+}
+
+const MAX_CODEX_ROLLOUT_BYTES = 64 * 1024 * 1024;
+
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function candidateCodexDateDirectories(sessionsRoot: string): string[] {
+  const output: string[] = [];
+  const now = new Date();
+  for (const offset of [-1, 0, 1]) {
+    const date = new Date(now.getTime() + offset * 24 * 60 * 60 * 1000);
+    output.push(
+      path.join(
+        sessionsRoot,
+        String(date.getUTCFullYear()).padStart(4, "0"),
+        String(date.getUTCMonth() + 1).padStart(2, "0"),
+        String(date.getUTCDate()).padStart(2, "0"),
+      ),
+    );
+  }
+  return output;
+}
+
+function exactRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Admit the exact Codex native rollout and verify the provider's effective
+ * turn context. This closes the #257 gap where workspace-write argv previously
+ * resolved to a read-only managed sandbox.
+ */
+export async function attestCodexExecutionPolicy(
+  descriptor: SessionDescriptor,
+  request: TurnRequest,
+  providerThreadId: string,
+): Promise<"read-only" | "workspace-write"> {
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(providerThreadId)) {
+    throw new Error("Codex native execution receipt is malformed");
+  }
+  const requested = request.executionPolicy ?? "read-only";
+  if (requested !== "read-only" && requested !== "workspace-write") {
+    throw new Error("Codex execution policy is unsupported");
+  }
+  const providerHome = path.join(path.resolve(descriptor.stateDir), "clis", "codex");
+  const sessionsRoot = path.join(providerHome, "sessions");
+  const candidates: string[] = [];
+  for (const directory of candidateCodexDateDirectories(sessionsRoot)) {
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    if (entries.length > 512) throw new Error("Codex native execution receipt inventory is ambiguous");
+    for (const entry of entries) {
+      if (
+        entry.isFile() &&
+        !entry.isSymbolicLink() &&
+        entry.name.endsWith(`-${providerThreadId}.jsonl`)
+      ) {
+        candidates.push(path.join(directory, entry.name));
+      }
+    }
+  }
+  if (candidates.length !== 1) throw new Error("Codex native execution receipt is unavailable or ambiguous");
+  const rolloutPath = candidates[0]!;
+  const [physicalHome, physicalRollout] = await Promise.all([
+    realpath(providerHome).catch(() => null),
+    realpath(rolloutPath).catch(() => null),
+  ]);
+  if (!physicalHome || !physicalRollout) throw new Error("Codex native execution receipt is unavailable or ambiguous");
+  const relative = path.relative(physicalHome, physicalRollout);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Codex native execution receipt escaped canonical provider state");
+  }
+  const named = await lstat(rolloutPath, { bigint: true });
+  if (!named.isFile() || named.isSymbolicLink() || named.size <= 0n || named.size > BigInt(MAX_CODEX_ROLLOUT_BYTES)) {
+    throw new Error("Codex native execution receipt is malformed");
+  }
+  const handle = await open(rolloutPath, "r");
+  let raw: string;
+  try {
+    const before = await handle.stat({ bigint: true });
+    raw = await handle.readFile("utf8");
+    const after = await handle.stat({ bigint: true });
+    const finalNamed = await lstat(rolloutPath, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      after.dev !== finalNamed.dev ||
+      after.ino !== finalNamed.ino ||
+      after.size !== finalNamed.size ||
+      after.mtimeNs !== finalNamed.mtimeNs
+    ) {
+      throw new Error("Codex native execution receipt changed during admission");
+    }
+  } finally {
+    await handle.close();
+  }
+  let sessionMeta: Record<string, unknown> | null = null;
+  let turnContext: Record<string, unknown> | null = null;
+  try {
+    for (const line of raw.split(/\r?\n/).filter(Boolean)) {
+      if (line.length > 16 * 1024 * 1024) throw new Error("oversized rollout entry");
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.type === "session_meta") {
+        if (sessionMeta || !exactRecord(event.payload)) throw new Error("ambiguous session metadata");
+        sessionMeta = event.payload;
+      }
+      if (event.type === "turn_context") {
+        if (turnContext || !exactRecord(event.payload)) throw new Error("ambiguous turn context");
+        turnContext = event.payload;
+      }
+    }
+  } catch {
+    throw new Error("Codex native execution receipt is malformed");
+  }
+  if (!sessionMeta || !turnContext) throw new Error("Codex native execution receipt is incomplete");
+  if (
+    sessionMeta.id !== providerThreadId ||
+    sessionMeta.session_id !== providerThreadId ||
+    sessionMeta.source !== "exec" ||
+    !samePath(String(sessionMeta.cwd ?? ""), descriptor.workdir)
+  ) {
+    throw new Error("Codex native execution receipt identity does not match the canonical turn");
+  }
+  const sandbox = exactRecord(turnContext.sandbox_policy) ? turnContext.sandbox_policy.type : null;
+  const roots = Array.isArray(turnContext.workspace_roots) ? turnContext.workspace_roots : [];
+  if (
+    !samePath(String(turnContext.cwd ?? ""), descriptor.workdir) ||
+    roots.length !== 1 ||
+    typeof roots[0] !== "string" ||
+    !samePath(roots[0], descriptor.workdir) ||
+    turnContext.model !== descriptor.model ||
+    turnContext.approval_policy !== "never"
+  ) {
+    throw new Error("Codex native execution receipt does not match the canonical request");
+  }
+  if (request.effort && turnContext.effort !== request.effort) {
+    throw new Error("Codex native execution receipt does not match the requested effort");
+  }
+  if (sandbox !== requested) {
+    throw new Error("Codex resolved execution policy does not match the requested policy");
+  }
+  return requested;
+}
+
+export function parseClaudeJsonResult(stdout: string, stderr: string, code: number): TurnResult {
+  if (code !== 0) return defaultParseResult("", stderr, code);
+  try {
+    const payload = JSON.parse(stdout) as Record<string, unknown>;
+    if (typeof payload.result !== "string") throw new Error("missing result");
+    const rawUsage = payload.usage;
+    let usage: TurnResult["usage"];
+    if (rawUsage && typeof rawUsage === "object" && !Array.isArray(rawUsage)) {
+      const raw = rawUsage as Record<string, unknown>;
+      const tokensIn = safeNonNegativeInteger(raw.input_tokens);
+      const tokensOut = safeNonNegativeInteger(raw.output_tokens);
+      if (tokensIn === undefined || tokensOut === undefined) throw new Error("malformed usage");
+      usage = { tokensIn, tokensOut, totalTokens: tokensIn + tokensOut };
+    }
+    return { content: payload.result, role: "assistant", usage, finishReason: "stop" };
+  } catch {
+    return { content: "", role: "assistant", error: "provider returned malformed structured output" };
   }
 }
 
@@ -438,6 +720,16 @@ export function claudeSessionAdapter(binaryOverride?: string): ProviderAdapter {
     displayName: "Claude",
     binary,
     buildArgs: (request, transcript, descriptor) => buildProviderArgs("claude", descriptor.model, request, transcript),
+    buildStdin: (request, transcript) => transcriptAsPrompt(request, transcript),
+    parseResult: parseClaudeJsonResult,
+    receipt: (descriptor, request) => ({
+      provider: "claude",
+      model: descriptor.model,
+      effort: request.effort ?? null,
+      agentPreset: request.agentPreset ?? null,
+      requestedExecutionPolicy: request.executionPolicy ?? "read-only",
+      resolvedExecutionPolicy: request.executionPolicy ?? "read-only",
+    }),
   });
 }
 
@@ -449,6 +741,21 @@ export function codexSessionAdapter(binaryOverride?: string): ProviderAdapter {
     displayName: "Codex",
     binary,
     buildArgs: (request, transcript, descriptor) => buildProviderArgs("codex", descriptor.model, request, transcript),
+    buildStdin: (request, transcript) => transcriptAsPrompt(request, transcript),
+    parseResult: parseCodexJsonResult,
+    resolveExecutionPolicy: async (descriptor, request, result) => {
+      const providerThreadId = exactRecord(result.receipt) ? result.receipt.providerThreadId : null;
+      if (typeof providerThreadId !== "string") throw new Error("Codex native execution receipt is missing");
+      return attestCodexExecutionPolicy(descriptor, request, providerThreadId);
+    },
+    receipt: (descriptor, request, result) => ({
+      provider: "codex",
+      model: descriptor.model,
+      effort: request.effort ?? null,
+      agentPreset: request.agentPreset ?? null,
+      requestedExecutionPolicy: request.executionPolicy ?? "read-only",
+      resolvedExecutionPolicy: result.resolvedExecutionPolicy ?? null,
+    }),
   });
 }
 

@@ -116,6 +116,12 @@ export interface TurnRequest {
   prompt: string;
   systemPrompt?: string;
   stream?: boolean;
+  /** Independent reasoning setting requested by the canonical caller. */
+  effort?: "low" | "medium" | "high";
+  /** Narrow manager-owned filesystem policy. Broader policies are not representable. */
+  executionPolicy?: "read-only" | "workspace-write";
+  /** Logical agent preset selected by the canonical tier route. */
+  agentPreset?: string;
 }
 
 export interface TurnResult {
@@ -127,6 +133,8 @@ export interface TurnResult {
   error?: string;
   /** Manager-recorded description of the concrete request sent for this turn (model, effort, preset). */
   receipt?: Record<string, unknown>;
+  /** Provider-attested effective policy for requested-vs-resolved enforcement. */
+  resolvedExecutionPolicy?: "read-only" | "workspace-write";
 }
 
 export interface TurnChunk {

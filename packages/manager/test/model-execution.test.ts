@@ -1,0 +1,330 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { Readable } from "node:stream";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { AdapterDoctorResult } from "../src/adapters";
+import {
+  MAX_PROMPT_BYTES,
+  executeModelRequest,
+  readPromptFile,
+  readPromptStdin,
+  receiptProviderVersion,
+  type ExecutionPolicy,
+  type ModelEffort,
+  type ModelExecutionDependencies,
+} from "../src/model-execution";
+import { TIER_ROUTES, type ModelTier, type ResolvedRoute } from "../src/route-probe";
+import { ensureSharedState, sharedStateAt, writeSessionConfig, type SharedState } from "../src/state";
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function fixture(): Promise<{ root: string; state: SharedState; receiptDir: string }> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agents-model-execution-"));
+  roots.push(root);
+  const state = sharedStateAt(root, path.join(root, ".agents"), path.join(root, "user"));
+  await ensureSharedState(state);
+  await writeSessionConfig(state, {
+    schemaVersion: 1,
+    providerModels: {
+      agy: ["agy-fast"],
+      kimi: ["kimi-code/kimi-for-coding"],
+      codex: ["gpt-5.6-sol"],
+      claude: ["claude-fable-5"],
+    },
+  });
+  const receiptDir = path.join(root, ".darkfactory");
+  await mkdir(receiptDir);
+  return { root, state, receiptDir };
+}
+
+function doctorResult(provider: ResolvedRoute["provider"], version = `${provider} 1.2.3`): AdapterDoctorResult {
+  return {
+    id: provider,
+    home: "<redacted>",
+    binary: "<canonical>",
+    ok: true,
+    pinned: true,
+    notes: [],
+    evidence: {
+      schemaVersion: 1,
+      provider,
+      pinned: true,
+      executableVerified: true,
+      credentialsPresent: true,
+      providerVersion: version,
+    },
+  };
+}
+
+function successfulDependencies(
+  capture: Array<{ route: ResolvedRoute; effort: ModelEffort; executionPolicy: ExecutionPolicy; prompt: string }> = [],
+  options: {
+    resolvedExecutionPolicy?: ExecutionPolicy;
+    version?: string;
+    usage?: { tokensIn?: number; tokensOut?: number; totalTokens?: number };
+    error?: string;
+    content?: string;
+  } = {},
+): ModelExecutionDependencies {
+  return {
+    doctor: async (_state, provider) => doctorResult(provider, options.version),
+    execute: async (_state, route, _doctor, request) => {
+      capture.push({
+        route,
+        effort: request.effort,
+        executionPolicy: request.executionPolicy,
+        prompt: request.prompt,
+      });
+      return {
+        sessionId: "test-session",
+        outcome: {
+          resolvedExecutionPolicy: options.resolvedExecutionPolicy ?? request.executionPolicy,
+          result: {
+            content: options.content ?? "ok",
+            role: "assistant",
+            usage: options.usage ?? { tokensIn: 11, tokensOut: 7, totalTokens: 18 },
+            error: options.error,
+          },
+        },
+      };
+    },
+  };
+}
+
+function request(
+  root: string,
+  receiptDir: string,
+  modelTier: ModelTier,
+  effort: ModelEffort = "medium",
+  executionPolicy: ExecutionPolicy = "read-only",
+) {
+  return {
+    modelTier,
+    effort,
+    executionPolicy,
+    receiptPath: path.join(receiptDir, `${modelTier}-${effort}-${executionPolicy}.json`),
+    workdir: root,
+    mode: "task" as const,
+    prompt: "Review the admitted fixture.",
+  };
+}
+
+describe("canonical model execution route and receipt", () => {
+  test("success matrix resolves all tiers without a DarkFactory provider registry", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const captured: Parameters<typeof successfulDependencies>[0] = [];
+    for (const tier of ["low", "medium", "high", "max"] as const) {
+      const result = await executeModelRequest(
+        state,
+        request(root, receiptDir, tier),
+        successfulDependencies(captured),
+      );
+      expect(result.ok).toBe(true);
+      expect(result.receipt).toEqual(JSON.parse(await Bun.file(request(root, receiptDir, tier).receiptPath).text()));
+      expect(result.receipt).toEqual({
+        schemaVersion: 1,
+        requested: { modelTier: tier, effort: "medium" },
+        resolved: {
+          provider: TIER_ROUTES[tier].provider,
+          model: {
+            low: "agy-fast",
+            medium: "kimi-code/kimi-for-coding",
+            high: "gpt-5.6-sol",
+            max: "claude-fable-5",
+          }[tier],
+          agentPreset: TIER_ROUTES[tier].agentPreset,
+          providerVersion: "1.2.3",
+        },
+        attempts: [{ number: 1, outcome: "success", reason: null }],
+        usage: { inputTokens: 11, outputTokens: 7, totalTokens: 18 },
+        outcome: "success",
+        blockReason: null,
+      });
+    }
+    expect(captured.map(({ route }) => route.provider)).toEqual(["agy", "kimi", "codex", "claude"]);
+  });
+
+  test("effort varies independently without changing the medium route", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const captured: Parameters<typeof successfulDependencies>[0] = [];
+    for (const effort of ["low", "medium", "high"] as const) {
+      const result = await executeModelRequest(
+        state,
+        request(root, receiptDir, "medium", effort),
+        successfulDependencies(captured),
+      );
+      expect(result.ok).toBe(true);
+      expect(result.receipt.requested.effort).toBe(effort);
+      expect(result.receipt.resolved.provider).toBe("kimi");
+      expect(result.receipt.resolved.model).toBe("kimi-code/kimi-for-coding");
+    }
+    expect(captured.map(({ effort }) => effort)).toEqual(["low", "medium", "high"]);
+    expect(new Set(captured.map(({ route }) => JSON.stringify(route))).size).toBe(1);
+  });
+
+  test("route failure publishes a blocked receipt and never executes", async () => {
+    const { root, state, receiptDir } = await fixture();
+    let calls = 0;
+    const input = request(root, receiptDir, "high");
+    const result = await executeModelRequest(state, input, {
+      doctor: async (_state, provider) => ({
+        ...doctorResult(provider),
+        binary: null,
+        ok: false,
+        evidence: {
+          ...doctorResult(provider).evidence,
+          executableVerified: false,
+        },
+      }),
+      execute: async () => {
+        calls += 1;
+        throw new Error("must not execute");
+      },
+    });
+    expect(calls).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.receipt.outcome).toBe("blocked");
+    expect(result.receipt.blockReason).toBe("provider_unverified");
+    expect(result.receipt.resolved).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      agentPreset: "Sol",
+      providerVersion: "1.2.3",
+    });
+    expect(JSON.parse(await Bun.file(input.receiptPath).text())).toEqual(result.receipt);
+  });
+
+  test("resolved policy mismatch blocks even when provider content looks successful", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const result = await executeModelRequest(
+      state,
+      request(root, receiptDir, "high", "high", "workspace-write"),
+      successfulDependencies([], { resolvedExecutionPolicy: "read-only", content: "looks green" }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.receipt.blockReason).toBe("execution_policy_mismatch");
+    expect(result.receipt.usage).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+  });
+
+  test("malformed usage and provider failures remain sanitized and fail closed", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const secret = "AUTH_TOKEN_SHOULD_NOT_SURVIVE";
+    const malformed = await executeModelRequest(
+      state,
+      request(root, receiptDir, "medium"),
+      successfulDependencies([], { usage: { tokensIn: 3, tokensOut: 4, totalTokens: 99 } }),
+    );
+    expect(malformed.ok).toBe(false);
+    expect(malformed.receipt.blockReason).toBe("usage_malformed");
+
+    const failedInput = request(root, receiptDir, "max", "high");
+    const failed = await executeModelRequest(state, failedInput, {
+      doctor: async (_state, provider) => doctorResult(provider),
+      execute: async () => {
+        throw new Error(secret);
+      },
+    });
+    const serialized = JSON.stringify(failed.receipt);
+    expect(failed.ok).toBe(false);
+    expect(failed.receipt.blockReason).toBe("provider_failed");
+    expect(serialized).not.toContain(secret);
+    expect(await Bun.file(failedInput.receiptPath).text()).not.toContain(secret);
+  });
+
+  test("receipt path is absolute, inside the workdir, new, and identity-bound", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const relative = request(root, receiptDir, "low");
+    relative.receiptPath = "receipt.json";
+    await expect(executeModelRequest(state, relative, successfulDependencies())).rejects.toThrow(
+      "execution receipt path must be an absolute path",
+    );
+
+    const outside = request(root, receiptDir, "low", "low");
+    outside.receiptPath = path.join(path.dirname(root), "outside-receipt.json");
+    await expect(executeModelRequest(state, outside, successfulDependencies())).rejects.toThrow(
+      "inside the execution workdir",
+    );
+
+    const existing = request(root, receiptDir, "low", "high");
+    await writeFile(existing.receiptPath, "owner data");
+    await expect(executeModelRequest(state, existing, successfulDependencies())).rejects.toThrow(
+      "must be a new file",
+    );
+    expect(await Bun.file(existing.receiptPath).text()).toBe("owner data");
+  });
+
+  test("provider version normalization emits the exact receipt-safe version token", () => {
+    expect(receiptProviderVersion("codex-cli 0.144.1")).toBe("0.144.1");
+    expect(receiptProviderVersion("2.1.203 (Claude Code)")).toBe("2.1.203");
+    expect(receiptProviderVersion("0.22.2")).toBe("0.22.2");
+    expect(receiptProviderVersion("not a version")).toBe("unresolved");
+  });
+});
+
+describe("bounded prompt admission", () => {
+  test("primary: a physical prompt file is read exactly without argv-shaped output", async () => {
+    const { root } = await fixture();
+    const promptPath = path.join(root, "review.txt");
+    const prompt = "Complete review context\nwith unicode: žluťoučký";
+    await writeFile(promptPath, prompt);
+    expect(await readPromptFile(promptPath)).toBe(prompt);
+  });
+
+  test("edge: symlinks, empty input, NUL input, and oversized input fail closed", async () => {
+    const { root } = await fixture();
+    const physical = path.join(root, "physical.txt");
+    const linked = path.join(root, "linked.txt");
+    await writeFile(physical, "trusted");
+    try {
+      await symlink(physical, linked, process.platform === "win32" ? "file" : undefined);
+      await expect(readPromptFile(linked)).rejects.toThrow("physical regular file");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    }
+    const empty = path.join(root, "empty.txt");
+    await writeFile(empty, "  \n");
+    await expect(readPromptFile(empty)).rejects.toThrow("execution prompt is required");
+    const nul = path.join(root, "nul.txt");
+    await writeFile(nul, "safe\0unsafe");
+    await expect(readPromptFile(nul)).rejects.toThrow("execution prompt is required");
+    const oversized = path.join(root, "oversized.txt");
+    await writeFile(oversized, Buffer.alloc(MAX_PROMPT_BYTES + 1, 0x61));
+    await expect(readPromptFile(oversized)).rejects.toThrow("bounded input limit");
+  });
+
+  test("denied: stdin is bounded and never includes input content in diagnostics", async () => {
+    const secret = "STDIN_SECRET_SENTINEL";
+    expect(await readPromptStdin(Readable.from(["first ", "second"]))).toBe("first second");
+    await expect(readPromptStdin(Readable.from([`safe\0${secret}`]))).rejects.toThrow(
+      "execution prompt is required",
+    );
+    try {
+      await readPromptStdin(Readable.from([Buffer.alloc(MAX_PROMPT_BYTES + 1, 0x62)]));
+      throw new Error("expected bounded failure");
+    } catch (error) {
+      expect((error as Error).message).toBe("execution prompt exceeds the bounded input limit");
+      expect((error as Error).message).not.toContain(secret);
+    }
+  });
+
+  test("denied: a prompt-file replacement between read and final admission is rejected", async () => {
+    const { root } = await fixture();
+    const promptPath = path.join(root, "raced.txt");
+    const replacement = path.join(root, "replacement.txt");
+    await writeFile(promptPath, "admitted content");
+    await writeFile(replacement, "replacement content");
+    await expect(
+      readPromptFile(promptPath, {
+        beforeFinalVerification: async () => {
+          await rm(promptPath);
+          await writeFile(promptPath, await Bun.file(replacement).text());
+        },
+      }),
+    ).rejects.toThrow("prompt file changed during admission");
+  });
+});

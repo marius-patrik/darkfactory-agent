@@ -41,6 +41,8 @@ export interface AdapterDoctorEvidence {
   pinned: boolean;
   executableVerified: boolean;
   credentialsPresent: boolean;
+  /** Path-free pinned provider version; null when no canonical pin exists. */
+  providerVersion?: string | null;
 }
 
 export const adapters: Record<CliId, CliAdapter> = {
@@ -247,6 +249,7 @@ export async function doctorAdapter(state: SharedState, id: CliId): Promise<Adap
     pinned: Boolean(registration),
     executableVerified: binary !== null,
     credentialsPresent,
+    providerVersion: registration?.version ?? null,
   };
   return { id, home: root, binary, ok: binary !== null, pinned: Boolean(registration), notes, evidence };
 }
