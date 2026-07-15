@@ -8,6 +8,10 @@ for local execution and shared personal state.
   the sole `agent-os-data` registration resolves to
   `$AGENTS_ROOT/data/agent-os`.
 - Keep repository setup checks in `src/repository-setup.ts`.
+- Keep the provider-agnostic prompt/skill library in `prompts/` and its
+  validation in `src/prompts.ts`; never embed provider, model, auth, or
+  runtime-command mechanics in prompt artifacts, and keep issue/PR/comment
+  content inside untrusted-data delimiters.
 - Open managed setup pull requests; never write directly to default branches.
 - Keep only repository-local context in `.agents/.project/`.
 - Route local model work through `agents`; do not add provider homes, model

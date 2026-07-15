@@ -13,6 +13,7 @@
     "check:templates": "bun run --cwd templates ci",
     "dev": "tsx watch src/cli.ts serve",
     "install:url": "tsx src/cli.ts install-url",
+    "prompts:sync": "tsx scripts/sync-prompt-library.ts",
     "sync:managed": "tsx src/cli.ts sync-managed",
     "test": "node --experimental-test-module-mocks --import tsx --test tests/index.ts",
     "start": "node dist/cli.js serve",
