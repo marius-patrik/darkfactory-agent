@@ -5,6 +5,21 @@ on:
     - cron: "41 */2 * * *"
   workflow_dispatch:
     inputs:
+      repo:
+        description: Exact managed repository for a bot-forwarded merged-dev PR.
+        required: false
+        type: string
+        default: ""
+      pull_number:
+        description: Exact merged pull request number for event closure.
+        required: false
+        type: string
+        default: ""
+      merge_sha:
+        description: Exact 40-character merge commit SHA observed by the GitHub App.
+        required: false
+        type: string
+        default: ""
       repos:
         description: Optional comma-separated repositories to sweep.
         required: false
@@ -49,6 +64,10 @@ jobs:
 
     steps:
       - name: Validate trusted control ref
+        env:
+          DF_DEV_MERGE_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.repo || '' }}
+          DF_DEV_MERGE_PR: ${{ github.event_name == 'workflow_dispatch' && inputs.pull_number || '' }}
+          DF_DEV_MERGE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.merge_sha || '' }}
         shell: bash
         run: |
           # Privileged follow-through mints an installation token, so it only
@@ -68,6 +87,29 @@ jobs:
           if [[ "${GITHUB_REF_TYPE:-}" == "branch" && "${GITHUB_REF_NAME:-}" != "main" ]]; then
             echo "::error::DarkFactory privileged follow-through branch mismatch."
             exit 1
+          fi
+
+          bridge_fields=0
+          [[ -n "${DF_DEV_MERGE_REPO}" ]] && bridge_fields=$((bridge_fields + 1))
+          [[ -n "${DF_DEV_MERGE_PR}" ]] && bridge_fields=$((bridge_fields + 1))
+          [[ -n "${DF_DEV_MERGE_SHA}" ]] && bridge_fields=$((bridge_fields + 1))
+          if [[ "${bridge_fields}" -ne 0 && "${bridge_fields}" -ne 3 ]]; then
+            echo "::error::Bot-forwarded dev-merge closure requires repo, pull_number, and merge_sha together."
+            exit 1
+          fi
+          if [[ "${bridge_fields}" -eq 3 ]]; then
+            [[ "${DF_DEV_MERGE_REPO}" =~ ^marius-patrik/[A-Za-z0-9_.-]+$ ]] || {
+              echo "::error::Invalid managed repository identifier for dev-merge closure."
+              exit 1
+            }
+            [[ "${DF_DEV_MERGE_PR}" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::Invalid pull request number for dev-merge closure."
+              exit 1
+            }
+            [[ "${DF_DEV_MERGE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]] || {
+              echo "::error::Invalid merge commit SHA for dev-merge closure."
+              exit 1
+            }
           fi
 
       - name: Checkout DarkFactory from this repository
@@ -95,7 +137,10 @@ jobs:
         env:
           DARK_FACTORY_TOKEN: ${{ steps.app-token.outputs.token }}
           DF_CONTROL_REPO: ${{ github.repository }}
-          DF_FOLLOW_THROUGH_MODE: sweep
+          DF_FOLLOW_THROUGH_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.repo != '' && 'dev-merge' || 'sweep' }}
+          DF_DEV_MERGE_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.repo || '' }}
+          DF_DEV_MERGE_PR: ${{ github.event_name == 'workflow_dispatch' && inputs.pull_number || '' }}
+          DF_DEV_MERGE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.merge_sha || '' }}
           DF_SWEEP_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.repos || '' }}
           DF_SWEEP_EXCLUDE_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.exclude_repos || '' }}
           DF_ALLOW_NO_CHECK_REPOS: ${{ vars.DF_ALLOW_NO_CHECK_REPOS }}

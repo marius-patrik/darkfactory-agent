@@ -59,7 +59,7 @@ interface IssueCommentPayload extends IssueLikePayload {
   };
 }
 
-interface PullRequestPayload {
+export interface PullRequestPayload {
   repository: {
     name: string;
     owner: {
@@ -68,6 +68,11 @@ interface PullRequestPayload {
   };
   pull_request: {
     number: number;
+    merged?: boolean | null;
+    merge_commit_sha?: string | null;
+    base?: {
+      ref?: string;
+    };
     head: {
       sha: string;
       repo: {
@@ -164,6 +169,12 @@ export function createBot(options: BotOptions): App {
     await enforceRepositorySetup(octokit, payload);
   });
 
+  app.webhooks.on("pull_request.closed", async ({ octokit, payload }) => {
+    if (shouldDispatchDevMergeClosure(payload)) {
+      await dispatchDevMergeClosure(octokit, controlRepo, payload);
+    }
+  });
+
   app.webhooks.on("installation.created", async ({ octokit, payload }) => {
     await syncInstalledRepositories(octokit, payload);
   });
@@ -191,6 +202,50 @@ export function shouldDispatchForRunComment(payload: IssueCommentPayload): boole
   }
 
   return DISPATCHABLE_ASSOCIATIONS.has(payload.comment.author_association);
+}
+
+export function shouldDispatchDevMergeClosure(payload: PullRequestPayload): boolean {
+  return payload.pull_request.merged === true
+    && payload.pull_request.base?.ref === "dev"
+    && Number.isInteger(payload.pull_request.number)
+    && payload.pull_request.number > 0
+    && /^[0-9a-f]{40}$/i.test(payload.pull_request.merge_commit_sha ?? "");
+}
+
+export async function dispatchDevMergeClosure(
+  octokit: GitHubRequester,
+  controlRepo: ControlRepositoryRef,
+  payload: PullRequestPayload
+): Promise<void> {
+  if (!shouldDispatchDevMergeClosure(payload)) {
+    return;
+  }
+
+  const targetRepo = `${payload.repository.owner.login}/${payload.repository.name}`;
+  const mergeSha = payload.pull_request.merge_commit_sha as string;
+
+  try {
+    await octokit.request("POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", {
+      owner: controlRepo.owner,
+      repo: controlRepo.repo,
+      workflow_id: "df-follow-through.yml",
+      ref: "main",
+      inputs: {
+        repo: targetRepo,
+        pull_number: String(payload.pull_request.number),
+        merge_sha: mergeSha
+      }
+    });
+
+    console.log(`Dispatched dev-merge closure for ${targetRepo}#${payload.pull_request.number} at ${mergeSha}`);
+  } catch (error) {
+    // Scheduled follow-through independently scans recent merged dev PRs, so a
+    // transient event-bridge failure is recoverable and must not break webhook delivery.
+    console.error(
+      `Failed to dispatch dev-merge closure for ${targetRepo}#${payload.pull_request.number}; scheduled recovery remains active:`,
+      error
+    );
+  }
 }
 
 export async function dispatchOrchestrator(

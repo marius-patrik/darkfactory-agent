@@ -26,6 +26,9 @@ escalation state from Actions evidence.
 - Checks pull requests in installed repositories for the current DarkFactory
   policy and workflow scaffold.
 - Dispatches the orchestrator workflow immediately when the machine evaluator labels an issue `df:ready`; an owner/member/collaborator can comment `/df run` to request immediate evaluation, never to force readiness.
+- Forwards merged `dev` pull-request identities to the protected control workflow;
+  DarkFactory re-fetches and verifies the managed repository, exact merge commit,
+  and worker provenance before closing referenced issues, with scheduled recovery.
 - Installs the current managed Codex Review migration gate. Issue #36 replaces
   it with provider-agnostic DarkFactory Autoreview through canonical Agent OS.
 - Reads repository-local agent context, `.darkfactory`, and `.github` policy
@@ -64,7 +67,7 @@ Create a GitHub App and configure:
   - Secrets: Read-only
   - Metadata: Read-only, granted by GitHub automatically
 
-`Contents: Read and write` is required so Dark Factory can create managed setup branches. `Pull requests: Read and write` is required so it can open setup PRs. `Actions: Read and write` is required so the deployed webhook server can dispatch the orchestrator workflow for low-latency `df:ready` and `/df run` handling.
+`Contents: Read and write` is required so Dark Factory can create managed setup branches. `Pull requests: Read and write` is required so it can open setup PRs. `Actions: Read and write` is required so the deployed webhook server can dispatch protected control workflows for low-latency `df:ready`, `/df run`, and trusted dev-merge closure handling.
 
 Generate a private key for the app and install the app on the repositories where it should run.
 

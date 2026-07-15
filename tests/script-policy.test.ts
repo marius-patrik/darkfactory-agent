@@ -51,8 +51,11 @@ const {
   parseFixRound
 } = dfFix;
 const {
+  closeIssuesIfDevMerge,
+  closeVerifiedDevMergeIssues,
   configureSweepRuntime,
-  considerPullRequest: considerSweepPullRequest
+  considerPullRequest: considerSweepPullRequest,
+  verifyDevMergeRequest
 } = dfSweep;
 test("parsePrdItems creates stable df-prd markers from PRD milestones and loops", () => {
   const items = parsePrdItems([
@@ -479,6 +482,189 @@ test("df-sweep dev-merge backstop preserves REST merged_at in normalized PRs", a
   assert.match(source, /GET.*\/repos\/\$\{repoName\(repository\)\}\/pulls\/\$\{pull\.number\}/);
   assert.doesNotMatch(source, /pull\.merged !== true/);
 });
+
+test("dev-merge event closure re-fetches exact managed repository, PR, and merge commit identities", async () => {
+  const calls: string[] = [];
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "DarkFactory" },
+    gh: {
+      request: async (method: string, pathName: string) => {
+        calls.push(`${method} ${pathName}`);
+        if (pathName === "/repos/marius-patrik/Andromeda") {
+          return { full_name: "marius-patrik/Andromeda", archived: false, disabled: false };
+        }
+        if (pathName === "/repos/marius-patrik/Andromeda/pulls/42") {
+          return trustedMergedDevPull();
+        }
+        if (pathName.endsWith("/commits/0123456789abcdef0123456789abcdef01234567")) {
+          return { sha: "0123456789abcdef0123456789abcdef01234567" };
+        }
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+
+  const result = await verifyDevMergeRequest({
+    repositoryName: "marius-patrik/Andromeda",
+    pullNumber: "42",
+    mergeSha: "0123456789abcdef0123456789abcdef01234567"
+  });
+
+  assert.equal(result.pull.number, 42);
+  assert.equal(result.pull.baseRefName, "dev");
+  assert.deepEqual(result.closingIssues, [42]);
+  assert.deepEqual(calls, [
+    "GET /repos/marius-patrik/Andromeda",
+    "GET /repos/marius-patrik/Andromeda/pulls/42",
+    "GET /repos/marius-patrik/Andromeda/commits/0123456789abcdef0123456789abcdef01234567"
+  ]);
+});
+
+test("dev-merge event closure fails closed before mutation on identity or lifecycle mismatch", async () => {
+  const mutations: string[] = [];
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "DarkFactory" },
+    gh: {
+      request: async (method: string, pathName: string) => {
+        if (method === "POST" || method === "PATCH" || method === "PUT") mutations.push(`${method} ${pathName}`);
+        if (pathName === "/repos/marius-patrik/Andromeda") {
+          return { full_name: "marius-patrik/Andromeda", archived: false, disabled: false };
+        }
+        if (pathName === "/repos/marius-patrik/Andromeda/pulls/42") {
+          return trustedMergedDevPull();
+        }
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+
+  await assert.rejects(
+    verifyDevMergeRequest({
+      repositoryName: "marius-patrik/Andromeda",
+      pullNumber: "42",
+      mergeSha: "ffffffffffffffffffffffffffffffffffffffff"
+    }),
+    /commit SHA does not match/
+  );
+  await assert.rejects(
+    verifyDevMergeRequest({
+      repositoryName: "marius-patrik/DarkFactory",
+      pullNumber: "42",
+      mergeSha: "0123456789abcdef0123456789abcdef01234567"
+    }),
+    /managed lifecycle state 'removed'/
+  );
+  assert.deepEqual(mutations, []);
+});
+
+test("dev-merge closure recovers partial issue mutation and is idempotent after convergence", async () => {
+  const mutations: string[] = [];
+  let issueState = "open";
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "DarkFactory" },
+    gh: {
+      request: async (method: string, pathName: string) => {
+        if (method === "GET" && pathName.endsWith("/issues/42")) return { number: 42, state: issueState };
+        if (method === "GET" && pathName.endsWith("/issues/42/comments?per_page=100")) {
+          return [{ body: "merged to dev in https://github.com/marius-patrik/Andromeda/pull/42" }];
+        }
+        if (method === "PATCH" && pathName.endsWith("/issues/42")) {
+          mutations.push(`${method} ${pathName}`);
+          issueState = "closed";
+          return { number: 42, state: issueState };
+        }
+        if (method === "POST" || method === "PATCH") mutations.push(`${method} ${pathName}`);
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+  const pull = normalizeTrustedMergedDevPull();
+
+  const recovered = await closeIssuesIfDevMerge({ owner: "marius-patrik", repo: "Andromeda" }, pull);
+  const duplicate = await closeIssuesIfDevMerge({ owner: "marius-patrik", repo: "Andromeda" }, pull);
+
+  assert.deepEqual(recovered.issues, [42]);
+  assert.deepEqual(duplicate.issues, []);
+  assert.deepEqual(mutations, ["PATCH /repos/marius-patrik/Andromeda/issues/42"]);
+});
+
+test("successful dev-merge issue convergence is not undone by ledger failure", async () => {
+  const mutations: string[] = [];
+  configureSweepRuntime({
+    controlRepo: { owner: "marius-patrik", repo: "DarkFactory" },
+    gh: {
+      request: async (method: string, pathName: string) => {
+        if (pathName === "/repos/marius-patrik/Andromeda") {
+          return { full_name: "marius-patrik/Andromeda", archived: false, disabled: false };
+        }
+        if (pathName === "/repos/marius-patrik/Andromeda/pulls/42") return trustedMergedDevPull();
+        if (pathName.endsWith("/commits/0123456789abcdef0123456789abcdef01234567")) {
+          return { sha: "0123456789abcdef0123456789abcdef01234567" };
+        }
+        if (method === "GET" && pathName.endsWith("/issues/42")) return { number: 42, state: "open" };
+        if (method === "GET" && pathName.endsWith("/issues/42/comments?per_page=100")) return [];
+        if ((method === "POST" || method === "PATCH") && pathName.includes("/issues/42")) {
+          mutations.push(`${method} ${pathName}`);
+          return {};
+        }
+        if (pathName.includes("/repos/marius-patrik/darkfactory-data/contents/")) {
+          throw new Error("ledger unavailable");
+        }
+        throw new Error(`unexpected mocked request: ${method} ${pathName}`);
+      }
+    }
+  });
+
+  await assert.doesNotReject(() => closeVerifiedDevMergeIssues({
+    repositoryName: "marius-patrik/Andromeda",
+    pullNumber: "42",
+    mergeSha: "0123456789abcdef0123456789abcdef01234567"
+  }));
+  assert.deepEqual(mutations, [
+    "POST /repos/marius-patrik/Andromeda/issues/42/comments",
+    "PATCH /repos/marius-patrik/Andromeda/issues/42"
+  ]);
+});
+
+function trustedMergedDevPull() {
+  return {
+    number: 42,
+    state: "closed",
+    merged: true,
+    merged_at: "2026-07-15T06:00:00Z",
+    merge_commit_sha: "0123456789abcdef0123456789abcdef01234567",
+    title: "Implement issue #42",
+    body: "<!-- dark-factory:worker-pr issue=42 -->\n\nCloses #42",
+    html_url: "https://github.com/marius-patrik/Andromeda/pull/42",
+    user: { login: "mp-agents[bot]" },
+    base: {
+      ref: "dev",
+      sha: "1111111111111111111111111111111111111111",
+      repo: { full_name: "marius-patrik/Andromeda" }
+    },
+    head: {
+      ref: "df/42-trusted-closure",
+      sha: "2222222222222222222222222222222222222222",
+      repo: { name: "Andromeda", owner: { login: "marius-patrik" } }
+    }
+  };
+}
+
+function normalizeTrustedMergedDevPull() {
+  const pull = trustedMergedDevPull();
+  return {
+    number: pull.number,
+    title: pull.title,
+    body: pull.body,
+    url: pull.html_url,
+    author: { login: pull.user.login },
+    headRefName: pull.head.ref,
+    headRepository: { name: pull.head.repo.name, owner: { login: pull.head.repo.owner.login } },
+    baseRefName: pull.base.ref,
+    mergedAt: pull.merged_at,
+    mergeCommitSha: pull.merge_commit_sha
+  };
+}
 
 test("df-work cleanup remains a warning path after successful PR handoff", async () => {
   const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");

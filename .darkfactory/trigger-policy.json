@@ -184,9 +184,12 @@
       "ownerIssue": 32,
       "status": "active",
       "engine": "df verify",
-      "eventWorkflows": [".github/workflows/df-verify.yml"],
+      "eventWorkflows": [".github/workflows/df-verify.yml", ".github/workflows/df-follow-through.yml"],
       "recoveryWorkflow": ".github/workflows/df-follow-through.yml",
-      "eventTriggers": [{ "event": "workflow_run", "types": ["completed"] }],
+      "eventTriggers": [
+        { "event": "workflow_run", "types": ["completed"] },
+        { "event": "workflow_dispatch", "types": ["bot-forwarded-pull-request-closed"] }
+      ],
       "recovery": { "cron": "41 */2 * * *", "intervalMinutes": 120, "maxDetectionMinutes": 140 },
       "settleSeconds": 30,
       "debounceSeconds": 60,

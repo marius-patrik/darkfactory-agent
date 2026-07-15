@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  dispatchDevMergeClosure,
   dispatchOrchestrator,
+  shouldDispatchDevMergeClosure,
   shouldDispatchForReadyLabel,
   shouldDispatchForRunComment,
   syncRepositories,
@@ -189,6 +191,77 @@ test("dispatchOrchestrator swallows dispatch errors", async () => {
     );
   });
 });
+
+test("dev-merge closure dispatch requires an exact merged dev identity", () => {
+  const payload = devMergePayload();
+
+  assert.equal(shouldDispatchDevMergeClosure(payload), true);
+  assert.equal(shouldDispatchDevMergeClosure(devMergePayload({ merged: false })), false);
+  assert.equal(shouldDispatchDevMergeClosure(devMergePayload({ base: { ref: "main" } })), false);
+  assert.equal(shouldDispatchDevMergeClosure(devMergePayload({ merge_commit_sha: "not-a-sha" })), false);
+});
+
+test("dispatchDevMergeClosure forwards only immutable identifiers to protected main", async () => {
+  const requests: { route: string; parameters: Record<string, unknown> }[] = [];
+  const requester: GitHubRequester = {
+    async request(route, parameters) {
+      requests.push({ route, parameters });
+      return { data: {} };
+    }
+  };
+
+  await dispatchDevMergeClosure(
+    requester,
+    { owner: "marius-patrik", repo: "DarkFactory" },
+    devMergePayload()
+  );
+
+  assert.deepEqual(requests, [{
+    route: "POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
+    parameters: {
+      owner: "marius-patrik",
+      repo: "DarkFactory",
+      workflow_id: "df-follow-through.yml",
+      ref: "main",
+      inputs: {
+        repo: "marius-patrik/Andromeda",
+        pull_number: "42",
+        merge_sha: "0123456789abcdef0123456789abcdef01234567"
+      }
+    }
+  }]);
+});
+
+test("dispatchDevMergeClosure leaves scheduled recovery available on dispatch failure", async () => {
+  const requester: GitHubRequester = {
+    async request() {
+      throw new Error("dispatch unavailable");
+    }
+  };
+
+  await assert.doesNotReject(() => dispatchDevMergeClosure(
+    requester,
+    { owner: "marius-patrik", repo: "DarkFactory" },
+    devMergePayload()
+  ));
+});
+
+function devMergePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    repository: { name: "Andromeda", owner: { login: "marius-patrik" } },
+    pull_request: {
+      number: 42,
+      merged: true,
+      merge_commit_sha: "0123456789abcdef0123456789abcdef01234567",
+      base: { ref: "dev" },
+      head: {
+        sha: "abcdef0123456789abcdef0123456789abcdef01",
+        repo: { name: "Andromeda", owner: { login: "marius-patrik" } }
+      },
+      ...overrides
+    }
+  };
+}
 
 interface RequesterHooks {
   onSetupRef?(owner: string, repo: string): void;
