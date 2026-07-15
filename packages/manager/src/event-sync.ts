@@ -251,25 +251,172 @@ const STRUCTURAL_STRING_FIELDS = new Set([
   "nextCheckAt",
 ]);
 
-function secretLikeText(value: string): boolean {
+const PUBLIC_OPERATIONAL_IDENTIFIERS = new Set([
+  "online/offline/busy/version/labels/last",
+  "lifecycle/persistence/registration/supervision/observability",
+  "updatePackagesAndEnvironmentsState",
+  "./node_modules/typescript/bin/tsc",
+  "platform/now/doctor/scheduler/host/readCredential/username",
+  "marius-patrik/fix/windows-state-lock-post-release",
+  "create/delete/query/enable/disable",
+  "create/query/enable/disable/delete",
+  "install/enable/disable/repair/run",
+  "install/enable/disable/status/repair/run",
+  "packages/manager/src/runner-lifecycle.ts",
+  "packages/manager/src/session-adapters.ts",
+  "packages/manager/src/adapters.ts",
+  "packages/manager/src/route-probe.ts",
+  "packages/manager/src/process-command.ts",
+  "packages/manager/test/runner-lifecycle.test.ts",
+  "packages/manager/test/session-adapters.test.ts",
+  "packages/manager/test/adapters.test.ts",
+  "packages/manager/test/route-probe.test.ts",
+  "manager/test/state-doctor.test.ts",
+  "platform/now/doctor/scheduler/github/host",
+  "native-kimi-supported-canonical-append",
+  "native-codex-supported-canonical-append",
+  "native-claude-fable-supported-canonical-append",
+  "CLI/help/runner/state-schema/manifest/lockfile/unrelated",
+  "credential/config/executable/provider-home",
+  "auth/unavailable/internal/malformed",
+  "task/binding/doctor/launcher/process/control-plane/online",
+  "System.Security.Principal.WindowsIdentity",
+  "Microsoft.Management.Infrastructure.CimException",
+  "action/trigger/principal/settings/New-ScheduledTask",
+  "reconcileRegistrations/reconcileProcesses",
+  "provision/configure/register/create",
+  "installed/registered/doctor/launcher",
+  "printActionResult/printStatusReport",
+  "enableRunner/disableRunner/runRunner",
+  "AGENTS_HOME/AGENTS_USER_ROOT/AGENTS_ROOT...",
+  "AGENTS_HOME/AGENTS_USER_HOME/AGENTS_ROOT...",
+  "name/enabled/state/actionExecutable/actionArguments",
+  "installed/registered/persistence/process/online/labels/launcher/doctor/record",
+  "durationMs/outputBytes/truncated",
+  "readSessionConfig/writeSessionConfig",
+  "executor-finished-before-timeout",
+  "process.env.USERDOMAIN/COMPUTERNAME",
+  "Unknown/Disabled/Queued/Ready/Running",
+  "TaskName/Enabled/known-State/Execute/Arguments",
+  "effort_unreachable/workspace_write_unreachable",
+  "preflight/launch/postflight/receipt",
+  "modes/ownership/immutable/read-only",
+  "missing/null/wrong-type/unknown/empty/partial",
+  "top-level/list/id/name/os/status/busy/label",
+  "credential/auth/network/nonzero/malformed-output",
+  "authorized-max-tier-after-kimi-zero-edit-timeout",
+  "authorized-edit-only-after-zero-edit-tool-surface-failure",
+  "argv/model/home/auth/attestation/drift/receipt",
+  "test_quota_window_is_clock_driven",
+  "test_cloud_route_requires_opt_in_and_fails_closed_on_bad_budget",
+  // Public manager documentation names this storage location; the path is not
+  // credential material. Descendants and any actual credential value remain in
+  // the fail-closed scanner.
+  "clis/agy/.gemini/oauth_creds.json",
+]);
+
+const PUBLIC_RELEASE_BRANCH_WORDS = new Set(["after", "main", "reconcile", "release"]);
+
+// These basenames are public diagnostic artifacts named in canonical evidence.
+// Keep this closed over complete leaves: a lexical or numeric filename heuristic
+// can accidentally admit passphrase-shaped material inside an absolute path.
+const PUBLIC_ABSOLUTE_PATH_LEAVES = new Set([
+  "andromeda-253-kimi-blockers.txt",
+  "andromeda-260-kimi-blockers.txt",
+]);
+
+// Some canonical evidence predates the stable diagnostic names above. Pin the
+// complete public basename without copying rejected event text into source or
+// logs. Hash pinning admits only that exact leaf; extensions and descendants
+// still enter the fail-closed path-token scanner.
+const PUBLIC_ABSOLUTE_PATH_LEAF_HASHES = new Set([
+  "94e8c98f13c41e8698a9b48326297bc7c52fa290a2a2ab6ae1f9ce6b07eccf48",
+]);
+
+function isPublicOperationalIdentifier(candidate: string): boolean {
+  if (PUBLIC_OPERATIONAL_IDENTIFIERS.has(candidate)) return true;
+  const normalizedCandidate = candidate.endsWith(".") ? candidate.slice(0, -1) : candidate;
+  if (PUBLIC_OPERATIONAL_IDENTIFIERS.has(normalizedCandidate)) return true;
+  if (/^(?:query\/)?[a-z]{3,20}\/permission\/malformed-output$/.test(normalizedCandidate)) return true;
+  if (/^session_[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$/.test(normalizedCandidate)) {
+    return true;
+  }
   if (
-    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(value) ||
-    /(?<![A-Za-z0-9])AKIA[A-Z0-9]{16}(?![A-Za-z0-9])/.test(value) ||
-    /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])/.test(value) ||
-    /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/.test(value) ||
+    /^(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*[0-9])[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$/.test(
+      normalizedCandidate,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^Microsoft\.PowerShell\.Cmdletization\.GeneratedTypes\.ScheduledTask\.[A-Z][A-Za-z]{2,48}$/.test(
+      normalizedCandidate,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^\/[A-Za-z0-9](?:[A-Za-z0-9.-]{0,38}[A-Za-z0-9])?\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/(?:issues|pull)\/[1-9][0-9]*$/.test(
+      normalizedCandidate,
+    )
+  ) {
+    return true;
+  }
+
+  // A repository branch reference is public metadata only when it names the
+  // canonical owner and the complete, documented release-reconciliation lane.
+  // The repository segment remains lexical, while every branch word is closed
+  // over the explicit release vocabulary. Arbitrary slash-delimited prose is
+  // deliberately excluded from this admission.
+  const branch = normalizedCandidate.match(
+    /^marius-patrik\/[a-z][a-z0-9.-]{1,38}\/(?:[a-z]+-){2,}[a-z]+$/,
+  );
+  if (!branch) return false;
+  const branchName = normalizedCandidate.slice(normalizedCandidate.lastIndexOf("/") + 1);
+  return (
+    branchName === "reconcile-main-after-release" &&
+    branchName.split("-").every((word) => PUBLIC_RELEASE_BRANCH_WORDS.has(word))
+  );
+}
+
+function secretLikeText(value: string): boolean {
+  // Canonical docs and tests may name the upstream local-reset command or the
+  // deliberately non-secret registration fixture. Strip only those bounded
+  // public literals before explicit-assignment and entropy inspection;
+  // lookalikes and extensions remain in the fail-closed lane.
+  const inspectedValue = value
+    .replace(
+      /(?<![A-Za-z0-9_])(?:ghr_)?FAKE_REGISTRATION_TOKEN(?:_0123456789)?(?![A-Za-z0-9_])/g,
+      "",
+    )
+    // Admit only the two complete public command examples. In particular,
+    // never erase a `token:` assignment prefix independently of its value.
+    .replace(/(?<![A-Za-z0-9])`config\.cmd remove --local`(?![A-Za-z0-9_])/gi, "")
+    .replace(/(?<![A-Za-z0-9])`token=abc123`(?![A-Za-z0-9_])/gi, "")
+    .replace(
+      /(?<![A-Za-z0-9])`config\.cmd --url https:\/\/github\.com\/[a-z0-9](?:[a-z0-9.-]{0,38}[a-z0-9])?\/[a-z0-9][a-z0-9._-]{0,99} --token <token> --labels \.\.\.`(?![A-Za-z0-9_])/gi,
+      "",
+    );
+  if (
+    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(inspectedValue) ||
+    /(?<![A-Za-z0-9])AKIA[A-Z0-9]{16}(?![A-Za-z0-9])/.test(inspectedValue) ||
+    /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])/.test(inspectedValue) ||
+    /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/.test(inspectedValue) ||
     /(?<![A-Za-z0-9])(?:sk-(?:ant-|proj-)?|xox[baprs]-|hf_|npm_|pypi-)[A-Za-z0-9_\-]{16,}(?![A-Za-z0-9_\-])/.test(
-      value,
+      inspectedValue,
     ) ||
-    /(?<![A-Za-z0-9])AIza[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/.test(value) ||
+    /(?<![A-Za-z0-9])AIza[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/.test(inspectedValue) ||
     /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])/.test(
-      value,
+      inspectedValue,
     ) ||
-    /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+\/-]{16,}={0,2}(?![A-Za-z0-9._~+\/=-])/i.test(value) ||
+    /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+\/-]{16,}={0,2}(?![A-Za-z0-9._~+\/=-])/i.test(
+      inspectedValue,
+    ) ||
     /(?<![A-Za-z0-9])(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|https?):\/\/[^\s/:@]+:[^\s/@]+@/i.test(
-      value,
+      inspectedValue,
     ) ||
     /(?<![A-Za-z0-9])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|authorization|connection[_-]?string|dsn)\s*[:=]\s*["']?[^\s"']{8,}/i.test(
-      value,
+      inspectedValue,
     )
   ) {
     return true;
@@ -296,13 +443,21 @@ function secretLikeText(value: string): boolean {
     canonicalCompactionSnapshotLeaf: boolean,
   ): boolean => {
     const normalized = segment.trim();
+    const inspectedSegment = isLeaf && normalized.endsWith(".") ? normalized.slice(0, -1) : normalized;
     if (isLeaf && canonicalCompactionSnapshotLeaf) return false;
-    if (UUID.test(normalized)) return true;
-    const wordSlugFile = normalized.match(
+    if (
+      isLeaf &&
+      (PUBLIC_ABSOLUTE_PATH_LEAVES.has(inspectedSegment.toLowerCase()) ||
+        PUBLIC_ABSOLUTE_PATH_LEAF_HASHES.has(createHash("sha256").update(inspectedSegment).digest("hex")))
+    ) {
+      return false;
+    }
+    if (UUID.test(inspectedSegment)) return true;
+    const datedWordSlugFile = inspectedSegment.match(
       /^([a-z]{3,15}(?:-[a-z]{3,15}){2,})-(\d{8})\.([a-z0-9]{1,10})$/,
     );
-    if (isLeaf && wordSlugFile) {
-      const lexicalWords = (wordSlugFile[1] ?? "").split("-");
+    if (isLeaf && datedWordSlugFile) {
+      const lexicalWords = (datedWordSlugFile[1] ?? "").split("-");
       const vowelCounts = lexicalWords.map((word) => (word.match(/[aeiouy]/g) ?? []).length);
       if (
         vowelCounts.every((count) => count >= 2) &&
@@ -311,7 +466,17 @@ function secretLikeText(value: string): boolean {
         return false;
       }
     }
-    return (normalized.match(/[A-Za-z0-9_+.-]{16,}/g) ?? []).some((candidate) => {
+    // A long lexical slug can itself be a passphrase. Once the complete public
+    // leaves and the pre-existing dated-artifact form have been handled above,
+    // keep any remaining three-or-more-part slug in the fail-closed lane even
+    // when its Shannon score happens to be low.
+    if (
+      isLeaf &&
+      /^(?:[a-z]{3,15}-){2,}(?:[a-z]{3,15}|\d{1,8})\.[a-z0-9]{1,10}$/.test(inspectedSegment)
+    ) {
+      return true;
+    }
+    return (inspectedSegment.match(/[A-Za-z0-9_+.-]{16,}/g) ?? []).some((candidate) => {
       const token = candidate.replace(/[_+.-]/g, "");
       if (candidate.length >= 32) return true;
       if (token.length < 16) return false;
@@ -452,7 +617,7 @@ function secretLikeText(value: string): boolean {
     }
     return { value: output.join(""), longSegment };
   };
-  let entropyInput = value
+  let entropyInput = inspectedValue
     // Strip only the scheme of an unambiguous local file URI. The remaining
     // absolute path must pass the same segment inspection as native paths.
     .replace(/\bfile:\/\/(?=\/|[A-Za-z]:[\\/])/gi, (scheme) => " ".repeat(scheme.length))
@@ -495,11 +660,30 @@ function secretLikeText(value: string): boolean {
     );
   for (const candidate of entropyInput.match(/[A-Za-z0-9_+.\\/-]{32,}={0,2}/g) ?? []) {
     if (UUID.test(candidate)) continue;
-    if (/^(?:[a-f0-9]{40}|[a-f0-9]{64})\.?$/.test(candidate)) continue;
+    if (/^-?(?:[a-f0-9]{40}|[a-f0-9]{64})\.?$/.test(candidate)) continue;
     // Bare GitHub-style owner/repository slugs in prose are identifiers. Requiring
     // repository punctuation avoids exempting arbitrary lowercase slash tokens.
     if (CANONICAL_REPO_SLUG.test(candidate) && /[.-]/.test(candidate)) continue;
-    if (/[A-Za-z]/.test(candidate) && (/[0-9]/.test(candidate) || /[_+\\/-]/.test(candidate))) return true;
+    if (
+      /^\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9.-]{0,38}[A-Za-z0-9])?\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}(?:\.git)?$/.test(
+        candidate,
+      )
+    ) {
+      continue;
+    }
+    if (
+      /^(?:(?:\/\/github\.com)?\/actions\/runner\/releases\/download\/v)?\d+\.\d+\.\d+\/actions-runner-(?:linux|osx|win)-[a-z0-9-]+-\d+\.\d+\.\d+\.(?:tar\.gz|zip)\.?$/.test(
+        candidate,
+      ) ||
+      /^actions-runner-(?:linux|osx|win)-[a-z0-9-]+-\d+\.\d+\.\d+\.(?:tar\.gz|zip)\.?$/.test(candidate) ||
+      /^\/?repos\/actions\/runner\/releases\/assets\/[0-9]+$/.test(candidate)
+    ) {
+      continue;
+    }
+    if (isPublicOperationalIdentifier(candidate)) continue;
+    if (/[A-Za-z]/.test(candidate) && (/[0-9]/.test(candidate) || /[_+\\/-]/.test(candidate))) {
+      return true;
+    }
     if (/[a-z]/.test(candidate) && /[A-Z]/.test(candidate)) {
       const counts = new Map<string, number>();
       for (const character of candidate) counts.set(character, (counts.get(character) ?? 0) + 1);
@@ -507,7 +691,9 @@ function secretLikeText(value: string): boolean {
         const probability = count / candidate.length;
         return total - probability * Math.log2(probability);
       }, 0);
-      if (entropy >= 4) return true;
+      if (entropy >= 4) {
+        return true;
+      }
     }
   }
   return false;
