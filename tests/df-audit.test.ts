@@ -1137,7 +1137,16 @@ test("worker session isolation reads canonical state and catches escaped cwd", a
       const session = path.join(root, "sessions", id);
       await mkdir(session, { recursive: true });
       await writeFile(path.join(session, "state.json"), JSON.stringify({ sessionId: id, workdir, lastTurnAt: "2026-07-13T00:00:00Z" }));
-      await writeFile(path.join(session, "transcript.json"), JSON.stringify({ messages: [{ role: "user", content: "Read .darkfactory/df-task-brief.md and implement that task in the current repository. Continue safely." }] }));
+      await writeFile(path.join(session, "transcript.json"), JSON.stringify({ messages: [{ role: "user", content: [
+        "# Implementer",
+        "",
+        "## Immutable policy (trusted)",
+        "",
+        "## Run",
+        "",
+        "- purpose: implementation",
+        "- worker profile: profile/implementer"
+      ].join("\n") }] }));
     }
     const result = doctor.auditWorkerSessionIsolation(root, { now: "2026-07-13T01:00:00Z" });
     assert.equal(result.findings.length, 1);

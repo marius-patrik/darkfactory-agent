@@ -118,7 +118,7 @@ jobs:
           DF_RESUME_PR: ${{ inputs.resume_pr }}
           DF_RESUME_BRANCH: ${{ inputs.resume_branch }}
           DF_TRIGGER: ${{ github.event_name }}
-        run: node darkfactory-control/.github/scripts/df-work.mjs
+        run: node --experimental-strip-types darkfactory-control/.github/scripts/df-work.mjs
 
       - name: Record verification target
         env:

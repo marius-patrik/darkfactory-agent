@@ -46,7 +46,7 @@ DarkFactory **automates** the orchestration work style; it does not replicate it
 - **Zero-token by default**: sequencing (priority + Blocked-by graph resolution), dispatch, concurrency caps, branch/PR/label/merge mechanics, dashboards, state reconstruction, enforcement conformance checks (required-file lists, CI conclusions, git cleanliness), and PRD↔backlog structural diffing are ALL pure code — no model in the loop.
 - **Tokens only for**: implementing issues (L3 workers — the core spend), writing issue bodies from PRD deltas when a template can't, semantic deep audits (rare, scheduled sparsely), review gates, and L0 escalation runs.
 - **L0 is a state machine first**: each orchestrator tick runs deterministic rules (ready→dispatch, blocked→requeue, red→file incident issue). An AI orchestrator run happens ONLY when the rules hit an explicit "needs judgment" condition (conflicting priorities, repeated worker failure, PRD ambiguity) — and its brief is minimal, not a global context dump.
-- **Small briefs**: workers get the issue body + acceptance criteria + AGENTS.md pointer, not repository dumps; context is fetched by the worker on demand.
+- **Small composed briefs**: workers get one checksummed role/policy/tier/effort/repository/output composition with delimited issue data and verified state, not repository dumps; repository guidance is fetched from the isolated checkout on demand.
 - **Measured**: every loop records its token spend in the run ledger; token cost per merged PR is a tracked metric and a standing optimization target.
 
 ## Architecture
@@ -67,12 +67,26 @@ DarkFactory **automates** the orchestration work style; it does not replicate it
 - [x] **L5 Repository doctor**: deterministic diagnose/report engine for branch/release truth, protections, checks, managed drift, issue dependencies, repository boundaries/layout, submodules, local checkout state, and worker-session cwd isolation. Diagnosis is read-only; explicit report mode reconciles stable findings-as-issues; repair is separate.
 - [x] **L6 Orchestration** (NEW): cross-repo waves and streams — parallel lanes per package, concurrency caps, wave gates (hygiene before enforcement before features), a status dashboard (pinned issue or Project) updated by the bot.
 - [x] **L7 Release convergence**: one marker-owned, resumable engine classifies main/dev ancestry, reconciles divergence through reviewed heads, releases verified dev through `release/<sha>`, proves current Validate plus high-confirmed Autoreview evidence, verifies declared tag/artifact/publication policy, and emits downstream receipts without force, bypass, or default-branch writes. Main-ahead and missing-dev recovery fail closed behind an App-owned owner-contract issue because normal PR landing cannot simultaneously guarantee identical main/dev commit SHAs and prohibit every protected-ref write; the selected invariant must be recorded before either recovery path is enabled.
+- [x] **L8 Human development CLI**: `df` is the canonical executable and
+  `darkfactory` is its exact compatibility alias. A versioned command registry
+  exposes repository, issue, planning, work, PR, release, submodule, run,
+  receipt, runner, and explanation surfaces with safe read-only defaults and
+  per-command trust/permission/failure help. Interactive issue drafting uses
+  the high model tier with independently selected effort, keeps atomic local
+  draft state, runs the shared issue Autoreview/autofix protocol, shows the
+  final diff, and requires exact reviewed-digest approval before idempotent
+  publication. Existing issue/PR commands require explicit versions; stale
+  state, missing canonical Agent OS, unresolved owner decisions, malformed
+  model output, or incomplete receipts block before semantic mutation.
 
 ## User controls (all on GitHub)
 
 - Edit `PRD.md` → L4 replans the backlog (PRD-edit triggers run in the edited repository with the repository token).
 - Label an issue `df:ready` (or let L4 auto-ready sequenced work) → the issue is queued for L3 dispatch on the next scheduled orchestrator tick or workflow-run chain.
 - Comment `/df plan`, `/df doctor`, or `/df pause` on issues/PRs → the request is scoped to that repo/issue where a control-repository bridge exists. CLI/workflow doctor diagnosis is already available; bot command parity is tracked by #39.
+- Run `df help <command>` for the same engines from a human terminal. `df issue
+  ready` reports the evaluator verdict and never labels an issue directly;
+  `df lane resume` requests re-evaluation and never force-applies readiness.
 - `workflow_dispatch` for manual wave starts; until the webhook server is deployed, `/df run` in managed repositories is represented by `df:ready` and picked up on the next scheduled orchestrator tick, while the control-repository orchestrator dispatches L3 workers across managed repositories via `workflow_dispatch` so app/Codex secrets stay out of managed-repo workflows.
 - Merge/close/comment exactly as on any repo — the bot treats human actions as authoritative.
 

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -32,6 +32,11 @@ import {
   modelRequestForPurpose,
   validateAgentExecutionReceipt
 } from "./df-model-policy.mjs";
+import {
+  ModelTurnError,
+  executeModelTurn,
+  validationCommandsForRepository
+} from "../../src/model-turn.ts";
 
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
@@ -62,6 +67,7 @@ async function main() {
   assertAllowedRepo(TARGET_REPO);
 
   const issue = await getIssue(TARGET_REPO, TARGET_ISSUE_NUMBER);
+  const issueComments = await getIssueComments(TARGET_REPO, TARGET_ISSUE_NUMBER);
   const taskRouting = taskClassFromLabels(issue.labels);
   const modelPolicy = await loadModelPolicy(CONTROL_ROOT);
   const modelRequest = modelRequestForPurpose(modelPolicy, "implementation", taskRouting);
@@ -196,12 +202,25 @@ async function main() {
       runGit(["checkout", "-b", branch], worktree);
     }
 
-    const briefInfo = await writeTaskBrief(worktree, issue, workBaseBranch, taskRouting, modelRequest, resumeInfo);
-    ledger.agent_os.input_brief_characters = briefInfo.characters;
-
-    const executionReceipt = await runAgentWorker(worktree, modelRequest);
+    const repositoryPaths = gitOutput(["ls-files"], worktree).split(/\r?\n/).filter(Boolean);
+    const validationCommands = validationCommandsForRepository(TARGET_REPO, repositoryPaths);
+    const modelTurn = await runAgentWorker({
+      worktree,
+      issue,
+      issueComments,
+      defaultBranch: workBaseBranch,
+      taskRouting,
+      modelRequest,
+      resumeInfo,
+      branch,
+      repositoryPaths,
+      validationCommands,
+      tempRoot
+    });
+    const executionReceipt = modelTurn.receipt;
     ledger.agent_os.turns = 1;
     ledger.agent_os.receipt = executionReceipt;
+    ledger.agent_os.prompt = modelTurn.prompt;
     ledger.token_usage = {
       requested_model_tier: executionReceipt.requested.modelTier,
       requested_effort: executionReceipt.requested.effort,
@@ -215,8 +234,33 @@ async function main() {
       total_tokens: executionReceipt.usage.totalTokens
     };
 
-    const summary = await readWorkerSummary(worktree);
-    await removeWorkerScratch(worktree);
+    const currentIssue = await getIssue(TARGET_REPO, TARGET_ISSUE_NUMBER);
+    const currentComments = await getIssueComments(TARGET_REPO, TARGET_ISSUE_NUMBER);
+    if (
+      issueVersion(currentIssue) !== issueVersion(issue) ||
+      JSON.stringify(currentComments) !== JSON.stringify(issueComments)
+    ) {
+      throw new Error("Worker issue changed during the model turn; refusing to publish stale implementation work.");
+    }
+
+    ledger.agent_os.turn_ledger = await writeRunLedger(
+      gh,
+      DATA_REPO,
+      "df-work-model-turn",
+      repoName(TARGET_REPO),
+      {
+        issue: target,
+        branch,
+        base_branch: workBaseBranch,
+        status: "model-turn-complete",
+        model_request: modelRequest,
+        prompt: modelTurn.prompt,
+        receipt: executionReceipt,
+        token_usage: ledger.token_usage
+      }
+    );
+
+    const summary = workerSummary(modelTurn.output);
 
     const changed = gitOutput(["status", "--porcelain"], worktree);
     if (changed.trim()) {
@@ -262,6 +306,10 @@ async function main() {
     });
   } catch (error) {
     ledger.status = "blocked";
+    if (error instanceof ModelTurnError) {
+      ledger.agent_os.prompt = error.prompt;
+      ledger.agent_os.receipt = error.receipt;
+    }
     const baseError = sanitize(error.stack || error.message || String(error), TOKEN);
     ledger.error = baseError;
     if (pullRequest) {
@@ -350,6 +398,30 @@ async function getIssue(repository, issueNumber) {
     throw new Error(`${repoName(repository)}#${issueNumber} is not open.`);
   }
   return issue;
+}
+
+async function getIssueComments(repository, issueNumber) {
+  const comments = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const payload = await gh.request(
+      "GET",
+      `/repos/${repoName(repository)}/issues/${issueNumber}/comments?per_page=100&page=${page}`
+    );
+    if (!Array.isArray(payload)) throw new Error("GitHub issue comments response is malformed");
+    comments.push(...payload.map((comment) => String(comment.body || "")));
+    if (payload.length < 100) return comments;
+  }
+  throw new Error("Issue comment context exceeds the bounded pagination limit");
+}
+
+function issueVersion(issue) {
+  return JSON.stringify({
+    number: issue.number,
+    state: issue.state,
+    title: issue.title || "",
+    body: issue.body || "",
+    updatedAt: issue.updated_at || ""
+  });
 }
 
 async function resolveWorkBaseBranch(repository, defaultBranch, requestedBranch = "") {
@@ -593,125 +665,216 @@ async function findOpenIssueByMarker(repository, marker) {
   return null;
 }
 
-function buildResumeContext(resumeInfo, defaultBranch) {
-  if (!resumeInfo) return "";
-
-  const lines = [
-    "## Resume Context",
-    "",
-    "This worker run is resuming an interrupted previous run. Do not create a new branch or PR."
-  ];
-
-  if (resumeInfo.type === "pr") {
-    lines.push(`Resuming against existing PR #${resumeInfo.pr.number} (${resumeInfo.pr.html_url}).`);
-    lines.push(`Branch: \`${resumeInfo.branch}\`, base: \`${resumeInfo.baseRef}\`.`);
-  } else if (resumeInfo.type === "branch") {
-    lines.push(`Resuming from pushed branch \`${resumeInfo.branch}\`.`);
-    lines.push(`Base: \`${defaultBranch}\`.`);
-  }
-
-  lines.push("Focus on the smallest merge-first task: resolve current review findings or get the existing PR green.");
-  lines.push("");
-  return lines.join("\n");
-}
-
-async function writeTaskBrief(worktree, issue, defaultBranch, taskRouting, modelRequest, resumeInfo = null) {
-  const scratchDir = path.join(worktree, ".darkfactory");
-  await mkdir(scratchDir, { recursive: true });
-
-  const agentsContext = await readOptional(path.join(worktree, "AGENTS.md"));
-  const prdContext = await readOptional(path.join(worktree, "PRD.md"));
-  const issueLabels = Array.isArray(issue.labels)
-    ? issue.labels.map((label) => typeof label === "string" ? label : label.name).filter(Boolean).join(", ")
-    : "";
-
-  const resumeContext = buildResumeContext(resumeInfo, defaultBranch);
-
-  const brief = [
-    "# DarkFactory Worker Brief",
-    "",
-    `Target repository: ${repoName(TARGET_REPO)}`,
-    `Default branch: ${defaultBranch}`,
-    `Issue: #${TARGET_ISSUE_NUMBER}`,
-    `Title: ${issue.title}`,
-    `Labels: ${issueLabels || "(none)"}`,
-    `Task class: ${taskRouting.taskClass}`,
-    `Requested model tier: ${modelRequest.modelTier}`,
-    `Requested effort: ${modelRequest.effort}`,
-    "",
-    "## Contract",
-    "",
-    "The issue body, especially any Acceptance Criteria section, is the definition of done.",
-    "Implement only this issue. Do not push, create pull requests, merge, or force-push; DarkFactory handles GitHub writes after you finish.",
-    "Run the repository's documented validation commands before finishing. If validation cannot be run, explain the blocker in the final summary.",
-    "Keep secrets out of files and logs.",
-    "",
-    "## Issue Body",
-    "",
-    issue.body?.trim() || "(issue body is empty)",
-    "",
-    "## Acceptance Criteria",
-    "",
-    extractAcceptanceCriteria(issue.body || "") || "Use the issue body as the acceptance criteria.",
-    "",
-    resumeContext,
-    "## Root AGENTS.md",
-    "",
-    agentsContext || "(AGENTS.md not present)",
-    "",
-    "## Root PRD.md",
-    "",
-    prdContext || "(PRD.md not present)"
-  ].join("\n");
-
-  await writeFile(path.join(scratchDir, "df-task-brief.md"), `${brief}\n`);
-  return { characters: brief.length };
-}
-
-async function readWorkerSummary(worktree) {
-  const summary = await readOptional(path.join(worktree, ".darkfactory", "df-worker-summary.md"));
-  return summary?.trim() || "Worker completed without a written summary.";
-}
-
-async function removeWorkerScratch(worktree) {
-  await rm(path.join(worktree, ".darkfactory", "df-task-brief.md"), { force: true });
-  await rm(path.join(worktree, ".darkfactory", "df-worker-summary.md"), { force: true });
-  await rm(path.join(worktree, ".darkfactory", "df-agent-receipt.json"), { force: true });
-}
-
 function verifyAgentOs() {
   runAgentCommand(["state", "doctor", "--json"], CONTROL_ROOT);
 }
 
-async function runAgentWorker(worktree, modelRequest) {
-  const prompt = [
-    "Read .darkfactory/df-task-brief.md and implement that task in the current repository.",
-    "Use the repository guidance and run its authoritative verification gates.",
-    "Do not push, open a pull request, merge, or modify Agent OS state.",
-    "Write a concise final summary to .darkfactory/df-worker-summary.md before finishing."
-  ].join(" ");
-  const receiptPath = path.join(worktree, ".darkfactory", "df-agent-receipt.json");
-  const output = runAgentCommand(
-    agentRunArguments(modelRequest, {
-      prompt,
-      receiptPath,
-      mode: "default",
+async function runAgentWorker({
+  worktree,
+  issue,
+  issueComments,
+  defaultBranch,
+  taskRouting,
+  modelRequest,
+  resumeInfo,
+  branch,
+  repositoryPaths,
+  validationCommands,
+  tempRoot
+}) {
+  const controlRevision = gitOutput(["rev-parse", "HEAD"], CONTROL_ROOT);
+  const checkedOutRevision = gitOutput(["rev-parse", "HEAD"], worktree);
+  const issueLabels = Array.isArray(issue.labels)
+    ? issue.labels.map((label) => typeof label === "string" ? label : label.name).filter(Boolean)
+    : [];
+  const verifiedFacts = [
+    `Issue ${TARGET_ISSUE_NUMBER} is open and was read from ${repoName(TARGET_REPO)}.`,
+    `Issue updated timestamp is ${issue.updated_at || "unavailable"}.`,
+    `The checked-out base is ${defaultBranch}.`,
+    `The checked-out repository revision before the turn is ${checkedOutRevision}.`,
+    `Task classification is ${taskRouting.taskClass}.`
+  ];
+  if (resumeInfo?.type === "pr") {
+    verifiedFacts.push(`This run resumes pull request ${resumeInfo.pr.number} on branch ${resumeInfo.branch}.`);
+  } else if (resumeInfo?.type === "branch") {
+    verifiedFacts.push(`This run resumes branch ${resumeInfo.branch}.`);
+  }
+
+  const turn = await executeModelTurn(
+    {
+      intent: {
+        runId: `work-${TARGET_ISSUE_NUMBER}-${controlRevision.slice(0, 12)}`,
+        triggeredBy: "workflow",
+        profile: taskRouting.taskClass === "mechanical" ? "profile/low-mechanic" : "profile/implementer",
+        repository: {
+          owner: TARGET_REPO.owner,
+          repo: TARGET_REPO.repo,
+          defaultBranch
+        },
+        repositoryPaths,
+        workItem: {
+          kind: "issue",
+          number: TARGET_ISSUE_NUMBER,
+          author: issue.user?.login || "unknown",
+          url: issue.html_url || `https://github.com/${repoName(TARGET_REPO)}/issues/${TARGET_ISSUE_NUMBER}`,
+          title: issue.title || "",
+          body: issue.body || "",
+          comments: issueComments
+        },
+        draftIntent: null,
+        policy: {
+          branching: `Work only on the current issue branch from ${defaultBranch}; DarkFactory owns remote publication.`,
+          labels: issueLabels,
+          enforcement: "Do not push, merge, bypass gates, alter protected branches, or modify Agent OS state."
+        },
+        validation: { commands: validationCommands },
+        effort: modelRequest.effort,
+        verified: {
+          observedAt: new Date().toISOString(),
+          facts: verifiedFacts
+        },
+        controlRevision
+      },
+      request: modelRequest,
+      promptsRoot: path.join(CONTROL_ROOT, "prompts"),
+      tempRoot: path.join(tempRoot, "model-turns"),
+      turnName: "implementation",
+      cwd: worktree,
       executionPolicy: "workspace-write"
-    }),
-    worktree
-  ).trim();
-  let rawReceipt;
-  try {
-    rawReceipt = JSON.parse(await readFile(receiptPath, "utf8"));
-  } catch {
-    throw new Error("Canonical Agent OS did not publish a schema-valid execution receipt");
+    },
+    { agentRunArguments, validateAgentExecutionReceipt }
+  );
+  if (turn.receipt.outcome !== "success") {
+    throw new ModelTurnError("provider_route_blocked", "Canonical Agent OS implementation route is unavailable", {
+      prompt: turn.prompt,
+      receipt: turn.receipt
+    });
   }
-  const receipt = validateAgentExecutionReceipt(rawReceipt, modelRequest);
-  const summaryPath = path.join(worktree, ".darkfactory", "df-worker-summary.md");
-  if (!existsSync(summaryPath)) {
-    await writeFile(summaryPath, `${output || "Agent OS worker completed without a written summary."}\n`);
+  return {
+    ...turn,
+    output: validateWorkerOutput(turn.output, turn.prompt.selection.output, {
+      repository: repoName(TARGET_REPO),
+      workItem: TARGET_ISSUE_NUMBER,
+      base: defaultBranch,
+      head: branch
+    })
+  };
+}
+
+function validateWorkerOutput(raw, outputId, expectedTarget) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Worker result must be an object");
+  if (Buffer.byteLength(JSON.stringify(raw), "utf8") > 256000) throw new Error("Worker result exceeds its evidence bound");
+  const expected = outputId === "output/low-mechanic"
+    ? ["schemaVersion", "status", "target", "transformation", "verification", "judgmentRequired", "evidence", "blockers"]
+    : ["schemaVersion", "status", "target", "acceptance", "filesChanged", "validation", "residualRisks", "blockers", "evidence"];
+  const actualKeys = Object.keys(raw).sort();
+  const expectedKeys = [...expected].sort();
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
+    throw new Error(`Worker result must contain exactly: ${expectedKeys.join(", ")}`);
   }
-  return receipt;
+  if (raw.schemaVersion !== 1) throw new Error("Worker result schemaVersion must be 1");
+  const targetKeys = outputId === "output/low-mechanic"
+    ? ["repository", "workItem", "path"]
+    : ["repository", "workItem", "base", "head"];
+  validateWorkerTarget(raw.target, targetKeys, expectedTarget);
+  validateTextArray(raw.blockers, "Worker result blockers");
+  validateEvidence(raw.evidence, "Worker result evidence");
+  const expectedStatus = "completed";
+  if (raw.status !== expectedStatus || raw.blockers.length > 0 || (outputId === "output/low-mechanic" && raw.judgmentRequired !== false)) {
+    throw new Error(`Worker result blocked closed with status ${String(raw.status)}`);
+  }
+  if (outputId === "output/low-mechanic") {
+    validateTextObject(
+      raw.transformation,
+      ["expectedBefore", "observedBefore", "expectedAfter", "observedAfter"],
+      "Worker result transformation"
+    );
+    validateResultEvidence(raw.verification, ["check", "result", "evidence"], "Worker result verification");
+    if (raw.verification.result !== "pass") throw new Error("Worker verification did not pass");
+    return raw;
+  }
+  if (!Array.isArray(raw.acceptance) || raw.acceptance.length === 0 || raw.acceptance.length > 500) {
+    throw new Error("Worker result acceptance must be a non-empty bounded array");
+  }
+  for (const [index, criterion] of raw.acceptance.entries()) {
+    validateResultEvidence(criterion, ["criterionId", "result", "evidence"], `Worker acceptance ${index}`);
+    if (criterion.result !== "pass") throw new Error(`Worker acceptance ${index} did not pass`);
+  }
+  validateTextArray(raw.filesChanged, "Worker result filesChanged");
+  if ([...raw.filesChanged].sort().some((entry, index) => entry !== raw.filesChanged[index])) {
+    throw new Error("Worker result filesChanged must be sorted");
+  }
+  if (!Array.isArray(raw.validation) || raw.validation.length === 0 || raw.validation.length > 100) {
+    throw new Error("Worker result validation must be a non-empty bounded array");
+  }
+  for (const [index, validation] of raw.validation.entries()) {
+    validateResultEvidence(validation, ["command", "result", "exitCode", "evidence"], `Worker validation ${index}`);
+    if (validation.result !== "pass" || validation.exitCode !== 0) {
+      throw new Error(`Worker validation ${index} did not pass`);
+    }
+  }
+  validateTextArray(raw.residualRisks, "Worker result residualRisks");
+  return raw;
+}
+
+function validateResultEvidence(value, keys, context) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${context} must be an object`);
+  validateExactKeys(value, keys, context);
+  for (const key of keys.filter((entry) => entry !== "exitCode")) validateBoundedText(value[key], `${context}.${key}`);
+  if (keys.includes("exitCode") && (!Number.isSafeInteger(value.exitCode) || value.exitCode < 0)) {
+    throw new Error(`${context}.exitCode must be a non-negative integer`);
+  }
+}
+
+function validateTextObject(value, keys, context) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${context} must be an object`);
+  validateExactKeys(value, keys, context);
+  for (const key of keys) validateBoundedText(value[key], `${context}.${key}`);
+}
+
+function validateWorkerTarget(value, keys, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Worker result target must be an object");
+  validateExactKeys(value, keys, "Worker result target");
+  for (const key of keys.filter((entry) => entry !== "workItem")) {
+    validateBoundedText(value[key], `Worker result target.${key}`);
+  }
+  if ((!Number.isSafeInteger(value.workItem) || value.workItem <= 0) && (typeof value.workItem !== "string" || !value.workItem.trim())) {
+    throw new Error("Worker result target.workItem must identify the work item");
+  }
+  if (value.repository !== expected.repository || String(value.workItem) !== String(expected.workItem)) {
+    throw new Error("Worker result target does not match the authorized repository and work item");
+  }
+  if (keys.includes("base") && (value.base !== expected.base || value.head !== expected.head)) {
+    throw new Error("Worker result target does not match the authorized base and head");
+  }
+}
+
+function validateEvidence(value, context) {
+  if (!Array.isArray(value) || value.length > 500) throw new Error(`${context} must be a bounded array`);
+  value.forEach((entry, index) => validateTextObject(entry, ["kind", "ref", "summary"], `${context} ${index}`));
+}
+
+function validateTextArray(value, context) {
+  if (!Array.isArray(value) || value.length > 500) throw new Error(`${context} must be a bounded array`);
+  value.forEach((entry, index) => validateBoundedText(entry, `${context}[${index}]`));
+}
+
+function validateBoundedText(value, context) {
+  if (typeof value !== "string" || !value.trim() || value.length > 16000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) {
+    throw new Error(`${context} must be bounded safe text`);
+  }
+}
+
+function validateExactKeys(value, expected, context) {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
+    throw new Error(`${context} must contain exactly: ${wanted.join(", ")}`);
+  }
+}
+
+function workerSummary(output) {
+  return truncate(JSON.stringify(output, null, 2), 10000);
 }
 
 function agentOsEnvironment() {
@@ -810,23 +973,6 @@ function runCommand(command, args, cwd, env = process.env) {
     throw new Error(`${command} failed with exit ${result.status}\n${sanitize(result.stdout || "", TOKEN)}\n${sanitize(result.stderr || "", TOKEN)}`.trim());
   }
   return result.stdout || "";
-}
-
-async function readOptional(filePath) {
-  if (!existsSync(filePath)) return "";
-  return await readFile(filePath, "utf8");
-}
-
-function extractAcceptanceCriteria(body) {
-  const lines = body.split(/\r?\n/);
-  const start = lines.findIndex((line) => /^#{1,6}\s+acceptance criteria\s*$/i.test(line.trim()));
-  if (start === -1) return "";
-  const out = [];
-  for (const line of lines.slice(start + 1)) {
-    if (/^#{1,6}\s+\S/.test(line.trim())) break;
-    out.push(line);
-  }
-  return out.join("\n").trim();
 }
 
 function truncate(value, maxLength) {

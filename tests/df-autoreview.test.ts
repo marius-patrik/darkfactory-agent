@@ -61,7 +61,40 @@ function receipt(request: any, outcome = "success") {
   };
 }
 
-async function fixture(options: { verdicts: any[]; policy?: any; mutateDuringReviewAt?: number; recordFailsAt?: number }) {
+function prompt(request: any) {
+  const checksum = `sha256:${"0".repeat(64)}`;
+  const high = request.modelTier === "high";
+  return {
+    schemaVersion: 1,
+    controlRevision: "0123456789abcdef0123456789abcdef01234567",
+    manifest: {
+      library: "darkfactory-prompts",
+      schemaVersion: 2,
+      contractVersion: "0.3.0",
+      checksum
+    },
+    promptChecksum: checksum,
+    inputChecksum: checksum,
+    profile: {
+      id: high ? "profile/pr-final-review" : "profile/pr-reviewer",
+      version: "0.2.0",
+      runKind: "review-pr",
+      purpose: high ? "final-review" : "iterative-review"
+    },
+    selection: {
+      role: "role/pr-reviewer",
+      skills: ["skill/validation-autoreview"],
+      modelTier: request.modelTier,
+      effort: request.effort,
+      overlays: ["overlay/pr-review-fix"],
+      repositoryOverlay: "overlay/bun-node",
+      output: "output/pr-reviewer"
+    },
+    artifacts: [{ id: "output/pr-reviewer", version: "0.3.0", checksum }]
+  };
+}
+
+async function fixture(options: { verdicts: any[]; policy?: any; mutateDuringReviewAt?: number; recordFailsAt?: number; promptMismatchAt?: number }) {
   const policy = options.policy || await loadAutoreviewPolicy(controlRoot);
   const modelPolicy = await loadModelPolicy(controlRoot);
   let version = "v1";
@@ -79,7 +112,8 @@ async function fixture(options: { verdicts: any[]; policy?: any; mutateDuringRev
         beforeVersion,
         afterVersion: version,
         changeRef: `commit-${fixCount}`,
-        receipt: receipt(input.request)
+        receipt: receipt(input.request),
+        prompt: prompt(input.request)
       };
     }
   };
@@ -91,8 +125,16 @@ async function fixture(options: { verdicts: any[]; policy?: any; mutateDuringRev
       const scripted = options.verdicts[reviewIndex];
       reviewIndex += 1;
       if (options.mutateDuringReviewAt === reviewIndex) version = "owner-edit";
-      if (scripted?.routeBlocked) return { verdict: clean(), receipt: receipt(input.request, "blocked") };
-      return { verdict: typeof scripted === "function" ? scripted(input) : scripted, receipt: receipt(input.request) };
+      const promptEvidence = prompt(input.request);
+      if (options.promptMismatchAt === reviewIndex) promptEvidence.selection.modelTier = "max";
+      if (scripted?.routeBlocked) {
+        return { verdict: clean(), receipt: receipt(input.request, "blocked"), prompt: promptEvidence };
+      }
+      return {
+        verdict: typeof scripted === "function" ? scripted(input) : scripted,
+        receipt: receipt(input.request),
+        prompt: promptEvidence
+      };
     },
     record: async (round: any) => {
       if (options.recordFailsAt === records.length + 1) throw new Error("ledger unavailable");
@@ -157,6 +199,16 @@ test("malformed or incomplete verdicts fail closed without mutation", async () =
   assert.equal(records[0].outcome, "blocked");
   assert.equal(records[0].blockCode, "malformed_verdict");
   assert.equal(records[0].receipt.outcome, "success");
+  assert.equal(fixInputs.length, 0);
+});
+
+test("prompt and routing provenance mismatch fails closed with both receipts", async () => {
+  const { result, records, fixInputs } = await fixture({ verdicts: [clean()], promptMismatchAt: 1 });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "malformed_verdict");
+  assert.equal(records.length, 1);
+  assert.equal(records[0].prompt.selection.modelTier, "max");
+  assert.equal(records[0].receipt.requested.modelTier, "medium");
   assert.equal(fixInputs.length, 0);
 });
 

@@ -105,17 +105,72 @@ The bot listens on `http://localhost:3000/webhook`. Point the GitHub App webhook
 npm run typecheck
 npm test
 npm run build
-darkfactory serve
-darkfactory install-url
-darkfactory sync-managed
-darkfactory doctor [owner/repo | --all] [--json]
-darkfactory doctor [owner/repo | --all] --write-issues [--json]
+df serve
+df install-url
+df baseline sync owner/repo
+df doctor [owner/repo | --all] [--json]
+df doctor [owner/repo | --all] --write-issues [--json]
 df setup [owner/repo | --all] [--watch] [--json] [--local PATH] [--agents-home PATH]
 df clean [plan] [owner/repo] [--local PATH] [--json]
 df clean apply <plan-id> [--local PATH] [--watch] [--json]
 df clean verify [owner/repo] [--local PATH] [--json]
 df release [status|plan|reconcile|run|verify] [owner/repo] [--watch] [--json]
+df help issue draft
 ```
+
+`df` is the canonical human executable. `darkfactory` is a compatibility binary
+backed by the same parser, command registry, help, and implementation. Every
+orchestration command that exposes `--json` uses the same versioned envelope;
+dedicated help covers defaults, model tier versus effort, permissions,
+mutations, trust boundaries, examples, and non-zero failure semantics.
+
+## Human development CLI
+
+The command surface follows the complete software-development lane:
+
+- `df doctor|setup|clean` with explicit plan/apply/verify cleanup stages;
+- `df repo init|doctor|sync|status` and `df baseline status|sync|verify`;
+- `df issue draft|review|fix|ready|ask` and `df lane pause|resume`;
+- `df plan|streams|dashboard`, `df work|resume|verify`, and
+  `df pr review|fix|status|merge`;
+- `df release status|plan|reconcile|run|verify` and
+  `df submodules status|update|verify`;
+- `df explain` (`df why`), `df runs list|show|watch|retry`,
+  `df receipts list|show|verify`, `df runners status`, and `df logs`.
+
+Release and submodule verbs are thin CLI adapters to their single
+purpose-specific convergence engines; the CLI does not duplicate those state
+machines.
+
+Safe defaults are binding: `df doctor` is read-only unless
+`--write-issues` is explicit, `df clean` means `df clean plan`, and bare
+`df release` means `df release status`. Deterministic commands consume zero
+model tokens and reject model-selection flags. There is no user-facing force,
+prune, target-guessing review, or bypass command.
+
+`df issue draft [owner/repo]` gathers goal, evidence, scope, non-goals,
+acceptance, dependencies, trust and failure boundaries, validation, rollout,
+and owner decisions. The versioned prompt composer fixes model tier to `high`;
+`--effort` is an independent input. The result is written atomically under the
+canonical Agent OS runtime (or an explicit `--draft` path), reviewed and
+autofixed by the same bounded issue Autoreview engine used by Actions, and kept
+local until the human types or supplies the exact reviewed SHA-256 digest.
+Publication has a durable admission receipt, is idempotent by draft ID, and
+creates one issue only when the clean high confirmation and current digest
+still agree. Unresolved owner questions, provider or receipt failure, malformed
+output, stale state, or a concurrent edit leaves the draft unpublished.
+
+Existing issue review uses the exact target version:
+
+```powershell
+df issue review marius-patrik/DarkFactory#39 --version <issue-sha256>
+df issue ready marius-patrik/DarkFactory#39 --version <issue-sha256>
+```
+
+`issue review` and `issue fix` invoke the shared medium-to-clean then independent
+high-confirmation protocol through canonical Agent OS. `issue ready` is a
+read-only machine evaluation and never writes `df:ready`; the evaluator owns
+that label.
 
 ## Repository doctor
 
@@ -227,19 +282,31 @@ turn through the same launcher without provider or model flags. It never falls
 back to an ambient `agents` command. Provider selection, identity, memory, and
 session state therefore come exclusively from `$AGENTS_HOME`.
 
+Every worker turn is assembled by the versioned `prompts/` composer from the
+logical worker profile, independently authorized tier and effort, immutable
+policy, verified live state, repository-type overlay, delimited issue data,
+validation lane, and output contract. The hand-built task-brief and summary
+scratch files are retired. A malformed result or missing/stale input blocks
+before DarkFactory publishes a branch.
+
 `darkfactory-autoreview.yml` is base-trusted and runs only on the trusted
-`df-local` runner. It invokes `$AGENTS_HOME\bin\agents.ps1`; repository workflows
-never select providers, models, homes, or credentials. Pull-request and issue
-content is serialized as bounded untrusted prompt data into an empty turn
-workspace. Review turns are read-only and never checkout or execute target
+`df-local` runner. The base-trusted workflow checks out protected
+`marius-patrik/DarkFactory@main` as its control runtime and records the resolved
+commit before composing a turn; it never loads the composer, prompts, or runner
+from the pull-request head. It invokes `$AGENTS_HOME\bin\agents.ps1`; repository
+workflows never select providers, models, homes, or credentials. Pull-request
+and issue content is serialized as bounded untrusted prompt data into an empty
+turn workspace. Review turns are read-only and never checkout or execute target
 hooks, scripts, builds, tests, or image inputs. Autofix turns return strict
 hash-bound whole-file proposals; the trusted runner applies them only after a
 fresh same-repository/provenance/base/head check and a normal non-force push.
 Existing tests and `.agents`, `.darkfactory`, `.github`, `AGENTS.md`, and package
 control files are protected from autofix. Validation remains a separate gate.
 
-The protocol records every model tier, effort, resolved provider/model/preset,
-prompt version, complete finding set, usage, and fix version in
+The protocol records the exact control revision, prompt manifest and contract
+version/checksum, composed prompt and input checksums, role, skills, tier,
+effort, overlays, output schema, resolved provider/model/preset, complete
+finding set, usage, and fix version in
 `marius-patrik/darkfactory-data`. Missing/malformed verdicts, stale targets,
 provider failures, receipt failures, and exhausted medium/high budgets block
 closed. Issue mutation preserves an owner-text/history section and re-fetches

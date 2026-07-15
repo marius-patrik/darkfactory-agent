@@ -6,6 +6,7 @@ import {
   validateAgentExecutionReceipt,
   validateModelPolicy
 } from "./df-model-policy.mjs";
+import { validatePromptProvenance } from "../../src/model-turn.ts";
 
 export const AUTOREVIEW_POLICY_PATH = ".darkfactory/autoreview-policy.json";
 export const AUTOREVIEW_SCHEMA_PATH = ".github/darkfactory-autoreview.schema.json";
@@ -326,54 +327,91 @@ async function persistRound(record, round, rounds) {
 
 function validateTurnResult(raw, request, policy) {
   if (!isRecord(raw)) throw new Error("Autoreview turn result must be an object");
-  exactKeys(raw, ["verdict", "receipt"], "Autoreview review turn result");
-  const receipt = validateAgentExecutionReceipt(raw.receipt, request, { allowBlocked: true });
+  exactKeys(raw, ["verdict", "receipt", "prompt"], "Autoreview review turn result");
+  const prompt = validatePromptProvenance(raw.prompt);
+  let receipt;
+  try {
+    receipt = validateAgentExecutionReceipt(raw.receipt, request, { allowBlocked: true });
+  } catch (error) {
+    error.prompt = prompt;
+    throw error;
+  }
+  if (prompt.selection.modelTier !== request.modelTier || prompt.selection.effort !== request.effort) {
+    const error = new Error("Autoreview prompt provenance does not match the authorized model request");
+    error.code = "malformed_verdict";
+    error.prompt = prompt;
+    error.receipt = receipt;
+    throw error;
+  }
   if (receipt.outcome !== "success") {
     const error = new Error("Canonical Agent OS route was blocked");
     error.code = "provider_route_blocked";
     error.receipt = receipt;
+    error.prompt = prompt;
     throw error;
   }
   try {
     return {
       verdict: normalizeAutoreviewVerdict(raw.verdict, policy),
-      receipt
+      receipt,
+      prompt
     };
   } catch (error) {
     error.receipt = receipt;
+    error.prompt = prompt;
     throw error;
   }
 }
 
 function validateFixResult(raw, request, beforeVersion) {
   if (!isRecord(raw)) throw new Error("Autoreview fix turn result must be an object");
-  exactKeys(raw, ["beforeVersion", "afterVersion", "changeRef", "receipt"], "Autoreview fix turn result");
+  exactKeys(raw, ["beforeVersion", "afterVersion", "changeRef", "receipt", "prompt"], "Autoreview fix turn result");
+  const prompt = validatePromptProvenance(raw.prompt);
   if (raw.beforeVersion !== beforeVersion) {
     const error = new Error("Autoreview fix used a stale target version");
     error.code = "stale_target";
+    error.prompt = prompt;
     throw error;
   }
   if (typeof raw.afterVersion !== "string" || raw.afterVersion === beforeVersion) {
     const error = new Error("Autoreview fix did not produce a new target version");
     error.code = "fix_no_change";
+    error.prompt = prompt;
     throw error;
   }
   if (typeof raw.changeRef !== "string" || !raw.changeRef.trim() || CONTROL_CHARS.test(raw.changeRef)) {
     const error = new Error("Autoreview fix change reference is malformed");
     error.code = "malformed_fix";
+    error.prompt = prompt;
     throw error;
   }
-  const receipt = validateAgentExecutionReceipt(raw.receipt, request, { allowBlocked: true });
+  let receipt;
+  try {
+    receipt = validateAgentExecutionReceipt(raw.receipt, request, { allowBlocked: true });
+  } catch (error) {
+    error.prompt = prompt;
+    throw error;
+  }
+  if (prompt.selection.modelTier !== request.modelTier || prompt.selection.effort !== request.effort) {
+    const error = new Error("Autoreview autofix prompt provenance does not match the authorized model request");
+    error.code = "malformed_fix";
+    error.prompt = prompt;
+    error.receipt = receipt;
+    throw error;
+  }
   if (receipt.outcome !== "success") {
     const error = new Error("Canonical Agent OS autofix route was blocked");
     error.code = "provider_route_blocked";
+    error.receipt = receipt;
+    error.prompt = prompt;
     throw error;
   }
   return Object.freeze({
     beforeVersion: raw.beforeVersion,
     afterVersion: raw.afterVersion,
     changeRef: raw.changeRef.trim(),
-    receipt
+    receipt,
+    prompt
   });
 }
 
@@ -410,6 +448,7 @@ export async function runAutoreview(options) {
       promptVersion: policy.promptVersion,
       request,
       receipt: isRecord(error) && isRecord(error.receipt) ? error.receipt : null,
+      prompt: isRecord(error) && isRecord(error.prompt) ? error.prompt : null,
       verdict,
       findings: Object.freeze([...findings]),
       findingIds: Object.freeze([...findingIds]),
@@ -454,12 +493,14 @@ export async function runAutoreview(options) {
       } catch (error) {
         if (!error.code) error.code = "target_policy_blocked";
         error.receipt = turn.receipt;
+        error.prompt = turn.prompt;
         return blockAttempt({ phase: "medium_review", request: mediumRequest, snapshot, error, verdict: turn.verdict });
       }
       if (current.version !== snapshot.version) {
         const error = new Error("Target changed after medium review");
         error.code = "stale_target";
         error.receipt = turn.receipt;
+        error.prompt = turn.prompt;
         return blockAttempt({ phase: "medium_review", request: mediumRequest, snapshot, error, verdict: turn.verdict });
       }
 
@@ -471,6 +512,7 @@ export async function runAutoreview(options) {
         promptVersion: policy.promptVersion,
         request: mediumRequest,
         receipt: turn.receipt,
+        prompt: turn.prompt,
         verdict: turn.verdict,
         outcome: turn.verdict.approved ? "clean" : "findings"
       };
@@ -512,6 +554,7 @@ export async function runAutoreview(options) {
         promptVersion: policy.promptVersion,
         request: mediumRequest,
         receipt: fix.receipt,
+        prompt: fix.prompt,
         findings: turn.verdict.blockingFindings,
         findingIds: Object.freeze(turn.verdict.blockingFindings.map((finding) => finding.id)),
         changeRef: fix.changeRef,
@@ -548,12 +591,14 @@ export async function runAutoreview(options) {
     } catch (error) {
       if (!error.code) error.code = "target_policy_blocked";
       error.receipt = highTurn.receipt;
+      error.prompt = highTurn.prompt;
       return blockAttempt({ phase: "high_review", request: highRequest, snapshot, error, verdict: highTurn.verdict });
     }
     if (current.version !== snapshot.version) {
       const error = new Error("Target changed after high review");
       error.code = "stale_target";
       error.receipt = highTurn.receipt;
+      error.prompt = highTurn.prompt;
       return blockAttempt({ phase: "high_review", request: highRequest, snapshot, error, verdict: highTurn.verdict });
     }
 
@@ -565,6 +610,7 @@ export async function runAutoreview(options) {
       promptVersion: policy.promptVersion,
       request: highRequest,
       receipt: highTurn.receipt,
+      prompt: highTurn.prompt,
       verdict: highTurn.verdict,
       outcome: highTurn.verdict.approved ? "clean" : "findings"
     };
@@ -600,6 +646,7 @@ export async function runAutoreview(options) {
       promptVersion: policy.promptVersion,
       request: mediumRequest,
       receipt: highFix.receipt,
+      prompt: highFix.prompt,
       findings: highTurn.verdict.blockingFindings,
       findingIds: Object.freeze(highTurn.verdict.blockingFindings.map((finding) => finding.id)),
       changeRef: highFix.changeRef,

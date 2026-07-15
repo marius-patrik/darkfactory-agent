@@ -1128,17 +1128,21 @@ test("df-work blocks target auto-merge setup failures before clone or Agent OS w
 test("df-work delegates local model execution exclusively to canonical Agent OS state", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
   const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const modelTurnSource = await readFile(new URL("../src/model-turn.ts", import.meta.url), "utf8");
   const modelPolicySource = await readFile(new URL("../.github/scripts/df-model-policy.mjs", import.meta.url), "utf8");
 
   assert.match(workflow, /runs-on: \[self-hosted, df-local\]/);
   assert.match(workflow, /pwsh -NoLogo -NoProfile -File \$agentsLauncher state doctor --json/);
   assert.doesNotMatch(workflow, /CODEX_AUTH_JSON|KIMI_AUTH_JSON|AGY_AUTH_JSON/);
-  assert.match(source, /runAgentCommand\(\s*agentRunArguments\(modelRequest/);
+  assert.match(source, /executeModelTurn/);
+  assert.match(source, /profile\/implementer/);
+  assert.match(modelTurnSource, /adapters\.agentRunArguments/);
   assert.match(modelPolicySource, /"--model-tier"/);
   assert.match(modelPolicySource, /"--effort"/);
-  assert.doesNotMatch(`${source}\n${modelPolicySource}`, /["']--provider["']|["']--model["']|runWithFailover|loadProviderRegistry/);
+  assert.doesNotMatch(`${source}\n${modelTurnSource}\n${modelPolicySource}`, /["']--provider["']|["']--model["']|runWithFailover|loadProviderRegistry/);
   assert.match(source, /validateAgentExecutionReceipt/);
-  assert.match(source, /TOKEN\|SECRET\|AUTH_JSON\|PRIVATE_KEY/);
+  assert.match(modelTurnSource, /TOKEN\|SECRET\|AUTH_JSON\|PRIVATE_KEY/);
+  assert.doesNotMatch(source, /df-task-brief|df-worker-summary|writeTaskBrief/);
 });
 
 test("df-work runs every Windows worker script through native PowerShell", async () => {
@@ -1164,7 +1168,7 @@ test("df-work Windows bootstrap avoids POSIX shell and path assumptions", async 
   assert.doesNotMatch(workflow, /\b(?:bash|sh)\b/i);
   assert.doesNotMatch(workflow, /\[\[|command -v|mkdir -p|cygpath|wslpath/);
   assert.match(workflow, /New-Item -ItemType Directory -Path \.darkfactory-verification -Force/);
-  assert.match(workflow, /node darkfactory-control\/\.github\/scripts\/df-work\.mjs/);
+  assert.match(workflow, /node --experimental-strip-types darkfactory-control\/\.github\/scripts\/df-work\.mjs/);
 });
 
 test("df-work native gate remains fail closed before checkout and worker execution", async () => {
@@ -1194,12 +1198,15 @@ test("df-work native gate remains fail closed before checkout and worker executi
 
 test("df-work binds Agent OS execution to the canonical launcher", async () => {
   const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const modelTurnSource = await readFile(new URL("../src/model-turn.ts", import.meta.url), "utf8");
 
   assert.match(source, /const agentsHome = requiredEnv\("AGENTS_HOME"\)/);
   assert.match(source, /if \(!path\.isAbsolute\(agentsHome\)\)/);
   assert.match(source, /const agentsLauncher = path\.join\(agentsHome, "bin", "agents\.ps1"\)/);
   assert.match(source, /runAgentCommand\(\["state", "doctor", "--json"\], CONTROL_ROOT\)/);
-  assert.match(source, /runAgentCommand\(\s*agentRunArguments\(modelRequest/);
+  assert.match(source, /executeModelTurn/);
+  assert.match(modelTurnSource, /adapters\.agentRunArguments/);
+  assert.match(modelTurnSource, /canonicalLauncher\(environment\)/);
   assert.match(source, /if \(!existsSync\(agentsLauncher\)\)/);
   assert.match(source, /\["-NoLogo", "-NoProfile", "-File", agentsLauncher, \.\.\.args\]/);
   assert.ok(source.indexOf("canonicalAgentsLauncher();") < source.indexOf("await getIssue"));
@@ -1534,7 +1541,9 @@ test("DarkFactory Autoreview workflow binds the exact gate to trusted Agent OS e
   assert.equal(job.name, AUTOREVIEW_REQUIRED_CONTEXT);
   assert.deepEqual(job["runs-on"], ["self-hosted", "df-local"]);
   assert.match(workflow, /pull_request_target:/);
-  assert.match(workflow, /github\.event\.pull_request\.base\.sha \|\| github\.sha/);
+  assert.match(workflow, /repository: marius-patrik\/DarkFactory/);
+  assert.match(workflow, /ref: main/);
+  assert.match(workflow, /DF_CONTROL_REVISION: \$\{\{ steps\.control\.outputs\.revision \}\}/);
   assert.match(workflow, /bin\\agents\.ps1/);
   assert.match(workflow, /state doctor --json/);
   assert.doesNotMatch(workflow, /CODEX_AUTH_JSON|KIMI_AUTH_JSON|codex exec|kimi|claude|agy/);
@@ -1544,10 +1553,14 @@ test("DarkFactory Autoreview never checks out or executes the untrusted PR head"
   const workflow = await readFile(new URL("../.github/workflows/darkfactory-autoreview.yml", import.meta.url), "utf8");
   const runner = await readFile(new URL("../.github/scripts/run-darkfactory-autoreview.mjs", import.meta.url), "utf8");
 
-  assert.match(workflow, /Checkout trusted control definition/);
+  assert.match(workflow, /Checkout protected DarkFactory control runtime/);
+  assert.match(workflow, /repository: marius-patrik\/DarkFactory/);
+  assert.match(workflow, /ref: main/);
+  assert.match(workflow, /rev-parse HEAD/);
   assert.doesNotMatch(workflow, /Checkout PR head|docker build|docker run/);
   assert.match(runner, /executionPolicy: "read-only"/);
-  assert.match(runner, /Do not execute repository code, hooks, builds, tests/);
+  assert.match(runner, /executeModelTurn/);
+  assert.match(runner, /validationCommandsForRepository/);
   assert.match(runner, /core\.hooksPath/);
   assert.match(runner, /--no-ext-diff/);
   assert.match(runner, /Autoreview requires a protected main or dev base/);

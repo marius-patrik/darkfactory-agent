@@ -1792,7 +1792,6 @@ export function auditWorkerSessionIsolation(agentsHome, options = {}) {
 
   const now = new Date(options.now || Date.now()).getTime();
   const cutoff = now - WORKER_SESSION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
-  const workerPrompt = "Read .darkfactory/df-task-brief.md and implement that task in the current repository.";
   let inspectedCount = 0;
   let mismatchCount = 0;
 
@@ -1805,7 +1804,7 @@ export function auditWorkerSessionIsolation(agentsHome, options = {}) {
     const lastTurn = Date.parse(state.lastTurnAt || transcript.updatedAt || transcript.createdAt || "");
     if (Number.isFinite(lastTurn) && lastTurn < cutoff) continue;
     const firstUserMessage = (transcript.messages || []).find((message) => message?.role === "user")?.content || "";
-    if (!String(firstUserMessage).startsWith(workerPrompt)) continue;
+    if (!isComposedWorkerPrompt(firstUserMessage)) continue;
     inspectedCount += 1;
     if (!isIsolatedWorkerWorkdir(state.workdir)) {
       mismatchCount += 1;
@@ -1820,6 +1819,14 @@ export function auditWorkerSessionIsolation(agentsHome, options = {}) {
   }
   observations.push(`Inspected ${inspectedCount} canonical df-work session(s) from the last ${WORKER_SESSION_LOOKBACK_DAYS} days for task-clone cwd isolation.`);
   return { findings, observations };
+}
+
+function isComposedWorkerPrompt(value) {
+  const prompt = String(value || "");
+  return /^(?:# Implementer|# Low mechanic)\r?\n/.test(prompt) &&
+    prompt.includes("## Immutable policy (trusted)") &&
+    /- worker profile: profile\/(?:implementer|low-mechanic)(?:\r?\n|$)/.test(prompt) &&
+    /- purpose: (?:implementation|trivial-mechanical)(?:\r?\n|$)/.test(prompt);
 }
 
 export function isIsolatedWorkerWorkdir(workdir) {
