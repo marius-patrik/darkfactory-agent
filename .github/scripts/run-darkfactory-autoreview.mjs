@@ -12,7 +12,6 @@ import {
   extractClosingIssueNumbers,
   parseRepo,
   repoName,
-  requiredEnv,
   sanitize,
   writeRunLedger
 } from "./df-lib.mjs";
@@ -32,6 +31,10 @@ import {
   executeModelTurn,
   validationCommandsForRepository
 } from "../../src/model-turn.ts";
+import {
+  issueVersion,
+  validateIssueAutofixProposal
+} from "../../src/issue-spec.ts";
 
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REVIEW_MARKER = "<!-- darkfactory-autoreview -->";
@@ -63,9 +66,21 @@ function exactKeys(value, expected, context) {
   }
 }
 
-async function runComposedTurn({ request, snapshot, tempRoot, turnName, profile, findings = [] }) {
+export async function runComposedTurn({
+  request,
+  snapshot,
+  tempRoot,
+  turnName,
+  profile,
+  findings = [],
+  controlRevision = "",
+  environment = process.env
+}) {
   const [owner, repo] = snapshot.repository.split("/");
-  const controlRevision = requiredEnv("DF_CONTROL_REVISION");
+  const exactControlRevision = controlRevision || environment.DF_CONTROL_REVISION?.trim() || "";
+  if (!/^[0-9a-f]{40}$/i.test(exactControlRevision)) {
+    throw stableError("target_policy_blocked", "Autoreview requires an exact trusted control revision");
+  }
   const workItemKind = snapshot.kind === "pull_request" ? "pr" : "issue";
   const versionDigest = sha256(snapshot.version).slice(0, 12);
   const contextComments = findings.length > 0
@@ -107,14 +122,15 @@ async function runComposedTurn({ request, snapshot, tempRoot, turnName, profile,
             ]
           },
           effort: request.effort,
-          controlRevision
+          controlRevision: exactControlRevision
         },
         request,
         promptsRoot: path.join(CONTROL_ROOT, "prompts"),
         tempRoot: path.join(tempRoot, "model-turns"),
         turnName,
         cwd: tempRoot,
-        executionPolicy: "read-only"
+        executionPolicy: "read-only",
+        environment
       },
       { agentRunArguments, validateAgentExecutionReceipt }
     );
@@ -178,28 +194,6 @@ function ownerHistory(title, body) {
     `<p><strong>Body</strong></p><pre>${htmlEscape(body)}</pre>`,
     "</details>"
   ].join("\n");
-}
-
-function validateIssueProposal(raw, policy) {
-  exactKeys(raw, ["schemaVersion", "title", "body", "summary"], "Issue autofix proposal");
-  if (raw.schemaVersion !== 1) throw stableError("malformed_fix", "Issue autofix schemaVersion must be 1");
-  for (const field of ["title", "body", "summary"]) {
-    if (typeof raw[field] !== "string" || !raw[field].trim() || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(raw[field])) {
-      throw stableError("malformed_fix", `Issue autofix ${field} is unsafe`);
-    }
-  }
-  if (Buffer.byteLength(raw.title, "utf8") > 256 || Buffer.byteLength(raw.body, "utf8") > policy.limits.targetContextBytes || Buffer.byteLength(raw.summary, "utf8") > policy.limits.summaryBytes) {
-    throw stableError("malformed_fix", "Issue autofix proposal exceeds its versioned bounds");
-  }
-  return { title: raw.title.trim(), body: raw.body.trim(), summary: raw.summary.trim() };
-}
-
-function issueVersion(issue) {
-  return sha256(JSON.stringify({
-    title: issue.title || "",
-    body: issue.body || "",
-    state: issue.state || ""
-  }));
 }
 
 function pullVersion(pull) {
@@ -449,8 +443,19 @@ export async function createPullRequestTarget({
   tempRoot,
   policy,
   expectedBase = "",
-  expectedHeadSha = ""
+  expectedBaseSha = "",
+  expectedHeadSha = "",
+  controlRevision = "",
+  environment = process.env
 }) {
+  if (!expectedBaseSha || !expectedHeadSha) {
+    throw stableError("target_policy_blocked", "Exact pull request base and head SHAs are required before Autoreview admission");
+  }
+  for (const [name, value] of [["base", expectedBaseSha], ["head", expectedHeadSha]]) {
+    if (value && !/^[0-9a-f]{40}$/.test(value)) {
+      throw stableError("target_policy_blocked", `Expected pull request ${name} SHA must be a lowercase 40-character Git object ID`);
+    }
+  }
   const repoRoot = path.join(tempRoot, "pull-repository");
   const hooksRoot = path.join(tempRoot, "empty-hooks");
   const repositoryMetadata = await gh.request("GET", `/repos/${repoName(repository)}`);
@@ -466,6 +471,9 @@ export async function createPullRequestTarget({
 
   async function read() {
     const pull = await fetchPull();
+    if (initialRead && expectedBaseSha && pull.base?.sha !== expectedBaseSha) {
+      throw stableError("stale_target", `Pull request base changed before Autoreview admission: expected ${expectedBaseSha}, observed ${pull.base?.sha || "missing"}`);
+    }
     const policyEvidence = assertPullPolicy(pull, repository, {
       base: authorizedBase,
       branch: authorizedBranch,
@@ -525,7 +533,9 @@ export async function createPullRequestTarget({
       tempRoot,
       turnName: phase,
       profile: "profile/pr-fixer",
-      findings
+      findings,
+      controlRevision,
+      environment
     });
     try {
       if (turn.receipt.outcome !== "success") throw stableError("provider_route_blocked", "Autofix model route is unavailable");
@@ -622,10 +632,23 @@ function issueChangeComment(before, after, summary) {
   ].join("\n");
 }
 
-export async function createIssueTarget({ gh, repository, number, tempRoot, policy }) {
+export async function createIssueTarget({
+  gh,
+  repository,
+  number,
+  tempRoot,
+  policy,
+  expectedVersion = "",
+  controlRevision = "",
+  environment = process.env
+}) {
+  if (!expectedVersion || !/^[0-9a-f]{64}$/.test(expectedVersion)) {
+    throw stableError("target_policy_blocked", "Expected issue version must be a lowercase SHA-256 digest");
+  }
   const repositoryMetadata = await gh.request("GET", `/repos/${repoName(repository)}`);
   const defaultBranch = repositoryMetadata.default_branch || "main";
   const repositoryPaths = await githubRepositoryInventory(gh, repository, defaultBranch);
+  let initialVersionAdmitted = false;
 
   async function fetchIssue() {
     const issue = await gh.request("GET", `/repos/${repoName(repository)}/issues/${number}`);
@@ -635,6 +658,13 @@ export async function createIssueTarget({ gh, repository, number, tempRoot, poli
 
   async function read() {
     const issue = await fetchIssue();
+    const observedVersion = issueVersion(issue);
+    if (!initialVersionAdmitted) {
+      if (expectedVersion && observedVersion !== expectedVersion) {
+        throw stableError("stale_target", `Issue changed before Autoreview admission: expected ${expectedVersion}, observed ${observedVersion}`);
+      }
+      initialVersionAdmitted = true;
+    }
     const comments = await fetchAll(gh, `/repos/${repoName(repository)}/issues/${number}/comments`);
     const issueIndex = (await fetchAll(gh, `/repos/${repoName(repository)}/issues?state=open`))
       .filter((entry) => !entry.pull_request)
@@ -668,7 +698,7 @@ export async function createIssueTarget({ gh, repository, number, tempRoot, poli
       kind: "issue",
       repository: repoName(repository),
       number,
-      version: issueVersion(issue),
+      version: observedVersion,
       defaultBranch,
       repositoryPaths,
       author: issue.user?.login || "unknown",
@@ -687,11 +717,13 @@ export async function createIssueTarget({ gh, repository, number, tempRoot, poli
       tempRoot,
       turnName: phase,
       profile: "profile/issue-fixer",
-      findings
+      findings,
+      controlRevision,
+      environment
     });
     try {
       if (turn.receipt.outcome !== "success") throw stableError("provider_route_blocked", "Issue-autofix model route is unavailable");
-      const proposal = validateIssueProposal(turn.output, policy);
+      const proposal = validateIssueAutofixProposal(turn.output, policy.limits);
       if (proposal.body.includes(OWNER_HISTORY_MARKER)) throw stableError("malformed_fix", "Issue autofix cannot replace the owner-history section");
 
       const beforeMutation = await fetchIssue();
@@ -855,10 +887,12 @@ async function applyOwnerOverride({ gh, repository, number, commentId, target, r
 }
 
 export async function executeAutoreview(environment = process.env) {
-  const token = requiredEnv("DARK_FACTORY_TOKEN");
+  const token = environment.DARK_FACTORY_TOKEN?.trim() || "";
+  if (!token) throw new Error("DARK_FACTORY_TOKEN is required");
   const repository = parseRepo(environment.DF_TARGET_REPO?.trim() || environment.GITHUB_REPOSITORY?.trim() || "");
   const number = Number(environment.DF_TARGET_NUMBER);
   const kind = environment.DF_TARGET_KIND?.trim() || "pull_request";
+  const controlRevision = environment.DF_CONTROL_REVISION?.trim() || "";
   if (!Number.isSafeInteger(number) || number < 1) throw new Error("DF_TARGET_NUMBER must be a positive integer");
   if (!new Set(["pull_request", "issue"]).has(kind)) throw new Error("DF_TARGET_KIND must be pull_request or issue");
   assertAllowedRepo(repository);
@@ -881,6 +915,13 @@ export async function executeAutoreview(environment = process.env) {
   };
 
   try {
+    const directBaseSha = environment.DF_EXPECTED_BASE_SHA?.trim() || "";
+    const directHeadSha = environment.DF_EXPECTED_HEAD_SHA?.trim() || "";
+    const expectedPullVersion = environment.DF_EXPECTED_PR_VERSION?.trim() || "";
+    const [versionBaseSha = "", versionHeadSha = "", ...extraVersionParts] = expectedPullVersion.split(":");
+    if (kind === "pull_request" && (!directBaseSha || !directHeadSha) && (extraVersionParts.length > 0 || !versionBaseSha || !versionHeadSha)) {
+      throw stableError("target_policy_blocked", "Pull request version must be exact BASE_SHA:HEAD_SHA");
+    }
     const target = kind === "pull_request"
       ? await createPullRequestTarget({
           gh,
@@ -890,9 +931,21 @@ export async function executeAutoreview(environment = process.env) {
           tempRoot,
           policy,
           expectedBase: environment.DF_EXPECTED_BASE?.trim() || "",
-          expectedHeadSha: environment.DF_EXPECTED_HEAD_SHA?.trim() || ""
+          expectedBaseSha: directBaseSha || versionBaseSha,
+          expectedHeadSha: directHeadSha || versionHeadSha,
+          controlRevision,
+          environment
         })
-      : await createIssueTarget({ gh, repository, number, tempRoot, policy });
+      : await createIssueTarget({
+          gh,
+          repository,
+          number,
+          tempRoot,
+          policy,
+          expectedVersion: environment.DF_EXPECTED_ISSUE_VERSION?.trim() || "",
+          controlRevision,
+          environment
+        });
 
     const overrideComment = Number(environment.DF_OWNER_OVERRIDE_COMMENT || 0);
     if (kind === "issue" && overrideComment > 0) {
@@ -912,7 +965,9 @@ export async function executeAutoreview(environment = process.env) {
           turnName: phase,
           profile: snapshot.kind === "pull_request"
             ? (phase === "high_review" ? "profile/pr-final-review" : "profile/pr-reviewer")
-            : (phase === "high_review" ? "profile/issue-final-review" : "profile/issue-reviewer")
+            : (phase === "high_review" ? "profile/issue-final-review" : "profile/issue-reviewer"),
+          controlRevision,
+          environment
         });
         return { verdict: turn.output, receipt: turn.receipt, prompt: turn.prompt };
       },

@@ -14,5 +14,9 @@
   stable-finding issue reporting; no implicit repair
 - CI reviewer: current isolated Codex migration gate; provider-agnostic
   DarkFactory Autoreview target is #36
+- Human CLI: `df` canonical executable plus exact `darkfactory` alias;
+  versioned registry/help/JSON, shared issue and PR Autoreview entrypoints,
+  high-tier local issue drafting, digest-approved publication, and deterministic
+  ready/explain/evidence surfaces
 - Worker claims remain `df:running` until verified against live GitHub state
 - Validation gate: `npm run check`

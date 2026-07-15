@@ -20,6 +20,10 @@ on:
         description: Explicit issue or pull request number.
         required: true
         type: string
+      target_version:
+        description: Exact issue SHA-256 or pull-request BASE_SHA:HEAD_SHA version admitted by the caller.
+        required: true
+        type: string
       owner_override_comment:
         description: Optional exact owner-authored /df autoreview override comment id for an issue.
         required: false
@@ -117,7 +121,10 @@ jobs:
           DF_TARGET_KIND: ${{ github.event_name == 'pull_request_target' && 'pull_request' || inputs.target_kind }}
           DF_TARGET_NUMBER: ${{ github.event.pull_request.number || inputs.target_number }}
           DF_EXPECTED_BASE: ${{ github.event.pull_request.base.ref || '' }}
+          DF_EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           DF_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          DF_EXPECTED_ISSUE_VERSION: ${{ inputs.target_version || '' }}
+          DF_EXPECTED_PR_VERSION: ${{ inputs.target_version || '' }}
           DF_OWNER_OVERRIDE_COMMENT: ${{ inputs.owner_override_comment || '' }}
           DF_CONTROL_REVISION: ${{ steps.control.outputs.revision }}
         run: node --experimental-strip-types darkfactory-autoreview-control/.github/scripts/run-darkfactory-autoreview.mjs

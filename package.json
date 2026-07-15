@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
+    "df": "./dist/cli.js",
     "darkfactory": "./dist/cli.js"
   },
   "scripts": {

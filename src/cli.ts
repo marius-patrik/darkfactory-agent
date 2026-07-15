@@ -3,9 +3,40 @@ import "dotenv/config";
 
 import { App } from "@octokit/app";
 import { Octokit } from "@octokit/core";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createBot } from "./bot.js";
 import { loadAppCredentials, loadConfig } from "./config.js";
+import {
+  createIssueDraft,
+  defaultDraftPath,
+  draftExists,
+  formatDraftDiff,
+  issueDraftSummary,
+  isRetryableIssueDraftReview,
+  parseIssueTarget,
+  parseOwnerIssueIntent,
+  publishReviewedIssueDraft,
+  readIssueDraftState,
+  reviewIssueDraft,
+  validateEffort,
+  validateRepository,
+  type IssueDevelopmentRuntime,
+  type OwnerIssueIntent
+} from "./issue-development.js";
+import { evaluateIssueReady, isTrustedDarkFactoryComment, issueContentDigest, issueVersion, validateIssueVersion } from "./issue-spec.js";
+import {
+  formatCommandHelp,
+  formatRootHelp,
+  humanCommandId,
+  humanJsonResult,
+  parseHumanCliArgs,
+  type ParsedHumanCommand
+} from "./human-cli.js";
 import { ensureManagedRepositorySetup, orderManagedRepositoriesForSync } from "./managed-sync.js";
 import {
   CONTROL_OWNER,
@@ -16,13 +47,28 @@ import {
 } from "./status.js";
 import { createWebhookServer } from "./server.js";
 
+const TRUSTED_ACTIONS_APP_ID = 15368;
+
 export async function runCli(args = process.argv.slice(2)): Promise<void> {
   const [command = "help"] = args;
 
   if (command === "help" || command === "--help" || command === "-h") {
-    printHelp();
+    if (command === "help" && args.length > 1) {
+      const parsed = parseHumanCliArgs([...args.slice(1), "--help"]);
+      if (!parsed) throw new Error(`unknown help target: ${args.slice(1).join(" ")}`);
+      console.log(formatCommandHelp(parsed.spec));
+    } else {
+      console.log(formatRootHelp());
+    }
     return;
   }
+
+  const human = parseHumanCliArgs(args);
+  if (human?.help) {
+    console.log(formatCommandHelp(human.spec));
+    return;
+  }
+  if (human && await runHumanCommand(human)) return;
 
   if (command === "serve") {
     serve();
@@ -120,7 +166,7 @@ async function syncManagedRepositories(): Promise<void> {
   console.log(`Processed ${count} installed repositories.`);
 }
 
-async function runStatus(args: string[]): Promise<void> {
+async function runStatus(args: string[], commandId = "status"): Promise<void> {
   const json = args.includes("--json");
   const credentials = loadAppCredentials();
   const app = new App({
@@ -132,7 +178,7 @@ async function runStatus(args: string[]): Promise<void> {
   const report = await buildStatusReport(requester);
 
   if (json) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(humanJsonResult(commandId, "ok", report), null, 2));
   } else {
     console.log(formatStatusReport(report));
   }
@@ -195,7 +241,7 @@ export function parseDoctorCliArgs(args: string[]): DoctorCliOptions {
   return options;
 }
 
-async function runDoctor(args: string[]): Promise<void> {
+async function runDoctor(args: string[], commandId = "doctor"): Promise<void> {
   const options = parseDoctorCliArgs(args);
   const credentials = loadAppCredentials();
   const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
@@ -232,8 +278,1077 @@ async function runDoctor(args: string[]): Promise<void> {
     agentsHome: options.agentsHome
   });
 
-  if (options.json) console.log(JSON.stringify(reports, null, 2));
+  if (options.json) console.log(JSON.stringify(humanJsonResult(commandId, "ok", reports), null, 2));
   else console.log(doctor.formatDoctorReports(reports));
+}
+
+async function runHumanCommand(command: ParsedHumanCommand): Promise<boolean> {
+  switch (command.spec.id) {
+    case "issue-draft":
+      await runIssueDraftCommand(command);
+      return true;
+    case "issue-review":
+    case "issue-fix":
+      await runIssueAutoreviewCommand(command);
+      return true;
+    case "issue-ready":
+      await runIssueReadyCommand(command);
+      return true;
+    case "issue-ask":
+      await runIssueAskCommand(command);
+      return true;
+    case "repo-doctor": {
+      const args = [command.arguments[0]];
+      if (typeof command.options["--local"] === "string") args.push("--local", command.options["--local"] as string);
+      if (command.options["--json"] === true) args.push("--json");
+      await runDoctor(args, "repo-doctor");
+      return true;
+    }
+    case "repo-init":
+    case "repo-sync":
+    case "baseline-sync":
+      await syncOneManagedRepository(command);
+      return true;
+    case "repo-status":
+    case "baseline-status":
+    case "baseline-verify": {
+      const target = command.arguments[0] || `${CONTROL_OWNER}/${CONTROL_REPO}`;
+      await runDoctor([target, ...(command.options["--json"] === true ? ["--json"] : [])], command.spec.id);
+      return true;
+    }
+    case "plan":
+    case "work":
+    case "resume":
+    case "verify":
+      await runWorkflowBackedCommand(command);
+      return true;
+    case "streams":
+    case "dashboard":
+      await runLaneObservationCommand(command);
+      return true;
+    case "pr-review":
+    case "pr-fix":
+      await runPullAutoreviewCommand(command);
+      return true;
+    case "pr-status":
+    case "pr-merge":
+      await runPullCommand(command);
+      return true;
+    case "explain":
+      await runExplainCommand(command);
+      return true;
+    case "runs-list":
+    case "runs-show":
+    case "runs-watch":
+    case "runs-retry":
+      await runRunsCommand(command);
+      return true;
+    case "receipts-list":
+    case "receipts-show":
+    case "receipts-verify":
+      await runReceiptsCommand(command);
+      return true;
+    case "lane-pause":
+    case "lane-resume":
+      await runLaneBrakeCommand(command);
+      return true;
+    case "runners-status":
+      await runRunnersStatusCommand(command);
+      return true;
+    case "logs":
+      await runLogsCommand(command);
+      return true;
+    case "setup":
+    case "clean-plan":
+    case "clean-apply":
+    case "clean-verify":
+      throw new Error(`${command.spec.path.join(" ")} requires the dependency-owned repository convergence engine from #263`);
+    case "release-status":
+    case "release-plan":
+    case "release-reconcile":
+    case "release-run":
+    case "release-verify":
+      throw new Error(`${command.spec.path.join(" ")} requires the dependency-owned release convergence engine from #41`);
+    case "submodules-status":
+    case "submodules-update":
+    case "submodules-verify":
+      throw new Error(`${command.spec.path.join(" ")} requires the dependency-owned submodule convergence engine from #43`);
+    default:
+      return false;
+  }
+}
+
+function optionString(command: ParsedHumanCommand, name: string): string {
+  const value = command.options[name];
+  return typeof value === "string" ? value : "";
+}
+
+function splitOwnerValues(value: string): string[] {
+  return value.split(";").map((entry) => entry.trim()).filter(Boolean);
+}
+
+async function gatherOwnerIssueIntent(): Promise<OwnerIssueIntent> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Interactive issue drafting requires a terminal; use --input with a schemaVersion 1 JSON file");
+  }
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const ask = async (question: string, required = true): Promise<string> => {
+      const value = (await readline.question(question)).trim();
+      if (required && !value) throw new Error(`${question.trim()} is required`);
+      return value;
+    };
+    const intent = {
+      schemaVersion: 1,
+      goal: await ask("Goal: "),
+      evidence: splitOwnerValues(await ask("Current evidence (semicolon-separated; blank if none): ", false)),
+      scope: splitOwnerValues(await ask("Scope items (semicolon-separated): ")),
+      nonGoals: splitOwnerValues(await ask("Non-goals (semicolon-separated; blank if none): ", false)),
+      acceptanceCriteria: splitOwnerValues(await ask("Acceptance criteria (semicolon-separated): ")),
+      dependencies: splitOwnerValues(await ask("Dependencies (semicolon-separated; blank if none): ", false)),
+      trustBoundaries: splitOwnerValues(await ask("Trust boundaries (semicolon-separated): ")),
+      failureBehavior: splitOwnerValues(await ask("Failure behavior (semicolon-separated): ")),
+      validation: splitOwnerValues(await ask("Validation and evidence (semicolon-separated): ")),
+      rollout: splitOwnerValues(await ask("Rollout steps (semicolon-separated): ")),
+      ownerDecisions: splitOwnerValues(await ask("Owner decisions already made (semicolon-separated; blank if none): ", false))
+    };
+    return parseOwnerIssueIntent(intent);
+  } finally {
+    readline.close();
+  }
+}
+
+function packageRoot(): string {
+  return fileURLToPath(new URL("..", import.meta.url));
+}
+
+function exactControlRevision(): string {
+  const supplied = process.env.DF_CONTROL_REVISION?.trim() || "";
+  if (supplied) {
+    if (!/^[0-9a-f]{40}$/i.test(supplied)) throw new Error("DF_CONTROL_REVISION must be an exact commit");
+    return supplied;
+  }
+  try {
+    const root = packageRoot();
+    const revision = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim();
+    if (!/^[0-9a-f]{40}$/i.test(revision)) throw new Error("invalid revision");
+    const dirty = execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=no"], { encoding: "utf8", windowsHide: true }).trim();
+    if (dirty) throw new Error("DarkFactory control checkout is dirty; use an exact reviewed control revision");
+    return revision;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("dirty")) throw error;
+    throw new Error("An exact trusted DarkFactory control revision is unavailable");
+  }
+}
+
+async function createIssueDevelopmentRuntime(repository: string, writeIssues: boolean): Promise<IssueDevelopmentRuntime> {
+  const [owner, repo] = validateRepository(repository).split("/");
+  if (owner.toLowerCase() !== CONTROL_OWNER.toLowerCase()) throw new Error("DarkFactory human development commands are restricted to the managed owner");
+  const credentials = loadAppCredentials();
+  const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+  const target = await getScopedInstallationOctokit(app, owner, {
+    contents: "read",
+    issues: writeIssues ? "write" : "read",
+    pull_requests: "read"
+  }, [repo]);
+  const data = await getScopedInstallationOctokit(app, owner, { contents: "write" }, ["darkfactory-data"]);
+  const ledgerModule = await import(new URL("../.github/scripts/df-lib.mjs", import.meta.url).href) as unknown as {
+    writeRunLedger(github: unknown, dataRepo: string, kind: string, target: string, payload: unknown): Promise<unknown>;
+  };
+  return {
+    github: createDoctorRequester(target),
+    ledger: async (kind, targetRepository, payload) => {
+      await ledgerModule.writeRunLedger(createDoctorRequester(data), "marius-patrik/darkfactory-data", kind, targetRepository, payload);
+    },
+    agentsHome: process.env.AGENTS_HOME?.trim() || "",
+    controlRevision: exactControlRevision(),
+    environment: process.env
+  };
+}
+
+async function runIssueDraftCommand(command: ParsedHumanCommand): Promise<void> {
+  const json = command.options["--json"] === true;
+  let repository = validateRepository(command.arguments[0] || `${CONTROL_OWNER}/${CONTROL_REPO}`);
+  const agentsHome = process.env.AGENTS_HOME?.trim() || "";
+  let draftPath = optionString(command, "--draft");
+  draftPath = draftPath ? path.resolve(draftPath) : defaultDraftPath(agentsHome, repository);
+  const existingDraft = draftExists(draftPath);
+  if (json && !optionString(command, "--input") && !existingDraft) {
+    throw new Error("issue draft --json requires --input or an existing --draft so interactive prompts cannot corrupt JSON output");
+  }
+  let state;
+  if (existingDraft) {
+    if (optionString(command, "--input") || optionString(command, "--effort")) throw new Error("Resuming an issue draft cannot replace its input or model effort");
+    state = await readIssueDraftState(draftPath);
+    if (command.arguments[0] && state.repository.toLowerCase() !== repository.toLowerCase()) throw new Error("Issue draft repository does not match the explicit target");
+    repository = state.repository;
+  } else {
+    const effort = validateEffort(optionString(command, "--effort") || "high");
+    const inputPath = optionString(command, "--input");
+    const intent = inputPath
+      ? parseOwnerIssueIntent(JSON.parse(await readFile(path.resolve(inputPath), "utf8")))
+      : await gatherOwnerIssueIntent();
+    state = await createIssueDraft(repository, intent, effort, draftPath, await createIssueDevelopmentRuntime(repository, false));
+  }
+  if (state.status === "drafted" || isRetryableIssueDraftReview(state)) {
+    state = await reviewIssueDraft(draftPath, await createIssueDevelopmentRuntime(repository, false));
+  }
+  const diff = formatDraftDiff(state);
+  let approval = optionString(command, "--approve");
+  if (!json) {
+    console.log(diff);
+    console.log(`\nReviewed draft digest: ${state.current.digest}`);
+    console.log(`Local draft state: ${draftPath}`);
+  }
+  if (!approval && state.status === "reviewed" && !json && process.stdin.isTTY && process.stdout.isTTY) {
+    const readline = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      approval = (await readline.question("Type the exact reviewed digest to publish, or press Enter to keep the draft local: ")).trim();
+    } finally {
+      readline.close();
+    }
+  }
+  if (approval) {
+    state = await publishReviewedIssueDraft(draftPath, approval, await createIssueDevelopmentRuntime(repository, true));
+  }
+  const summary = issueDraftSummary(state, draftPath);
+  if (json) console.log(JSON.stringify(humanJsonResult("issue-draft", state.status === "blocked" ? "blocked" : "ok", summary), null, 2));
+  else if (state.status === "published") console.log(`Published ${state.publication?.issueUrl}`);
+  else if (state.status === "blocked") console.log(`Draft blocked closed: ${state.blockers.join("; ")}`);
+  else console.log("Draft remains local and unpublished.");
+  if (state.status === "blocked") process.exitCode = 1;
+}
+
+async function scopedAutoreviewToken(repository: string): Promise<string> {
+  const [owner, repo] = validateRepository(repository).split("/");
+  if (owner.toLowerCase() !== CONTROL_OWNER.toLowerCase()) throw new Error("Autoreview CLI is restricted to the managed owner");
+  const credentials = loadAppCredentials();
+  const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+  return getScopedInstallationToken(app, owner, {
+    contents: "write",
+    issues: "write",
+    pull_requests: "write"
+  }, [...new Set([repo, CONTROL_REPO, "darkfactory-data"])]);
+}
+
+async function runIssueAutoreviewCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  const expectedVersion = validateIssueVersion(optionString(command, "--version"));
+  const module = await import(new URL("../.github/scripts/run-darkfactory-autoreview.mjs", import.meta.url).href) as unknown as {
+    executeAutoreview(environment: NodeJS.ProcessEnv): Promise<{ ok: boolean; state: string; code?: string; rounds?: unknown[] }>;
+  };
+  const result = await module.executeAutoreview({
+    ...process.env,
+    DARK_FACTORY_TOKEN: await scopedAutoreviewToken(target.repository),
+    DF_TARGET_REPO: target.repository,
+    DF_TARGET_KIND: "issue",
+    DF_TARGET_NUMBER: String(target.number),
+    DF_EXPECTED_ISSUE_VERSION: expectedVersion,
+    DF_CONTROL_REVISION: exactControlRevision()
+  });
+  const status = result.ok ? "ok" : "blocked";
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult(command.spec.id, status, result, result.ok ? null : { code: result.code || "autoreview_blocked", message: "Issue Autoreview blocked closed" }), null, 2));
+  else console.log(result.ok ? `${target.repository}#${target.number}: clean high Autoreview confirmation.` : `${target.repository}#${target.number}: blocked closed (${result.code || "unknown"}).`);
+  if (!result.ok) process.exitCode = 1;
+}
+
+async function fetchAllRecords(
+  github: ReturnType<typeof createDoctorRequester>,
+  pathPrefix: string,
+  context: string,
+  maximumPages = 10
+): Promise<Record<string, unknown>[]> {
+  const records: Record<string, unknown>[] = [];
+  const separator = pathPrefix.includes("?") ? "&" : "?";
+  for (let page = 1; page <= maximumPages; page += 1) {
+    const result = await github.request("GET", `${pathPrefix}${separator}per_page=100&page=${page}`);
+    if (!Array.isArray(result)) throw new Error(`GitHub returned an invalid ${context} inventory`);
+    records.push(...result.filter(isRecord));
+    if (result.length < 100) return records;
+  }
+  throw new Error(`Complete ${context} inventory exceeds the bounded pagination limit`);
+}
+
+async function issueReadContext(repository: string): Promise<{ github: ReturnType<typeof createDoctorRequester> }> {
+  const octokit = await createRepositoryOctokit(repository, { contents: "read", issues: "read", pull_requests: "read" });
+  return { github: createDoctorRequester(octokit) };
+}
+
+async function runIssueReadyCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  const expectedVersion = validateIssueVersion(optionString(command, "--version"));
+  const { github } = await issueReadContext(target.repository);
+  const issue = await github.request("GET", `/repos/${target.repository}/issues/${target.number}`);
+  if (!isRecord(issue) || issue.pull_request) throw new Error("Selected target is not an issue");
+  const comments = await fetchAllRecords(github, `/repos/${target.repository}/issues/${target.number}/comments`, "issue comment");
+  const body = typeof issue.body === "string" ? issue.body : "";
+  const dependencyNumbers = [...new Set(Array.from(body.matchAll(/(?:Blocked-by|Depends on):?\s*#([1-9][0-9]*)/gi), (match) => Number(match[1])))];
+  const dependencies = await Promise.all(dependencyNumbers.map(async (number) => {
+    const dependency = await github.request("GET", `/repos/${target.repository}/issues/${number}`);
+    if (!isRecord(dependency)) throw new Error(`GitHub returned invalid dependency #${number}`);
+    return { number, state: dependency.state };
+  }));
+  const result = evaluateIssueReady({ issue, comments, dependencies, expectedVersion });
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("issue-ready", result.ready ? "ok" : "blocked", result, result.ready ? null : { code: "not_ready", message: "Issue readiness predicates are not satisfied" }), null, 2));
+  else {
+    console.log(`${target.repository}#${target.number}: ${result.ready ? "ready" : "not ready"} at ${result.targetVersion}`);
+    for (const predicate of result.predicates) console.log(`- ${predicate.passed ? "PASS" : "BLOCK"} ${predicate.id}: ${predicate.evidence}`);
+  }
+  if (!result.ready) process.exitCode = 1;
+}
+
+async function runIssueAskCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  const expectedVersion = validateIssueVersion(optionString(command, "--version"));
+  const message = optionString(command, "--message").trim();
+  if (!message || Buffer.byteLength(message, "utf8") > 16_384 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(message)) throw new Error("Owner question is invalid");
+  const runtime = await createIssueDevelopmentRuntime(target.repository, true);
+  const github = runtime.github;
+  const issue = await github.request("GET", `/repos/${target.repository}/issues/${target.number}`);
+  if (!isRecord(issue) || issue.pull_request || issue.state !== "open") throw new Error("Selected owner-question target must be an open issue");
+  const observedVersion = issueVersion(issue);
+  if (observedVersion !== expectedVersion) throw new Error(`stale issue version: expected ${expectedVersion}, observed ${observedVersion}`);
+  await github.request("GET", `/repos/${target.repository}/labels/${encodeURIComponent("df:ask-owner")}`);
+  const questionId = issueContentDigest(expectedVersion, message);
+  const marker = `<!-- darkfactory:owner-question id=${questionId} version=${expectedVersion} -->`;
+  let comments = await fetchAllRecords(github as ReturnType<typeof createDoctorRequester>, `/repos/${target.repository}/issues/${target.number}/comments`, "issue comment");
+  let existing = comments.find((comment) => isTrustedDarkFactoryComment(comment) && typeof comment.body === "string" && comment.body.startsWith(marker));
+  await runtime.ledger("issue-owner-question-admission", target.repository, {
+    schemaVersion: 1,
+    target: `${target.repository}#${target.number}`,
+    targetVersion: expectedVersion,
+    questionId,
+    mutation: existing ? "ensure-owner-brake" : "label-and-comment"
+  });
+  const admittedIssue = await github.request("GET", `/repos/${target.repository}/issues/${target.number}`);
+  if (!isRecord(admittedIssue) || admittedIssue.pull_request || admittedIssue.state !== "open" || issueVersion(admittedIssue) !== expectedVersion) {
+    throw new Error("Issue changed after owner-question admission");
+  }
+  comments = await fetchAllRecords(github as ReturnType<typeof createDoctorRequester>, `/repos/${target.repository}/issues/${target.number}/comments`, "issue comment");
+  existing = comments.find((comment) => isTrustedDarkFactoryComment(comment) && typeof comment.body === "string" && comment.body.startsWith(marker));
+  await github.request("POST", `/repos/${target.repository}/issues/${target.number}/labels`, { labels: ["df:ask-owner"] });
+  let comment = existing;
+  if (!comment) {
+    const created = await github.request("POST", `/repos/${target.repository}/issues/${target.number}/comments`, {
+      body: `${marker}\n## Owner decision required\n\n${message}\n\nThe lane remains blocked until an owner answer is recorded and the evaluator re-observes this exact issue.`
+    });
+    if (!isRecord(created)) throw new Error("GitHub returned an invalid owner-question comment");
+    comment = created;
+  }
+  await runtime.ledger("issue-owner-question-completion", target.repository, {
+    schemaVersion: 1,
+    target: `${target.repository}#${target.number}`,
+    targetVersion: expectedVersion,
+    questionId,
+    commentId: comment.id ?? null
+  });
+  const result = { schemaVersion: 1, target: `${target.repository}#${target.number}`, targetVersion: expectedVersion, questionId, commentUrl: comment.html_url ?? null };
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("issue-ask", "ok", result), null, 2));
+  else console.log(`Owner question recorded for ${result.target}: ${result.commentUrl || questionId}`);
+}
+
+async function syncOneManagedRepository(command: ParsedHumanCommand): Promise<void> {
+  const target = validateRepository(command.arguments[0]);
+  const [owner, repo] = target.split("/");
+  const credentials = loadAppCredentials();
+  const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+  const octokit = await getInstallationOctokit(app, owner);
+  const metadata = await octokit.request("GET /repos/{owner}/{repo}", { owner, repo });
+  if (!isRecord(metadata.data) || typeof metadata.data.id !== "number" || typeof metadata.data.default_branch !== "string") throw new Error("GitHub returned invalid repository metadata");
+  if (metadata.data.archived === true || metadata.data.disabled === true) throw new Error("Managed baseline mutation requires an active repository");
+  const repositoryId = metadata.data.id;
+  const defaultBranch = metadata.data.default_branch;
+  const branch = await octokit.request("GET /repos/{owner}/{repo}/branches/{branch}", { owner, repo, branch: defaultBranch });
+  if (!isRecord(branch.data) || !isRecord(branch.data.commit) || typeof branch.data.commit.sha !== "string" || !/^[0-9a-f]{40}$/.test(branch.data.commit.sha)) {
+    throw new Error("GitHub returned invalid managed baseline revision evidence");
+  }
+  const admittedRevision = branch.data.commit.sha;
+  const ledger = await createLedgerWriter();
+  await ledger("cli-baseline-sync-admission", target, { schemaVersion: 1, command: command.spec.id, target, defaultBranch, admittedRevision });
+  const currentMetadata = await octokit.request("GET /repos/{owner}/{repo}", { owner, repo });
+  const currentBranch = await octokit.request("GET /repos/{owner}/{repo}/branches/{branch}", { owner, repo, branch: defaultBranch });
+  if (
+    !isRecord(currentMetadata.data)
+    || currentMetadata.data.id !== repositoryId
+    || currentMetadata.data.archived === true
+    || currentMetadata.data.disabled === true
+    || currentMetadata.data.default_branch !== defaultBranch
+    || !isRecord(currentBranch.data)
+    || !isRecord(currentBranch.data.commit)
+    || currentBranch.data.commit.sha !== admittedRevision
+  ) {
+    throw new Error("Managed baseline target changed after admission");
+  }
+  const result = await ensureManagedRepositorySetup(createOctokitRequester(octokit), {
+    owner,
+    repo,
+    defaultBranch,
+    archived: false
+  });
+  await ledger("cli-baseline-sync-completion", target, { schemaVersion: 1, command: command.spec.id, target, defaultBranch, admittedRevision, result });
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult(command.spec.id, "ok", result), null, 2));
+  else console.log(`${result.owner}/${result.repo}: ${result.status}${result.pullRequestUrl ? ` ${result.pullRequestUrl}` : ""}`);
+}
+
+async function createRepositoryOctokit(
+  repository: string,
+  permissions: Record<string, "read" | "write">
+): Promise<Octokit> {
+  const [owner, repo] = validateRepository(repository).split("/");
+  const credentials = loadAppCredentials();
+  const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+  return getScopedInstallationOctokit(app, owner, permissions, [repo]);
+}
+
+async function createLedgerWriter(): Promise<(kind: string, repository: string, payload: unknown) => Promise<void>> {
+  const credentials = loadAppCredentials();
+  const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+  const data = await getScopedInstallationOctokit(app, CONTROL_OWNER, { contents: "write" }, ["darkfactory-data"]);
+  const github = createDoctorRequester(data);
+  const ledgerModule = await import(new URL("../.github/scripts/df-lib.mjs", import.meta.url).href) as unknown as {
+    writeRunLedger(github: unknown, dataRepo: string, kind: string, target: string, payload: unknown): Promise<unknown>;
+  };
+  return async (kind, repository, payload) => {
+    await ledgerModule.writeRunLedger(github, "marius-patrik/darkfactory-data", kind, repository, payload);
+  };
+}
+
+async function dispatchControlWorkflow(
+  workflow: string,
+  inputs: Record<string, string>,
+  watch: boolean
+): Promise<Record<string, unknown>> {
+  const credentials = loadAppCredentials();
+  const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+  const octokit = await getScopedInstallationOctokit(app, CONTROL_OWNER, { actions: "write", contents: "read" }, [CONTROL_REPO]);
+  const github = createDoctorRequester(octokit);
+  const metadata = await github.request("GET", `/repos/${CONTROL_OWNER}/${CONTROL_REPO}/actions/workflows/${encodeURIComponent(workflow)}`);
+  if (!isRecord(metadata) || metadata.state !== "active" || typeof metadata.id !== "number") throw new Error(`Shared workflow ${workflow} is unavailable or inactive on protected main`);
+  const priorRunIds = new Set<number>();
+  if (watch) {
+    const before = await github.request("GET", `/repos/${CONTROL_OWNER}/${CONTROL_REPO}/actions/workflows/${metadata.id}/runs?event=workflow_dispatch&branch=main&per_page=100`);
+    if (!isRecord(before) || !Array.isArray(before.workflow_runs)) throw new Error("GitHub returned an invalid pre-dispatch workflow-run inventory");
+    for (const entry of before.workflow_runs) if (isRecord(entry) && typeof entry.id === "number") priorRunIds.add(entry.id);
+  }
+  const dispatchedAt = new Date();
+  await github.request("POST", `/repos/${CONTROL_OWNER}/${CONTROL_REPO}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { ref: "main", inputs });
+  const result: Record<string, unknown> = {
+    schemaVersion: 1,
+    workflow,
+    workflowId: metadata.id,
+    controlRef: "main",
+    inputs,
+    dispatchedAt: dispatchedAt.toISOString(),
+    run: null
+  };
+  if (!watch) return result;
+  let candidateId: number | null = null;
+  let candidateObservations = 0;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const response = await github.request("GET", `/repos/${CONTROL_OWNER}/${CONTROL_REPO}/actions/workflows/${metadata.id}/runs?event=workflow_dispatch&branch=main&per_page=20`);
+    if (!isRecord(response) || !Array.isArray(response.workflow_runs)) throw new Error("GitHub returned an invalid workflow-run inventory");
+    const candidates = response.workflow_runs.filter((entry) => {
+      if (!isRecord(entry) || typeof entry.created_at !== "string") return false;
+      return typeof entry.id === "number"
+        && !priorRunIds.has(entry.id)
+        && new Date(entry.created_at).getTime() >= dispatchedAt.getTime() - 5_000;
+    });
+    if (candidates.length > 1) throw new Error(`Ambiguous ${workflow} dispatch evidence; refusing to guess a workflow run`);
+    if (candidates.length === 1) {
+      const observedId = candidates[0].id as number;
+      if (candidateId !== null && candidateId !== observedId) throw new Error(`Ambiguous ${workflow} dispatch evidence changed during observation`);
+      candidateId = observedId;
+      candidateObservations += 1;
+    }
+    if (candidateId !== null && candidateObservations >= 2) {
+      const run = await github.request("GET", `/repos/${CONTROL_OWNER}/${CONTROL_REPO}/actions/runs/${candidateId}`);
+      if (!isRecord(run) || run.id !== candidateId || run.workflow_id !== metadata.id || run.event !== "workflow_dispatch") {
+        throw new Error(`GitHub did not confirm the exact ${workflow} dispatch run`);
+      }
+      result.run = run;
+      if (run.status === "completed") return result;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error(`Timed out waiting for exact ${workflow} dispatch evidence`);
+}
+
+async function runWorkflowBackedCommand(command: ParsedHumanCommand): Promise<void> {
+  if (command.spec.id === "verify") {
+    await runWorkVerification(command);
+    return;
+  }
+  let workflow: string;
+  let inputs: Record<string, string>;
+  let repository: string;
+  let targetVersion: string | null = null;
+  let revalidateTarget: () => Promise<void>;
+  if (command.spec.id === "plan") {
+    repository = validateRepository(command.arguments[0]);
+    const github = createDoctorRequester(await createRepositoryOctokit(repository, { contents: "read" }));
+    const readRepository = async (): Promise<Record<string, unknown>> => {
+      const metadata = await github.request("GET", `/repos/${repository}`);
+      if (!isRecord(metadata) || metadata.archived === true || metadata.disabled === true || typeof metadata.id !== "number") throw new Error("Planning target must be an active observable repository");
+      return metadata;
+    };
+    const initial = await readRepository();
+    revalidateTarget = async () => {
+      const current = await readRepository();
+      if (current.id !== initial.id || current.default_branch !== initial.default_branch || current.archived !== initial.archived || current.disabled !== initial.disabled) {
+        throw new Error("Planning repository changed after dispatch admission");
+      }
+    };
+    workflow = "df-plan.yml";
+    inputs = { repo: repository, ref: "" };
+  } else {
+    const target = parseIssueTarget(command.arguments[0]);
+    repository = target.repository;
+    targetVersion = validateIssueVersion(optionString(command, "--version"));
+    const github = createDoctorRequester(await createRepositoryOctokit(repository, { contents: "read", issues: "read" }));
+    revalidateTarget = async () => {
+      const issue = await github.request("GET", `/repos/${repository}/issues/${target.number}`);
+      if (!isRecord(issue) || issue.pull_request || issue.state !== "open" || issueVersion(issue) !== targetVersion) throw new Error("Work target is stale or no longer an open issue");
+    };
+    await revalidateTarget();
+    workflow = "df-orchestrate.yml";
+    inputs = {
+      repo: repository,
+      issue_number: String(target.number),
+      source_event: `cli-${command.spec.id}`
+    };
+  }
+  const ledger = await createLedgerWriter();
+  await ledger("cli-workflow-dispatch-admission", repository, {
+    schemaVersion: 1,
+    command: command.spec.id,
+    workflow,
+    inputs,
+    targetVersion,
+    controlRef: "main"
+  });
+  await revalidateTarget();
+  const result = await dispatchControlWorkflow(workflow, inputs, command.options["--watch"] === true);
+  await ledger("cli-workflow-dispatch-completion", repository, {
+    schemaVersion: 1,
+    command: command.spec.id,
+    workflow,
+    inputs,
+    targetVersion,
+    dispatch: result
+  });
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult(command.spec.id, "ok", result), null, 2));
+  else console.log(`Dispatched ${workflow} from protected main for ${Object.values(inputs).filter(Boolean).join(" ")}.`);
+}
+
+async function runWorkVerification(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  const octokit = await createRepositoryOctokit(target.repository, { actions: "read", checks: "read", contents: "read", issues: "read", pull_requests: "read", statuses: "read" });
+  const github = createDoctorRequester(octokit);
+  const issue = await github.request("GET", `/repos/${target.repository}/issues/${target.number}`);
+  if (!isRecord(issue) || issue.pull_request) throw new Error("Work verification target must be an issue");
+  const pulls = await fetchAllRecords(github, `/repos/${target.repository}/pulls?state=closed`, "closed pull request");
+  const closingPattern = new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${target.number}\\b`, "i");
+  const pull = pulls.find((entry) => typeof entry.body === "string" && closingPattern.test(entry.body) && typeof entry.merged_at === "string");
+  const labels = new Set(Array.isArray(issue.labels) ? issue.labels.map((entry) => isRecord(entry) ? String(entry.name || "") : String(entry)) : []);
+  let gates: Record<string, unknown>[] = [];
+  if (pull && isRecord(pull.head) && typeof pull.head.sha === "string") {
+    const response = await github.request("GET", `/repos/${target.repository}/commits/${pull.head.sha}/check-runs?per_page=100`);
+    if (!isRecord(response) || !Array.isArray(response.check_runs)) throw new Error("GitHub returned invalid verification checks");
+    gates = response.check_runs.filter(isRecord);
+  }
+  const required = ["Validate", "DarkFactory Autoreview"];
+  const predicates = [
+    { id: "issue-done", passed: labels.has("df:done"), evidence: labels.has("df:done") ? "df:done is present." : "df:done is missing." },
+    { id: "merged-worker-pr", passed: Boolean(pull), evidence: pull ? `Merged PR #${pull.number}.` : "No merged closing worker PR was found in the bounded inventory." },
+    ...required.map((name) => {
+      const check = gates.find((entry) => entry.name === name && isRecord(entry.app) && entry.app.id === TRUSTED_ACTIONS_APP_ID);
+      return { id: `gate-${name.toLowerCase().replaceAll(" ", "-")}`, passed: check?.conclusion === "success", evidence: check ? `${name} concluded ${String(check.conclusion)} from App ${String((check.app as Record<string, unknown>).id)}.` : `${name} from the trusted App is missing.` };
+    })
+  ];
+  const ok = predicates.every((entry) => entry.passed);
+  const result = { schemaVersion: 1, target: command.arguments[0], verified: ok, issueVersion: issueVersion(issue), pull: pull ? { number: pull.number, url: pull.html_url, mergedAt: pull.merged_at } : null, predicates };
+  await (await createLedgerWriter())("cli-work-verify", target.repository, result);
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("verify", ok ? "ok" : "blocked", result, ok ? null : { code: "verification_blocked", message: "Work verification predicates are not satisfied" }), null, 2));
+  else {
+    console.log(`${command.arguments[0]}: ${ok ? "verified" : "not verified"}`);
+    for (const predicate of predicates) console.log(`- ${predicate.passed ? "PASS" : "BLOCK"} ${predicate.id}: ${predicate.evidence}`);
+  }
+  if (!ok) process.exitCode = 1;
+}
+
+async function runLaneObservationCommand(command: ParsedHumanCommand): Promise<void> {
+  const repository = validateRepository(command.arguments[0]);
+  const github = createDoctorRequester(await createRepositoryOctokit(repository, { actions: "read", checks: "read", contents: "read", issues: "read", pull_requests: "read" }));
+  const [issues, pulls] = await Promise.all([
+    fetchAllRecords(github, `/repos/${repository}/issues?state=open`, "open issue"),
+    fetchAllRecords(github, `/repos/${repository}/pulls?state=open`, "open pull request")
+  ]);
+  const actualIssues = issues.filter((entry) => !entry.pull_request);
+  const lanes = new Map<string, number>();
+  for (const issue of actualIssues) {
+    const labels = Array.isArray(issue.labels) ? issue.labels.map((entry) => isRecord(entry) ? String(entry.name || "") : String(entry)) : [];
+    const streams = labels.filter((label) => label.startsWith("stream:"));
+    for (const stream of streams.length > 0 ? streams : ["stream:unassigned"]) lanes.set(stream, (lanes.get(stream) || 0) + 1);
+  }
+  const result = {
+    schemaVersion: 1,
+    repository,
+    openIssues: actualIssues.length,
+    openPullRequests: pulls.length,
+    ready: actualIssues.filter((issue) => Array.isArray(issue.labels) && issue.labels.some((entry) => (isRecord(entry) ? entry.name : entry) === "df:ready")).length,
+    running: actualIssues.filter((issue) => Array.isArray(issue.labels) && issue.labels.some((entry) => (isRecord(entry) ? entry.name : entry) === "df:running")).length,
+    blocked: actualIssues.filter((issue) => Array.isArray(issue.labels) && issue.labels.some((entry) => ["df:blocked", "df:ask-owner"].includes(String(isRecord(entry) ? entry.name : entry)))).length,
+    streams: [...lanes.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([name, count]) => ({ name, count }))
+  };
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult(command.spec.id, "ok", result), null, 2));
+  else {
+    console.log(`${repository}: ${result.openIssues} open issues, ${result.openPullRequests} open PRs, ${result.ready} ready, ${result.running} running, ${result.blocked} blocked.`);
+    for (const lane of result.streams) console.log(`- ${lane.name}: ${lane.count}`);
+  }
+}
+
+async function pullSnapshot(repository: string, number: number): Promise<{
+  github: ReturnType<typeof createDoctorRequester>;
+  pull: Record<string, unknown>;
+  checks: Record<string, unknown>[];
+  protection: Record<string, unknown>;
+  version: string;
+}> {
+  const octokit = await createRepositoryOctokit(repository, {
+    administration: "read",
+    checks: "read",
+    contents: "read",
+    pull_requests: "read",
+    statuses: "read"
+  });
+  const github = createDoctorRequester(octokit);
+  const pull = await github.request("GET", `/repos/${repository}/pulls/${number}`);
+  if (!isRecord(pull) || !isRecord(pull.base) || !isRecord(pull.head) || typeof pull.base.sha !== "string" || typeof pull.head.sha !== "string") {
+    throw new Error("GitHub returned an invalid pull request snapshot");
+  }
+  const [checkResponse, protection] = await Promise.all([
+    github.request("GET", `/repos/${repository}/commits/${pull.head.sha}/check-runs?per_page=100`),
+    github.request("GET", `/repos/${repository}/branches/${encodeURIComponent(String(pull.base.ref || ""))}/protection`)
+  ]);
+  if (!isRecord(checkResponse) || !Array.isArray(checkResponse.check_runs) || !isRecord(protection)) throw new Error("GitHub returned incomplete pull-request gate evidence");
+  return {
+    github,
+    pull,
+    checks: checkResponse.check_runs.filter(isRecord),
+    protection,
+    version: `${pull.base.sha}:${pull.head.sha}`
+  };
+}
+
+function pullResult(snapshot: Awaited<ReturnType<typeof pullSnapshot>>): Record<string, unknown> {
+  const pull = snapshot.pull;
+  const required = isRecord(snapshot.protection.required_status_checks) && Array.isArray(snapshot.protection.required_status_checks.checks)
+    ? snapshot.protection.required_status_checks.checks.filter(isRecord).map((entry) => ({ context: entry.context, appId: entry.app_id }))
+    : [];
+  return {
+    schemaVersion: 1,
+    repository: isRecord(pull.base) && isRecord(pull.base.repo) ? pull.base.repo.full_name : null,
+    number: pull.number,
+    state: pull.state,
+    draft: pull.draft === true,
+    version: snapshot.version,
+    base: isRecord(pull.base) ? { ref: pull.base.ref, sha: pull.base.sha } : null,
+    head: isRecord(pull.head) ? { ref: pull.head.ref, sha: pull.head.sha, repository: isRecord(pull.head.repo) ? pull.head.repo.full_name : null } : null,
+    autoMerge: pull.auto_merge ?? null,
+    requiredChecks: required,
+    checks: snapshot.checks.map((entry) => ({ name: entry.name, status: entry.status, conclusion: entry.conclusion, appId: isRecord(entry.app) ? entry.app.id : null, url: entry.html_url ?? entry.details_url ?? null }))
+  };
+}
+
+async function runPullAutoreviewCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  const expectedVersion = optionString(command, "--version");
+  if (!/^[0-9a-f]{40}:[0-9a-f]{40}$/i.test(expectedVersion)) throw new Error("Pull-request version must be exact BASE_SHA:HEAD_SHA");
+  const snapshot = await pullSnapshot(target.repository, target.number);
+  if (snapshot.version.toLowerCase() !== expectedVersion.toLowerCase()) throw new Error(`stale pull-request version: expected ${expectedVersion}, observed ${snapshot.version}`);
+  const base = snapshot.pull.base as Record<string, unknown>;
+  const head = snapshot.pull.head as Record<string, unknown>;
+  const module = await import(new URL("../.github/scripts/run-darkfactory-autoreview.mjs", import.meta.url).href) as unknown as {
+    executeAutoreview(environment: NodeJS.ProcessEnv): Promise<{ ok: boolean; state: string; code?: string; rounds?: unknown[] }>;
+  };
+  const result = await module.executeAutoreview({
+    ...process.env,
+    DARK_FACTORY_TOKEN: await scopedAutoreviewToken(target.repository),
+    DF_TARGET_REPO: target.repository,
+    DF_TARGET_KIND: "pull_request",
+    DF_TARGET_NUMBER: String(target.number),
+    DF_EXPECTED_BASE: String(base.ref || ""),
+    DF_EXPECTED_BASE_SHA: String(base.sha || ""),
+    DF_EXPECTED_HEAD_SHA: String(head.sha || ""),
+    DF_CONTROL_REVISION: exactControlRevision()
+  });
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult(command.spec.id, result.ok ? "ok" : "blocked", result, result.ok ? null : { code: result.code || "autoreview_blocked", message: "Pull-request Autoreview blocked closed" }), null, 2));
+  else console.log(`${command.arguments[0]}: ${result.ok ? "clean high Autoreview confirmation" : `blocked closed (${result.code || "unknown"})`}.`);
+  if (!result.ok) process.exitCode = 1;
+}
+
+function requiredProtectionChecks(protection: Record<string, unknown>): Array<{ context: string; appId: number | null }> {
+  if (!isRecord(protection.required_status_checks) || !Array.isArray(protection.required_status_checks.checks)) return [];
+  return protection.required_status_checks.checks.filter(isRecord).map((entry) => ({
+    context: typeof entry.context === "string" ? entry.context : "",
+    appId: typeof entry.app_id === "number" ? entry.app_id : null
+  })).filter((entry) => entry.context);
+}
+
+function assertPullMergeAdmission(
+  snapshot: Awaited<ReturnType<typeof pullSnapshot>>,
+  repository: string,
+  expectedVersion: string
+): void {
+  if (snapshot.version.toLowerCase() !== expectedVersion.toLowerCase()) throw new Error(`stale pull-request version: expected ${expectedVersion}, observed ${snapshot.version}`);
+  const pull = snapshot.pull;
+  if (pull.state !== "open" || pull.draft === true || !isRecord(pull.base) || !isRecord(pull.head)) throw new Error("Pull request must be open and ready for review");
+  if (!new Set(["main", "dev"]).has(String(pull.base.ref || ""))) throw new Error("Pull request base must be protected main or dev");
+  if (!isRecord(pull.head.repo) || String(pull.head.repo.full_name || "").toLowerCase() !== repository.toLowerCase()) throw new Error("Pull request auto-merge requires a same-repository head");
+  const required = requiredProtectionChecks(snapshot.protection);
+  for (const name of ["Validate", "DarkFactory Autoreview"]) {
+    const policyCheck = required.find((entry) => entry.context === name);
+    if (!policyCheck || policyCheck.appId !== TRUSTED_ACTIONS_APP_ID) throw new Error(`${name} is not required from the trusted GitHub Actions App`);
+    const check = snapshot.checks.find((entry) => entry.name === name && isRecord(entry.app) && entry.app.id === TRUSTED_ACTIONS_APP_ID);
+    if (!check || check.status !== "completed" || check.conclusion !== "success") throw new Error(`${name} is not currently green from the trusted GitHub Actions App`);
+  }
+}
+
+async function runPullCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  let snapshot = await pullSnapshot(target.repository, target.number);
+  if (command.spec.id === "pr-status") {
+    const result = pullResult(snapshot);
+    if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("pr-status", "ok", result), null, 2));
+    else {
+      console.log(`${command.arguments[0]} ${String(snapshot.pull.state)} at ${snapshot.version}`);
+      for (const check of (result.checks as Record<string, unknown>[])) console.log(`- ${String(check.name)}: ${String(check.status)}/${String(check.conclusion)} App ${String(check.appId)}`);
+    }
+    return;
+  }
+  const expectedVersion = optionString(command, "--version");
+  if (!/^[0-9a-f]{40}:[0-9a-f]{40}$/i.test(expectedVersion)) throw new Error("Pull-request version must be exact BASE_SHA:HEAD_SHA");
+  assertPullMergeAdmission(snapshot, target.repository, expectedVersion);
+  if (snapshot.pull.auto_merge) {
+    const result = { ...pullResult(snapshot), alreadyArmed: true };
+    await (await createLedgerWriter())("cli-pr-merge-completion", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, alreadyArmed: true, recovered: true, autoMerge: snapshot.pull.auto_merge });
+    if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("pr-merge", "ok", result), null, 2));
+    else console.log(`${command.arguments[0]} is already armed for normal auto-merge.`);
+    return;
+  }
+  const ledger = await createLedgerWriter();
+  await ledger("cli-pr-merge-admission", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, requiredChecks: ["Validate", "DarkFactory Autoreview"], mergeMethod: "MERGE" });
+  snapshot = await pullSnapshot(target.repository, target.number);
+  assertPullMergeAdmission(snapshot, target.repository, expectedVersion);
+  if (snapshot.pull.auto_merge) {
+    const result = { ...pullResult(snapshot), alreadyArmed: true };
+    await ledger("cli-pr-merge-completion", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, alreadyArmed: true, autoMerge: snapshot.pull.auto_merge });
+    if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("pr-merge", "ok", result), null, 2));
+    else console.log(`${command.arguments[0]} is already armed for normal auto-merge.`);
+    return;
+  }
+  if (typeof snapshot.pull.node_id !== "string") throw new Error("GitHub did not provide the pull-request node ID required for auto-merge");
+  const response = await snapshot.github.graphql(
+    "mutation EnableDarkFactoryAutoMerge($pullRequestId: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: MERGE }) { pullRequest { number autoMergeRequest { enabledAt } } } }",
+    { pullRequestId: snapshot.pull.node_id }
+  );
+  if (!isRecord(response) || !isRecord(response.enablePullRequestAutoMerge) || !isRecord(response.enablePullRequestAutoMerge.pullRequest) || !isRecord(response.enablePullRequestAutoMerge.pullRequest.autoMergeRequest)) {
+    throw new Error("GitHub did not confirm normal auto-merge admission");
+  }
+  const result = { ...pullResult(snapshot), alreadyArmed: false, autoMerge: response.enablePullRequestAutoMerge.pullRequest.autoMergeRequest };
+  await ledger("cli-pr-merge-completion", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, autoMerge: result.autoMerge });
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("pr-merge", "ok", result), null, 2));
+  else console.log(`${command.arguments[0]} armed for normal protected auto-merge.`);
+}
+
+async function observedIssueReadiness(targetValue: string): Promise<Record<string, unknown>> {
+  const target = parseIssueTarget(targetValue);
+  const octokit = await createRepositoryOctokit(target.repository, { contents: "read", issues: "read", pull_requests: "read" });
+  const github = createDoctorRequester(octokit);
+  const issue = await github.request("GET", `/repos/${target.repository}/issues/${target.number}`);
+  if (!isRecord(issue) || issue.pull_request) throw new Error("Selected explain target is not an issue");
+  const comments = await fetchAllRecords(github, `/repos/${target.repository}/issues/${target.number}/comments`, "issue comment");
+  const body = typeof issue.body === "string" ? issue.body : "";
+  const dependencyNumbers = [...new Set(Array.from(body.matchAll(/(?:Blocked-by|Depends on):?\s*#([1-9][0-9]*)/gi), (match) => Number(match[1])))];
+  const dependencies = await Promise.all(dependencyNumbers.map(async (number) => {
+    const dependency = await github.request("GET", `/repos/${target.repository}/issues/${number}`);
+    if (!isRecord(dependency)) throw new Error(`GitHub returned invalid dependency #${number}`);
+    return { number, state: dependency.state };
+  }));
+  return evaluateIssueReady({ issue, comments, dependencies, expectedVersion: issueVersion(issue) }) as unknown as Record<string, unknown>;
+}
+
+async function observedRun(targetValue: string): Promise<Record<string, unknown>> {
+  const target = parseIssueTarget(targetValue);
+  const github = createDoctorRequester(await createRepositoryOctokit(target.repository, { actions: "read", contents: "read" }));
+  const run = await github.request("GET", `/repos/${target.repository}/actions/runs/${target.number}`);
+  if (!isRecord(run)) throw new Error("GitHub returned an invalid workflow run");
+  return run;
+}
+
+async function runExplainCommand(command: ParsedHumanCommand): Promise<void> {
+  const [kind, target] = command.arguments;
+  let result: unknown;
+  if (kind === "issue") result = await observedIssueReadiness(target);
+  else if (kind === "pr") {
+    const parsed = parseIssueTarget(target);
+    result = pullResult(await pullSnapshot(parsed.repository, parsed.number));
+  } else if (kind === "run") result = await observedRun(target);
+  else if (kind === "repo" || kind === "release") {
+    const repository = validateRepository(target);
+    const credentials = loadAppCredentials();
+    const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+    const octokit = await getScopedInstallationOctokit(app, repository.split("/")[0], {
+      administration: "read", actions: "read", checks: "read", contents: "read", issues: "read", pull_requests: "read", secrets: "read", statuses: "read"
+    }, [repository.split("/")[1]]);
+    const doctorModule = await import(new URL("../.github/scripts/df-audit.mjs", import.meta.url).href) as unknown as {
+      runRepositoryDoctor(github: unknown, options: Record<string, unknown>): Promise<unknown[]>;
+    };
+    result = await doctorModule.runRepositoryDoctor(createDoctorRequester(octokit), {
+      root: packageRoot(),
+      controlRepo: { owner: CONTROL_OWNER, repo: CONTROL_REPO },
+      target: repository,
+      all: false,
+      mode: "diagnose",
+      trigger: `cli-explain-${kind}`,
+      localPath: "",
+      agentsHome: ""
+    });
+  } else throw new Error(`unknown explain target kind: ${kind}`);
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("explain", "ok", { kind, target, evidence: result }), null, 2));
+  else console.log(JSON.stringify({ kind, target, evidence: result }, null, 2));
+}
+
+async function runRunsCommand(command: ParsedHumanCommand): Promise<void> {
+  let repository: string;
+  let runId: number | null = null;
+  if (command.spec.id === "runs-list") repository = validateRepository(command.arguments[0]);
+  else {
+    const target = parseIssueTarget(command.arguments[0]);
+    repository = target.repository;
+    runId = target.number;
+  }
+  const mutate = command.spec.id === "runs-retry";
+  const github = createDoctorRequester(await createRepositoryOctokit(repository, { actions: mutate ? "write" : "read", contents: "read" }));
+  let result: unknown;
+  if (command.spec.id === "runs-list") {
+    const response = await github.request("GET", `/repos/${repository}/actions/runs?per_page=100`);
+    if (!isRecord(response) || !Array.isArray(response.workflow_runs)) throw new Error("GitHub returned an invalid workflow-run inventory");
+    result = response.workflow_runs.map((entry) => isRecord(entry) ? ({ id: entry.id, name: entry.name, event: entry.event, status: entry.status, conclusion: entry.conclusion, headSha: entry.head_sha, url: entry.html_url, createdAt: entry.created_at }) : null).filter(Boolean);
+  } else {
+    let run = await github.request("GET", `/repos/${repository}/actions/runs/${runId}`);
+    if (!isRecord(run)) throw new Error("GitHub returned an invalid workflow run");
+    if (command.spec.id === "runs-watch") {
+      for (let attempt = 0; run.status !== "completed" && attempt < 120; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        run = await github.request("GET", `/repos/${repository}/actions/runs/${runId}`);
+        if (!isRecord(run)) throw new Error("GitHub returned an invalid workflow run while watching");
+      }
+      if (run.status !== "completed") throw new Error("Timed out waiting for workflow run completion");
+    }
+    if (command.spec.id === "runs-retry") {
+      if (optionString(command, "--approve") !== String(runId)) throw new Error("runs retry --approve must equal the exact run ID");
+      if (run.status !== "completed" || !new Set(["failure", "cancelled", "timed_out", "action_required", "stale"]).has(String(run.conclusion || ""))) {
+        throw new Error("Only an exact completed non-success run may be retried");
+      }
+      const ledger = await createLedgerWriter();
+      await ledger("cli-run-retry-admission", repository, { schemaVersion: 1, runId, workflowId: run.workflow_id, headSha: run.head_sha, conclusion: run.conclusion });
+      const admittedRun = await github.request("GET", `/repos/${repository}/actions/runs/${runId}`);
+      if (
+        !isRecord(admittedRun)
+        || admittedRun.id !== run.id
+        || admittedRun.workflow_id !== run.workflow_id
+        || admittedRun.head_sha !== run.head_sha
+        || admittedRun.status !== run.status
+        || admittedRun.conclusion !== run.conclusion
+        || admittedRun.run_attempt !== run.run_attempt
+      ) {
+        throw new Error("Workflow run changed after retry admission");
+      }
+      await github.request("POST", `/repos/${repository}/actions/runs/${runId}/rerun-failed-jobs`);
+      await ledger("cli-run-retry-completion", repository, { schemaVersion: 1, runId, workflowId: admittedRun.workflow_id, headSha: admittedRun.head_sha, requested: true });
+      result = { ...admittedRun, retryRequested: true };
+    } else result = run;
+  }
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult(command.spec.id, "ok", result), null, 2));
+  else console.log(JSON.stringify(result, null, 2));
+}
+
+function encodeContentsPath(value: string): string {
+  return value.split("/").map(encodeURIComponent).join("/");
+}
+
+function decodeGithubContent(value: unknown): string {
+  if (!isRecord(value) || value.type !== "file" || value.encoding !== "base64" || typeof value.content !== "string") throw new Error("GitHub returned invalid receipt content");
+  return Buffer.from(value.content.replace(/\s/g, ""), "base64").toString("utf8");
+}
+
+function receiptTarget(value: string, requireReceipt: boolean): { repository: string; receipt: string } {
+  if (!requireReceipt) return { repository: validateRepository(value), receipt: "" };
+  const match = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([A-Za-z0-9_.-]+)$/.exec(value);
+  if (!match) throw new Error(`invalid receipt target: ${value}`);
+  return { repository: match[1], receipt: match[2] };
+}
+
+function assertNoReceiptSecrets(value: unknown, pathPrefix = "receipt"): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoReceiptSecrets(entry, `${pathPrefix}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(?:token|accessToken|refreshToken|secret|secrets|credential|credentials|privateKey|authorization|auth)$/i.test(key)) throw new Error(`Receipt contains forbidden secret-like key ${pathPrefix}.${key}`);
+    assertNoReceiptSecrets(child, `${pathPrefix}.${key}`);
+  }
+}
+
+async function runReceiptsCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = receiptTarget(command.arguments[0], command.spec.id !== "receipts-list");
+  const data = createDoctorRequester(await createRepositoryOctokit("marius-patrik/darkfactory-data", { contents: "read" }));
+  const directory = `runs/${target.repository}`;
+  const listing = await data.request("GET", `/repos/marius-patrik/darkfactory-data/contents/${encodeContentsPath(directory)}`);
+  if (!Array.isArray(listing)) throw new Error("DarkFactory receipt directory is unavailable");
+  const files = listing.filter((entry) => isRecord(entry) && entry.type === "file" && typeof entry.name === "string" && entry.name.endsWith(".json"));
+  if (command.spec.id === "receipts-list") {
+    const result = files.map((entry) => ({ name: entry.name, sha: entry.sha, url: entry.html_url ?? entry.download_url ?? null }));
+    if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("receipts-list", "ok", result), null, 2));
+    else for (const entry of result) console.log(`${entry.name} ${entry.sha || ""}`.trim());
+    return;
+  }
+  const match = files.find((entry) => entry.name === target.receipt || entry.name === `${target.receipt}.json` || entry.sha === target.receipt);
+  if (!match || typeof match.name !== "string") throw new Error(`Receipt ${target.receipt} was not found in the bounded target ledger`);
+  const content = await data.request("GET", `/repos/marius-patrik/darkfactory-data/contents/${encodeContentsPath(`${directory}/${match.name}`)}`);
+  const receipt: unknown = JSON.parse(decodeGithubContent(content));
+  if (command.spec.id === "receipts-verify") {
+    if (!isRecord(receipt) || typeof receipt.kind !== "string" || receipt.target_repo !== target.repository || typeof receipt.created_at !== "string" || !Number.isFinite(new Date(receipt.created_at).getTime())) {
+      throw new Error("Receipt core provenance is invalid");
+    }
+    assertNoReceiptSecrets(receipt);
+  }
+  const result = { file: match.name, sha: match.sha, receipt, verified: command.spec.id === "receipts-verify" ? true : null };
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult(command.spec.id, "ok", result), null, 2));
+  else console.log(JSON.stringify(result, null, 2));
+}
+
+async function runLaneBrakeCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  const expectedVersion = validateIssueVersion(optionString(command, "--version"));
+  const runtime = await createIssueDevelopmentRuntime(target.repository, true);
+  const github = runtime.github;
+  const issue = await github.request("GET", `/repos/${target.repository}/issues/${target.number}`);
+  if (!isRecord(issue) || issue.pull_request || issue.state !== "open") throw new Error("Lane brake target must be an open issue");
+  const observedVersion = issueVersion(issue);
+  if (observedVersion !== expectedVersion) throw new Error(`stale lane version: expected ${expectedVersion}, observed ${observedVersion}`);
+  let comments = await fetchAllRecords(github as ReturnType<typeof createDoctorRequester>, `/repos/${target.repository}/issues/${target.number}/comments`, "issue comment");
+  const pauseMarker = `<!-- darkfactory:lane-brake pause version=${expectedVersion} -->`;
+  const resumeRequestMarker = `<!-- darkfactory:lane-brake resume-request version=${expectedVersion} -->`;
+  const resumeCompleteMarker = `<!-- darkfactory:lane-brake resume-complete version=${expectedVersion} -->`;
+  const refreshAfterAdmission = async (): Promise<Record<string, unknown>[]> => {
+    const admittedIssue = await github.request("GET", `/repos/${target.repository}/issues/${target.number}`);
+    if (!isRecord(admittedIssue) || admittedIssue.pull_request || admittedIssue.state !== "open" || issueVersion(admittedIssue) !== expectedVersion) {
+      throw new Error("Lane target changed after admission");
+    }
+    return fetchAllRecords(github as ReturnType<typeof createDoctorRequester>, `/repos/${target.repository}/issues/${target.number}/comments`, "issue comment");
+  };
+  const assertActiveBrake = (entries: Record<string, unknown>[]): void => {
+    const lastPause = [...entries].reverse().find((entry) => isTrustedDarkFactoryComment(entry) && typeof entry.body === "string" && entry.body.startsWith("<!-- darkfactory:lane-brake pause"));
+    const lastResume = [...entries].reverse().find((entry) => isTrustedDarkFactoryComment(entry) && typeof entry.body === "string" && entry.body.startsWith("<!-- darkfactory:lane-brake resume-complete"));
+    if (!lastPause || (typeof lastResume?.created_at === "string" && typeof lastPause.created_at === "string" && new Date(lastResume.created_at) >= new Date(lastPause.created_at))) {
+      throw new Error("No active owner lane brake is observable for this issue");
+    }
+  };
+  if (command.spec.id === "lane-pause") {
+    await runtime.ledger("lane-pause-admission", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion });
+    comments = await refreshAfterAdmission();
+    const existing = comments.find((entry) => isTrustedDarkFactoryComment(entry) && typeof entry.body === "string" && entry.body.startsWith(pauseMarker));
+    // Apply the conservative brake first. If the explanatory comment fails,
+    // the lane remains safely blocked and the admission receipt explains why.
+    await github.request("POST", `/repos/${target.repository}/issues/${target.number}/labels`, { labels: ["df:blocked"] });
+    let comment = existing;
+    if (!comment) {
+      const created = await github.request("POST", `/repos/${target.repository}/issues/${target.number}/comments`, {
+        body: `${pauseMarker}\n## DarkFactory lane paused\n\nThe owner brake is active for this exact issue version. No new worker dispatch is authorized until an explicit resume requests re-evaluation.`
+      });
+      if (!isRecord(created)) throw new Error("GitHub returned an invalid lane-pause comment");
+      comment = created;
+    }
+    await runtime.ledger("lane-pause-completion", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, commentId: comment.id ?? null });
+    const result = { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, state: "paused", commentUrl: comment.html_url ?? null };
+    if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("lane-pause", "ok", result), null, 2));
+    else console.log(`${command.arguments[0]} paused at ${expectedVersion}.`);
+    return;
+  }
+  assertActiveBrake(comments);
+  await runtime.ledger("lane-resume-admission", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, action: "request-reevaluation" });
+  comments = await refreshAfterAdmission();
+  assertActiveBrake(comments);
+  let requestComment = comments.find((entry) => isTrustedDarkFactoryComment(entry) && typeof entry.body === "string" && entry.body.startsWith(resumeRequestMarker));
+  if (!requestComment) {
+    const created = await github.request("POST", `/repos/${target.repository}/issues/${target.number}/comments`, {
+      body: `${resumeRequestMarker}\n## DarkFactory lane resume requested\n\nThe owner authorized re-evaluation of this exact issue version. The brake remains active until dispatch is confirmed.`
+    });
+    if (!isRecord(created)) throw new Error("GitHub returned an invalid lane-resume comment");
+    requestComment = created;
+  }
+  const dispatch = await dispatchControlWorkflow("df-orchestrate.yml", {
+    repo: target.repository,
+    issue_number: String(target.number),
+    source_event: "cli-lane-resume"
+  }, false);
+  let completionComment = comments.find((entry) => isTrustedDarkFactoryComment(entry) && typeof entry.body === "string" && entry.body.startsWith(resumeCompleteMarker));
+  if (!completionComment) {
+    const created = await github.request("POST", `/repos/${target.repository}/issues/${target.number}/comments`, {
+      body: `${resumeCompleteMarker}\n## DarkFactory lane resume dispatched\n\nMachine re-evaluation was requested successfully. The CLI did not write \`df:ready\` or bypass any predicate.`
+    });
+    if (!isRecord(created)) throw new Error("GitHub returned an invalid lane-resume completion comment");
+    completionComment = created;
+  }
+  await runtime.ledger("lane-resume-completion", target.repository, { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, requestCommentId: requestComment.id ?? null, completionCommentId: completionComment.id ?? null, dispatch });
+  const result = { schemaVersion: 1, target: command.arguments[0], targetVersion: expectedVersion, state: "reevaluation-requested", commentUrl: completionComment.html_url ?? null, dispatch };
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("lane-resume", "ok", result), null, 2));
+  else console.log(`${command.arguments[0]} re-evaluation requested; df:ready was not written by the CLI.`);
+}
+
+async function runRunnersStatusCommand(command: ParsedHumanCommand): Promise<void> {
+  const repository = validateRepository(command.arguments[0] || `${CONTROL_OWNER}/${CONTROL_REPO}`);
+  const github = createDoctorRequester(await createRepositoryOctokit(repository, { administration: "read", actions: "read", contents: "read" }));
+  const response = await github.request("GET", `/repos/${repository}/actions/runners?per_page=100`);
+  if (!isRecord(response) || !Array.isArray(response.runners)) throw new Error("GitHub returned an invalid runner inventory");
+  const runners = response.runners.filter(isRecord).map((runner) => ({
+    id: runner.id,
+    name: runner.name,
+    os: runner.os,
+    status: runner.status,
+    busy: runner.busy === true,
+    labels: Array.isArray(runner.labels) ? runner.labels.map((entry) => isRecord(entry) ? entry.name : null).filter(Boolean) : []
+  }));
+  const result = { schemaVersion: 1, repository, total: response.total_count, runners, dfLocal: runners.filter((runner) => runner.labels.includes("df-local")) };
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("runners-status", "ok", result), null, 2));
+  else {
+    console.log(`${repository}: ${runners.length} runners (${result.dfLocal.length} df-local).`);
+    for (const runner of runners) console.log(`- ${String(runner.name)}: ${String(runner.status)}${runner.busy ? ", busy" : ""} [${runner.labels.join(", ")}]`);
+  }
+}
+
+async function runLogsCommand(command: ParsedHumanCommand): Promise<void> {
+  const target = parseIssueTarget(command.arguments[0]);
+  const github = createDoctorRequester(await createRepositoryOctokit(target.repository, { actions: "read", contents: "read" }));
+  const [run, jobsResponse] = await Promise.all([
+    github.request("GET", `/repos/${target.repository}/actions/runs/${target.number}`),
+    github.request("GET", `/repos/${target.repository}/actions/runs/${target.number}/jobs?per_page=100`)
+  ]);
+  if (!isRecord(run) || !isRecord(jobsResponse) || !Array.isArray(jobsResponse.jobs)) throw new Error("GitHub returned invalid run log evidence");
+  const result = {
+    schemaVersion: 1,
+    repository: target.repository,
+    run: { id: run.id, name: run.name, status: run.status, conclusion: run.conclusion, headSha: run.head_sha, url: run.html_url, logsUrl: run.logs_url },
+    jobs: jobsResponse.jobs.filter(isRecord).map((job) => ({ id: job.id, name: job.name, status: job.status, conclusion: job.conclusion, url: job.html_url, steps: Array.isArray(job.steps) ? job.steps.map((step) => isRecord(step) ? ({ name: step.name, status: step.status, conclusion: step.conclusion, number: step.number }) : null).filter(Boolean) : [] }))
+  };
+  if (command.options["--json"] === true) console.log(JSON.stringify(humanJsonResult("logs", "ok", result), null, 2));
+  else {
+    console.log(`${target.repository} run ${target.number}: ${String(run.status)}/${String(run.conclusion)} ${String(run.html_url || "")}`.trim());
+    for (const job of result.jobs) console.log(`- ${String(job.name)}: ${String(job.status)}/${String(job.conclusion)} ${String(job.url || "")}`.trim());
+  }
 }
 
 async function getInstallationOctokit(app: App, owner: string): Promise<Octokit> {
@@ -246,6 +1361,15 @@ async function getScopedInstallationOctokit(
   permissions: Record<string, "read" | "write">,
   repositoryNames?: string[]
 ): Promise<Octokit> {
+  return new Octokit({ auth: await getScopedInstallationToken(app, owner, permissions, repositoryNames) });
+}
+
+async function getScopedInstallationToken(
+  app: App,
+  owner: string,
+  permissions: Record<string, "read" | "write">,
+  repositoryNames?: string[]
+): Promise<string> {
   const installationId = await getInstallationId(app, owner);
   const authentication = await app.octokit.auth({
     type: "installation",
@@ -256,7 +1380,7 @@ async function getScopedInstallationOctokit(
   if (!isRecord(authentication) || typeof authentication.token !== "string" || !authentication.token) {
     throw new Error("GitHub returned an invalid scoped installation authentication response");
   }
-  return new Octokit({ auth: authentication.token });
+  return authentication.token;
 }
 
 async function getInstallationId(app: App, owner: string): Promise<number> {
@@ -309,34 +1433,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function printHelp(): void {
-  console.log(`darkfactory - DarkFactory GitHub agent
-
-Usage:
-  darkfactory serve
-  darkfactory install-url
-  darkfactory sync-managed
-  darkfactory status [--json]
-  darkfactory doctor [owner/repo | --all] [--json] [--local PATH] [--agents-home PATH]
-  darkfactory doctor [owner/repo | --all] --write-issues [--json]
-
-Command information:
-  serve         Run the GitHub App webhook server.
-  install-url   Print the GitHub App installation URL.
-  sync-managed  Reconcile managed setup PRs for installed repositories.
-  status        Read DarkFactory orchestration and backlog status.
-  doctor        Diagnose deterministic repository, workflow, branch, issue, and local-state drift.
-
-Doctor safety:
-  Diagnose mode is the default and performs no writes or repairs.
-  --write-issues explicitly enables stable per-finding issue reconciliation and the doctor ledger.
-  Repair is intentionally a separate reviewed work lane; --repair is rejected.
-Secrets are read from environment variables first, then AGENTS_SECRETS/*.secret.`);
-}
-
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  runCli().catch((error) => {
-    console.error(`darkfactory: ${error.message}`);
+  const args = process.argv.slice(2);
+  runCli(args).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(humanJsonResult(humanCommandId(args) ?? "unknown", "error", null, { code: "command_failed", message }), null, 2));
+    } else {
+      console.error(`darkfactory: ${message}`);
+    }
     process.exitCode = 1;
   });
 }
