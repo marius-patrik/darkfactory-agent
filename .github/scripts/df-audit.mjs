@@ -1003,10 +1003,7 @@ function collectMachineRuntimeEvidence(agentsHome) {
   const packageRegistered = Boolean(packageRecord);
   const dfRunnable = packageRegistered && run(["packages", "run", packageName, "--", "--help"]).ok;
   const runner = run(["runner", "status", "--json"]);
-  const runnerJson = parse(runner);
-  const runnerRegistered = runner.ok && runnerJson?.registered === true;
-  const runnerOnline = runnerRegistered && runnerJson?.online === true;
-  const runnerPersistent = runnerRegistered && runnerJson?.persistent === true && runnerJson?.listener_healthy === true;
+  const { runnerRegistered, runnerOnline, runnerPersistent } = normalizeRunnerLifecycleEvidence(parse(runner));
   const route = run(["route", "probe", "--json"]);
   const routeJson = parse(route);
   const routeProbeOk = route.ok && routeJson?.ok === true;
@@ -1036,6 +1033,26 @@ function collectMachineRuntimeEvidence(agentsHome) {
     routeProbeOk,
     ledgerReachable,
     ledgerWritable
+  };
+}
+
+export function normalizeRunnerLifecycleEvidence(payload) {
+  const readiness = payload && typeof payload === "object" && !Array.isArray(payload)
+    && payload.readiness && typeof payload.readiness === "object" && !Array.isArray(payload.readiness)
+    ? payload.readiness
+    : null;
+  if (!readiness) {
+    return { runnerRegistered: false, runnerOnline: false, runnerPersistent: false };
+  }
+  const runnerRegistered = readiness.registered === true;
+  return {
+    runnerRegistered,
+    runnerOnline: runnerRegistered && readiness.online === true,
+    runnerPersistent: runnerRegistered
+      && readiness.enabled === true
+      && readiness.persistent === true
+      && readiness.process === true
+      && readiness.launcherBinding === true
   };
 }
 
@@ -1096,6 +1113,15 @@ export async function auditLabelTaxonomy(github, repository, controlRepo = CONTR
   return findings;
 }
 
+export function containsContentlessBoilerplate(contract) {
+  const prose = String(contract || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\r\n]*`/g, " ")
+    .replace(/"[^"\r\n]*"/g, " ")
+    .replace(/'[^'\r\n]*'/g, " ");
+  return /\b(?:keep (?:the )?implementation aligned|implement as appropriate|do the needful|tbd|todo)\b/i.test(prose);
+}
+
 export function auditIssueLane(repository, issues, options = {}) {
   const findings = [];
   const now = new Date(options.now || Date.now()).getTime();
@@ -1142,7 +1168,7 @@ export function auditIssueLane(repository, issues, options = {}) {
     if (marker) byMarker.set(marker, [...(byMarker.get(marker) || []), issue]);
     const contract = normalizeIssueContract(issue.body || "");
     if (!labels.has("df:no-dispatch") && contract) byContract.set(contract, [...(byContract.get(contract) || []), issue]);
-    if (/\b(?:keep (?:the )?implementation aligned|implement as appropriate|do the needful|tbd|todo)\b/i.test(contract)) {
+    if (containsContentlessBoilerplate(contract)) {
       findings.push(doctorFinding(`issue-${issue.number}-contentless-contract`, "issue lane", `Issue #${issue.number} contains contentless implementation boilerplate instead of an executable contract.`, {
         severity: "error",
         evidence: issue.html_url ? [{ label: `Issue #${issue.number}`, url: issue.html_url }] : [],

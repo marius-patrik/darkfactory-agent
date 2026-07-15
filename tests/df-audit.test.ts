@@ -665,6 +665,57 @@ test("issue lane compares bounded contracts without misclassifying qualified cro
   ]);
 });
 
+test("contentless contract detection ignores quoted guard examples without hiding active boilerplate", () => {
+  assert.equal(doctor.containsContentlessBoilerplate("TODO: implement as appropriate."), true);
+  assert.equal(doctor.containsContentlessBoilerplate('Reject a contentless contract ("keep implementation aligned").'), false);
+  assert.equal(doctor.containsContentlessBoilerplate("Reject `do the needful`; TODO remains forbidden."), true);
+});
+
+test("runner evidence consumes the canonical readiness block even while status is degraded", () => {
+  assert.deepEqual(doctor.normalizeRunnerLifecycleEvidence({
+    ok: false,
+    registered: false,
+    readiness: {
+      registered: true,
+      enabled: true,
+      persistent: true,
+      process: true,
+      online: false,
+      launcherBinding: true
+    }
+  }), {
+    runnerRegistered: true,
+    runnerOnline: false,
+    runnerPersistent: true
+  });
+
+  assert.deepEqual(doctor.normalizeRunnerLifecycleEvidence({
+    readiness: {
+      registered: true,
+      enabled: true,
+      persistent: true,
+      process: null,
+      online: null,
+      launcherBinding: true
+    }
+  }), {
+    runnerRegistered: true,
+    runnerOnline: false,
+    runnerPersistent: false
+  });
+
+  assert.deepEqual(doctor.normalizeRunnerLifecycleEvidence({
+    registered: true,
+    online: true,
+    persistent: true,
+    listener_healthy: true
+  }), {
+    runnerRegistered: false,
+    runnerOnline: false,
+    runnerPersistent: false
+  });
+});
+
 test("label taxonomy audit accepts exact state and reports missing or drifted labels", async () => {
   const policy = JSON.stringify({ schemaVersion: 1, labels: [
     { name: "df:ready", color: "0E8A16", description: "Machine-evaluated" },
