@@ -9,6 +9,10 @@ import test from "node:test";
 const doctor: any = await import("../.github/scripts/df-audit.mjs?unit=repository-doctor-test");
 
 const repo = { owner: "marius-patrik", repo: "DarkFactory" };
+const LABEL_POLICY = JSON.stringify({
+  schemaVersion: 1,
+  labels: doctor.DOCTOR_REPORT_LABEL_NAMES.map((name: string) => ({ name, color: "0E8A16", description: `label ${name}` }))
+});
 
 function content(text: string) {
   return { type: "file", encoding: "base64", content: Buffer.from(text).toString("base64") };
@@ -120,6 +124,33 @@ test("stable findings deduplicate evidence and sort by id", () => {
   ]);
   assert.deepEqual(findings.map((finding) => finding.id), ["a-first", "z-last"]);
   assert.equal(findings[0].evidence.length, 1);
+});
+
+test("doctor findings classify deterministic repair authority", () => {
+  assert.equal(doctor.DOCTOR_SCHEMA_VERSION, 2);
+  assert.deepEqual(doctor.DOCTOR_REPAIR_CLASSES, ["auto", "pr", "owner", "blocked"]);
+
+  const auto = doctor.doctorFinding("protection-dev-missing", "branch protection", "Protection is missing.");
+  const reviewed = doctor.doctorFinding("managed-file-drift-ci", "managed file drift", "Managed CI differs.");
+  const owner = doctor.doctorFinding("pr-12-stale", "pull request health", "PR #12 is stale.");
+  const blocked = doctor.doctorFinding(
+    "protection-main-unobservable",
+    "branch protection",
+    "Protection is inaccessible and unobservable."
+  );
+
+  assert.equal(auto.repair_class, "auto");
+  assert.equal(reviewed.repair_class, "pr");
+  assert.equal(owner.repair_class, "owner");
+  assert.equal(blocked.repair_class, "blocked");
+  assert.equal(
+    doctor.doctorFinding("explicit", "test", "explicit", { repairClass: "pr" }).repair_class,
+    "pr"
+  );
+  assert.throws(
+    () => doctor.doctorFinding("invalid", "test", "invalid", { repairClass: "force" }),
+    /Unknown repository-doctor repair class/
+  );
 });
 
 test("parseGitmodules preserves exact names, paths, urls, and branches", () => {
@@ -279,13 +310,37 @@ test("post-branch health is bound to current head runs and checks and fails clos
     throw new Error(`unexpected ${requestPath}`);
   });
   const missing = await doctor.auditHealth(repo, "main", "current-head", missingGh, { now });
-  assert.ok(missing.some((finding) => finding.id === "workflow-main-head-required-checks-missing" && /Codex Review@app:15368/.test(finding.message)));
+  assert.equal(missing.some((finding) => finding.id === "workflow-main-head-required-checks-missing"), false);
 
   const { gh: inaccessibleGh } = mockGh(() => { throw Object.assign(new Error("forbidden"), { status: 403 }); });
   const inaccessible = await doctor.auditHealth(repo, "dev", "current-head", inaccessibleGh, { now });
   const inaccessibleIds = new Set(inaccessible.map((finding) => finding.id));
   assert.ok(inaccessibleIds.has("workflow-dev-runs-unobservable"));
   assert.ok(inaccessibleIds.has("workflow-dev-head-checks-unobservable"));
+});
+
+test("base-branch health still requires branch CI while leaving PR-only review gates on PR heads", async () => {
+  const { gh } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/protection")) return protectedBranch();
+    if (requestPath.includes("/actions/runs?")) return { workflow_runs: [{ name: "Validate", head_sha: "current-head", status: "completed", conclusion: "success" }] };
+    if (requestPath.includes("/check-runs")) return { check_runs: [{ name: "Codex Review", status: "completed", conclusion: "success", app: { id: 15368 } }] };
+    if (requestPath.includes("/status")) return { statuses: [] };
+    throw new Error(`unexpected ${requestPath}`);
+  });
+
+  const findings = await doctor.auditHealth(repo, "dev", "current-head", gh);
+  assert.ok(findings.some((finding) => finding.id === "workflow-dev-head-required-checks-missing" && /Validate@app:15368/.test(finding.message)));
+  assert.equal(findings.some((finding) => /Codex Review@app:15368/.test(finding.message)), false);
+});
+
+test("auto-merge observation uses REST, falls back to GraphQL, and fails closed when both are unobservable", async () => {
+  assert.deepEqual(await doctor.observeAutoMerge({}, repo, true), { enabled: true, source: "rest" });
+  assert.deepEqual(await doctor.observeAutoMerge({
+    async graphql() { return { repository: { autoMergeAllowed: false } }; }
+  }, repo, undefined), { enabled: false, source: "graphql" });
+  assert.deepEqual(await doctor.observeAutoMerge({
+    async graphql() { throw Object.assign(new Error("forbidden"), { status: 403 }); }
+  }, repo, undefined), { enabled: null, source: "graphql-inaccessible" });
 });
 
 test("branch policy classifies behind, diverged, missing, and main-only data repositories", async () => {
@@ -574,6 +629,67 @@ test("untrusted issue text cannot claim a doctor-owned marker", () => {
   assert.equal(doctor.isTrustedDoctorIssue(issue), false);
 });
 
+test("issue lane detects stale readiness and record-class no-dispatch residue", () => {
+  const findings = doctor.auditIssueLane(repo, [
+    { number: 1, title: "Held", body: "", state: "open", labels: [{ name: "df:ready" }, { name: "df:blocked" }], updated_at: "2026-07-13T00:00:00Z", html_url: "https://example.test/1" },
+    { number: 2, title: "Dashboard", body: "<!-- df-dashboard:orchestration -->", state: "open", labels: [{ name: "dashboard" }], updated_at: "2026-07-13T00:00:00Z", html_url: "https://example.test/2" },
+    { number: 3, title: "Protected record", body: "<!-- darkfactory:decision-record -->", state: "open", labels: [{ name: "df:no-dispatch" }], updated_at: "2026-07-13T00:00:00Z", html_url: "https://example.test/3" }
+  ], { now: "2026-07-13T01:00:00Z" });
+  const ids = new Set(findings.map((finding: { id: string }) => finding.id));
+
+  assert.ok(ids.has("issue-1-stale-ready"));
+  assert.ok(ids.has("issue-2-no-dispatch-missing"));
+  assert.equal(ids.has("issue-3-no-dispatch-missing"), false);
+});
+
+test("issue lane compares bounded contracts without misclassifying qualified cross-repo blockers", () => {
+  const contract = [
+    "# Goal",
+    "Implement deterministic guarded convergence for the managed repository while preserving every owner-authored scope boundary.",
+    "# Acceptance",
+    "- [ ] The exact observed state is checked before mutation and the postcondition is verified afterward."
+  ].join("\n");
+  const findings = doctor.auditIssueLane(repo, [
+    { number: 21, state: "open", title: "First wording", body: `<!-- df-prd:first -->\n${contract}\nBlocked-by: marius-patrik/Andromeda#245`, updated_at: "2026-07-13T00:00:00Z", html_url: "https://example.test/21" },
+    { number: 22, state: "open", title: "Second wording", body: `<!-- df-prd:second -->\n${contract}`, updated_at: "2026-07-13T00:00:00Z", html_url: "https://example.test/22" },
+    { number: 23, state: "open", title: "Boilerplate", body: `${contract}\nTODO: implement as appropriate.`, updated_at: "2026-07-13T00:00:00Z", html_url: "https://example.test/23" }
+  ], { now: "2026-07-13T01:00:00Z" });
+  const ids = new Set(findings.map((finding) => finding.id));
+
+  assert.ok(ids.has("duplicate-issue-contract-21-22"));
+  assert.ok(ids.has("issue-23-contentless-contract"));
+  assert.equal([...ids].some((id) => id.includes("blocker-245")), false);
+  assert.deepEqual(doctor.extractBlockedByIssueRefs("Blocked-by: marius-patrik/Andromeda#245, #24", repo), [
+    { repository: "marius-patrik/andromeda", number: 245 },
+    { repository: "marius-patrik/darkfactory", number: 24 }
+  ]);
+});
+
+test("label taxonomy audit accepts exact state and reports missing or drifted labels", async () => {
+  const policy = JSON.stringify({ schemaVersion: 1, labels: [
+    { name: "df:ready", color: "0E8A16", description: "Machine-evaluated" },
+    { name: "df:no-dispatch", color: "6E7781", description: "Categorical hold" }
+  ] });
+  const exact = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/contents/managed-repository/.darkfactory/labels.json")) return content(policy);
+    if (requestPath.includes("/labels?")) return [
+      { name: "df:ready", color: "0e8a16", description: "Machine-evaluated" },
+      { name: "df:no-dispatch", color: "6E7781", description: "Categorical hold" }
+    ];
+    throw new Error(`unexpected ${requestPath}`);
+  });
+  assert.deepEqual(await doctor.auditLabelTaxonomy(exact.gh, repo, repo), []);
+
+  const drift = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/contents/managed-repository/.darkfactory/labels.json")) return content(policy);
+    if (requestPath.includes("/labels?")) return [{ name: "df:ready", color: "ffffff", description: "wrong" }];
+    throw new Error(`unexpected ${requestPath}`);
+  });
+  const ids = new Set((await doctor.auditLabelTaxonomy(drift.gh, repo, repo)).map((finding: { id: string }) => finding.id));
+  assert.ok(ids.has("label-df-ready-drift"));
+  assert.ok(ids.has("label-df-no-dispatch-missing"));
+});
+
 test("repository tree permits root policy authority but rejects nested copies", async () => {
   const findings = await doctor.auditRepositoryTree(repo, {
     truncated: false,
@@ -649,6 +765,195 @@ test("managed baseline audit detects drift and files that must be removed", asyn
   const ids = new Set(findings.map((finding) => finding.id));
   assert.ok(ids.has("managed-file-drift-managed-txt"));
   assert.ok(ids.has("managed-removed-file-retired-txt"));
+});
+
+test("managed baseline reports a release-control source contradiction without authorizing target deletion", async () => {
+  const manifest = JSON.stringify({
+    schemaVersion: 1,
+    requiredFiles: [],
+    packageFiles: [],
+    removedFiles: [".github/workflows/dark-factory-release.yml"]
+  });
+  const laneIssue = {
+    number: 41,
+    state: "open",
+    body: "<!-- darkfactory:release-convergence-lane -->",
+    html_url: "https://github.com/marius-patrik/DarkFactory/issues/41"
+  };
+  const { gh } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/repos/marius-patrik/DarkFactory/contents/.darkfactory/managed-repository.json")) return content(manifest);
+    if (requestPath.includes("/repos/marius-patrik/Andromeda-data/contents/managed-repository/repositories/")) throw notFound();
+    throw new Error(`release-control target must not be read while source policy contradicts #41: ${requestPath}`);
+  });
+
+  const findings = await doctor.auditManagedFileDrift(gh, repo, "main", repo, { issues: [laneIssue] });
+
+  assert.ok(findings.some((finding) => finding.id === "source-policy-contradiction-release-controls" && finding.repair_class === "blocked"));
+  assert.equal(findings.some((finding) => finding.id === "managed-removed-file-github-workflows-dark-factory-release-yml"), false);
+});
+
+test("machine runtime evidence is healthy only when every canonical prerequisite is proven", () => {
+  const healthy = {
+    agentsHomeExists: true,
+    stateRepositoryOk: true,
+    stateDoctorOk: true,
+    launcherBound: true,
+    versionObserved: true,
+    packageRegistered: true,
+    dfRunnable: true,
+    runnerRegistered: true,
+    runnerOnline: true,
+    runnerPersistent: true,
+    routeProbeOk: true,
+    ledgerReachable: true,
+    ledgerWritable: true
+  };
+
+  const current = doctor.auditMachineRuntimeEvidence(healthy);
+  assert.deepEqual(current.findings, []);
+  assert.equal(current.observations.length, 2);
+
+  const absent = doctor.auditMachineRuntimeEvidence(Object.fromEntries(Object.keys(healthy).map((key) => [key, false])));
+  const absentIds = new Set(absent.findings.map((finding) => finding.id));
+  assert.ok(absentIds.has("agents-home-checkout-missing"));
+  assert.ok(absentIds.has("darkfactory-package-unregistered"));
+  assert.ok(absentIds.has("df-local-runner-missing"));
+  assert.ok(absentIds.has("provider-route-probe-unavailable"));
+  assert.ok(absentIds.has("darkfactory-ledger-write-unproven"));
+  assert.equal(absent.findings.every((finding) => finding.repair_class === "blocked"), true);
+  assert.deepEqual(
+    doctor.auditMachineRuntimeEvidence(null).findings.map((finding) => finding.id),
+    absent.findings.map((finding) => finding.id)
+  );
+
+  const degraded = doctor.auditMachineRuntimeEvidence({ ...healthy, runnerOnline: false, runnerPersistent: false, routeProbeOk: false });
+  const degradedIds = new Set(degraded.findings.map((finding) => finding.id));
+  assert.ok(degradedIds.has("df-local-runner-offline"));
+  assert.ok(degradedIds.has("df-local-runner-persistence-unproven"));
+  assert.ok(degradedIds.has("provider-route-probe-unavailable"));
+  assert.equal(degradedIds.has("df-local-runner-missing"), false);
+
+  const failedStateDoctor = doctor.auditMachineRuntimeEvidence({ ...healthy, stateDoctorOk: false });
+  assert.deepEqual(failedStateDoctor.findings.map((finding) => finding.id), ["agents-state-doctor-failed"]);
+});
+
+test("PRD cross-review covers missing, duplicate, stale, completed, and unbacked issue contracts", async () => {
+  const prd = [
+    "# Product",
+    "",
+    "## Milestones",
+    "- [ ] **M1 First**: first lane",
+    "- [x] **M2 Done**: completed lane",
+    "- [ ] **M3 Missing**: missing lane"
+  ].join("\n");
+  const issues = [
+    { number: 1, state: "open", body: "<!-- df-prd:milestones-m1 -->", labels: [] },
+    { number: 2, state: "open", body: "<!-- df-prd:milestones-m1 -->", labels: [] },
+    { number: 3, state: "open", body: "<!-- df-prd:milestones-removed -->", labels: [] },
+    { number: 4, state: "open", body: "<!-- df-prd:milestones-m2 -->", labels: [] },
+    { number: 5, state: "open", body: "ordinary work", labels: [] },
+    { number: 6, state: "open", body: "decision record", labels: [{ name: "df:no-dispatch" }] }
+  ];
+  const { gh } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/contents/PRD.md")) return content(prd);
+    throw new Error(`unexpected ${requestPath}`);
+  });
+
+  const findings = await doctor.auditPrdDrift(gh, repo, "main", issues);
+  const ids = new Set(findings.map((finding) => finding.id));
+
+  assert.ok(ids.has("prd-item-df-prd-milestones-m1-issue-duplicate"));
+  assert.ok(ids.has("prd-item-df-prd-milestones-m3-issue-missing"));
+  assert.ok(ids.has("issue-3-prd-marker-stale"));
+  assert.ok(ids.has("issue-4-prd-item-completed"));
+  assert.ok(ids.has("issue-5-prd-backing-missing"));
+  assert.equal(ids.has("issue-6-prd-backing-missing"), false);
+});
+
+test("PRD cross-review includes product PRDs and excludes template sources", async () => {
+  const rootPrd = "# Root\n\n## Milestones\n";
+  const packagePrd = "# Core\n\n## Milestones\n- [ ] **M1 Package**: package lane\n";
+  const issues = [{
+    number: 11,
+    state: "open",
+    body: "<!-- df-prd:packages-core-prd-md-milestones-m1 -->",
+    labels: []
+  }];
+  const { gh, calls } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/contents/PRD.md")) return content(rootPrd);
+    if (requestPath.includes("/contents/packages/core/PRD.md")) return content(packagePrd);
+    throw new Error(`template PRD must not be inspected: ${requestPath}`);
+  });
+
+  const findings = await doctor.auditPrdDrift(gh, repo, "main", issues, {
+    tree: {
+      tree: [
+        { path: "PRD.md", type: "blob" },
+        { path: "packages/core/PRD.md", type: "blob" },
+        { path: "templates/example/PRD.md", type: "blob" }
+      ]
+    }
+  });
+
+  assert.equal(findings.some((finding) => finding.id.includes("packages-core")), false);
+  assert.equal(findings.some((finding) => finding.id === "issue-11-prd-marker-stale"), false);
+  assert.equal(calls.some((call) => call.path.includes("templates/example")), false);
+});
+
+test("issue reality fails closed for missing and unobservable referenced PRs and runs", async () => {
+  const issues = [{
+    number: 7,
+    state: "open",
+    body: [
+      "https://github.com/marius-patrik/DarkFactory/pull/8",
+      "https://github.com/marius-patrik/DarkFactory/actions/runs/9",
+      "https://github.com/marius-patrik/DarkFactory/pull/10",
+      "https://github.com/someone/else/pull/11"
+    ].join("\n"),
+    html_url: "https://github.com/marius-patrik/DarkFactory/issues/7"
+  }];
+  const { gh } = mockGh((_method, requestPath) => {
+    if (requestPath.endsWith("/pulls/8")) return { number: 8 };
+    if (requestPath.endsWith("/actions/runs/9")) throw notFound();
+    if (requestPath.endsWith("/pulls/10")) throw Object.assign(new Error("forbidden"), { status: 403 });
+    throw new Error(`unexpected ${requestPath}`);
+  });
+
+  const findings = await doctor.auditIssueReality(gh, repo, issues);
+  const ids = new Set(findings.map((finding) => finding.id));
+
+  assert.ok(ids.has("issue-7-referenced-run-9-missing"));
+  assert.ok(ids.has("issue-7-referenced-pull-10-unobservable"));
+  assert.equal(ids.has("issue-7-referenced-pull-8-missing"), false);
+  assert.equal(findings.find((finding) => finding.id.endsWith("unobservable"))?.repair_class, "blocked");
+});
+
+test("issue reality verifies same-owner cross-repo blockers and explicit PR and settings claims", async () => {
+  const issues = [{
+    number: 12,
+    state: "open",
+    body: [
+      "Blocked-by: marius-patrik/Andromeda#245",
+      "status: merged https://github.com/marius-patrik/Andromeda/pull/246",
+      "auto-merge: enabled https://github.com/marius-patrik/Andromeda/settings/branches",
+      "Blocked-by: someone/external#9"
+    ].join("\n"),
+    html_url: "https://github.com/marius-patrik/DarkFactory/issues/12"
+  }];
+  const { gh, calls } = mockGh((_method, requestPath) => {
+    if (requestPath.endsWith("/repos/marius-patrik/andromeda/issues/245")) return { number: 245, state: "open" };
+    if (requestPath.endsWith("/repos/marius-patrik/andromeda/pulls/246")) return { number: 246, state: "open", merged_at: null };
+    if (requestPath.endsWith("/repos/marius-patrik/andromeda")) return { default_branch: "main" };
+    throw new Error(`unexpected ${requestPath}`);
+  });
+
+  const findings = await doctor.auditIssueReality(gh, repo, issues);
+  const ids = new Set(findings.map((finding) => finding.id));
+
+  assert.ok(ids.has("issue-12-referenced-pull-246-state-drift"));
+  assert.ok(ids.has("issue-12-referenced-settings-repository-state-drift"));
+  assert.equal(findings.find((finding) => finding.id === "issue-12-referenced-settings-repository-state-drift")?.repair_class, "blocked");
+  assert.equal(calls.some((call) => call.path.includes("someone/external")), false);
 });
 
 test("submodule audit distinguishes invalid URLs, missing gitlinks, and released-pointer drift", async () => {
@@ -820,6 +1125,8 @@ test("diagnose mode performs no GitHub writes", async () => {
     if (requestPath.includes("/contents/package.json")) return content('{"name":"@agent-os/darkfactory"}');
     if (requestPath.includes("/contents/PRD.md")) return content("# PRD\n");
     if (requestPath.includes("/contents/.darkfactory/enforcement-rules.json")) return content('{"rules":[{"id":"no-admin-bypass","enabled":true,"severity":"block"}]}');
+    if (requestPath.includes("/contents/managed-repository/.darkfactory/labels.json")) return content(LABEL_POLICY);
+    if (requestPath.includes("/labels?") && requestPath.endsWith("page=1")) return JSON.parse(LABEL_POLICY).labels;
     if (requestPath.includes("/contents/.darkfactory/") || requestPath.includes("/contents/.gitmodules") || requestPath.includes("/contents/.github/workflows/sync-managed-repos.yml") || requestPath.includes("/contents/.agents/") || requestPath.includes("/contents/src/managed-files.ts")) throw notFound();
     throw new Error(`unexpected ${method} ${requestPath}`);
   });
@@ -849,7 +1156,7 @@ test("report mode routes issue writes to target authority and contents writes on
     if (requestPath.includes("/branches?")) return requestPath.endsWith("page=1") ? [{ name: "main", commit: { sha: "a" } }, { name: "dev", commit: { sha: "a" } }] : [];
     if (requestPath.includes("/pulls?state=open")) return [];
     if (requestPath.includes("/issues?state=all")) return [];
-    if (requestPath.includes("/labels?") && requestPath.endsWith("page=1")) return doctor.DOCTOR_REPORT_LABEL_NAMES.map((name) => ({ name }));
+    if (requestPath.includes("/labels?") && requestPath.endsWith("page=1")) return JSON.parse(LABEL_POLICY).labels;
     if (requestPath.endsWith("/git/trees/main?recursive=1")) return { truncated: false, tree: [{ path: "README.md", type: "blob" }] };
     if (requestPath.endsWith("/compare/main...dev")) return { status: "identical", ahead_by: 0, behind_by: 0 };
     if (requestPath.includes("/protection")) return protectedBranch();
@@ -865,6 +1172,8 @@ test("report mode routes issue writes to target authority and contents writes on
     if (requestPath.includes("/contents/package.json")) return content('{"name":"@agent-os/darkfactory"}');
     if (requestPath.includes("/contents/PRD.md")) return content("# PRD\n");
     if (requestPath.includes("/contents/.darkfactory/enforcement-rules.json")) return content('{"rules":[{"id":"no-admin-bypass","enabled":true,"severity":"block"}]}');
+    if (requestPath.includes("/contents/managed-repository/.darkfactory/labels.json")) return content(LABEL_POLICY);
+    if (requestPath.includes("/labels?") && requestPath.endsWith("page=1")) return JSON.parse(LABEL_POLICY).labels;
     if (requestPath.includes("/contents/.darkfactory/") || requestPath.includes("/contents/.gitmodules") || requestPath.includes("/contents/.github/workflows/sync-managed-repos.yml") || requestPath.includes("/contents/.agents/") || requestPath.includes("/contents/src/managed-files.ts")) throw notFound();
     throw new Error(`unexpected target ${method} ${requestPath}`);
   });

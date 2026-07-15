@@ -1,5 +1,9 @@
 import { expect, test, afterAll } from "bun:test";
-import { server } from "./server";
+
+// Parallel repository gates may already own the development port. Tests bind
+// an ephemeral port so verification never depends on unrelated host state.
+process.env.PORT = "0";
+const { server } = await import("./server");
 
 const baseUrl = `http://localhost:${server.port}`;
 

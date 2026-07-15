@@ -255,7 +255,7 @@ async function upsertVerificationBlockerIssue(gh, controlRepo, targetRepo, issue
     "## Acceptance Criteria",
     "",
     "- Resolve the mismatch between the worker claim and GitHub reality.",
-    "- Remove `df:blocked` from the original worker issue and reapply `df:ready` if a new worker run is needed.",
+    "- Resolve the recorded blocker; the system re-evaluates readiness automatically if a new worker run is needed.",
     "",
     "## Token Use",
     "",

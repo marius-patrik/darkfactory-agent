@@ -550,6 +550,8 @@ test("df-plan workflow reacts safely to PRD edits on the trusted default branch"
   assert.doesNotMatch(workflow, /raw\.githubusercontent\.com|commits\/main|method:\s*'HEAD'/);
   assert.match(workflow, /^\s+workflow_dispatch:\s*$/m);
   assert.match(workflow, /^\s+schedule:\s*$/m);
+  assert.match(workflow, /^\s+push:\s*$/m);
+  assert.match(workflow, /push:\s*\n\s+branches:\s*\n\s+- main/);
   assert.match(workflow, /github\.event_name == 'schedule'.*github\.repository == 'marius-patrik\/DarkFactory'/);
   assert.match(workflow, /github\.event_name == 'workflow_dispatch'.*github\.repository == 'marius-patrik\/DarkFactory'/);
   assert.doesNotMatch(workflow, /actions:\s+write/);
@@ -674,7 +676,7 @@ test("repository doctor workflow schedules trusted diagnosis with explicit repor
   assert.equal(targetToken.with["permission-statuses"], "read");
   assert.equal(ledgerToken.with.repositories, "darkfactory-data");
   assert.equal(ledgerToken.with["permission-contents"], "write");
-  assert.match(ledgerToken.if, /schedule.*write_issues/);
+  assert.match(ledgerToken.if, /schedule.*push.*write_issues/);
   assert.match(doctorStep.env.DF_LEDGER_TOKEN, /ledger-token\.outputs\.token/);
   assert.equal(steps.some((step: any) => /label/i.test(step.name || "") && /POST|PATCH/.test(step.run || "")), false);
   assert.match(workflow, /DF_DOCTOR_ALL/);
@@ -1889,9 +1891,14 @@ test("df-orchestrate workflow validates trusted refs before privileged tokens", 
   assert.doesNotMatch(workflow, /github\.repository_owner == 'marius-patrik'[\s\S]+github\.event_name == 'issues'/);
   assert.doesNotMatch(workflow, /github\.repository_owner == 'marius-patrik'[\s\S]+github\.event_name == 'issue_comment'/);
   assert.match(workflow, /permission-actions:\s+write/);
+  assert.match(workflow, /permission-administration:\s+read/);
+  assert.match(workflow, /permission-checks:\s+read/);
   assert.match(workflow, /permission-workflows:\s+write/);
   assert.match(workflow, /permission-contents:\s+write/);
   assert.match(workflow, /permission-issues:\s+write/);
+  assert.match(workflow, /permission-pull-requests:\s+read/);
+  assert.match(workflow, /permission-secrets:\s+read/);
+  assert.match(workflow, /permission-statuses:\s+read/);
   assert.match(workflow, /DARK_FACTORY_TOKEN: \$\{\{ steps\.app-token\.outputs\.token \}\}/);
   assert.match(workflow, /DF_CONTROL_REPO: marius-patrik\/DarkFactory/);
   assert.match(workflow, /repo:\s*\n\s+description: Optional managed repository/);
@@ -1945,15 +1952,17 @@ test("df-orchestrate source requires the app token for cross-repo writes", async
   assert.doesNotMatch(source, /process\.env\.GITHUB_TOKEN|github\.token/);
 });
 
-test("df-orchestrate script uses the active managed registry and dispatches via workflow_dispatch", async () => {
+test("df-orchestrate uses machine readiness evaluation and dispatches via workflow_dispatch", async () => {
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   assert.match(source, /const CONTROL_ROOT = path\.resolve/);
   assert.match(source, /listActiveManagedRepos\(gh, controlRepo, options\)/);
   assert.match(source, /parseEventRequest\(process\.env\.GITHUB_EVENT_PAYLOAD/);
   assert.match(source, /parseWorkflowDispatchRequest\(\s*process\.env\.DF_TARGET_REPO/);
-  assert.match(source, /readySlashRunIssue/);
-  assert.match(source, /DarkFactory received `\/df run` and queued this issue with `df:ready`\./);
+  assert.match(source, /evaluateIssueReadinessLabels/);
+  assert.match(source, /DarkFactory received `\/df run` and performed the machine readiness evaluation\./);
+  assert.match(source, /dispatch still recomputes the predicate/);
+  assert.doesNotMatch(source, /readySlashRunIssue|queued this issue with `df:ready`/);
   assert.match(source, /\/repos\/\$\{repoName\(controlRepo\)\}\/actions\/workflows\/df-work\.yml\/dispatches/);
   assert.doesNotMatch(source, /df-prd:\[a-z0-9-\]\+/);
   assert.match(source, /df:running/);
@@ -1974,22 +1983,19 @@ test("df-orchestrate claims ready issues before dispatching workers", async () =
   assert.ok(claimIndex < dispatchIndex);
 });
 
-test("df-orchestrate runs scoped sequencing auto-ready before plan building", async () => {
+test("df-orchestrate escalates decisions then evaluates readiness before plan building", async () => {
   const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
-  // Auto-ready resolves blockers against the FULL snapshots (event-scoped
-  // runs pass the target via options.targetIssue instead of pre-filtering).
-  const autoReadyIndex = source.indexOf("await autoReadySequencedIssues(gh, snapshots, warn, { targetIssue: eventRequest })");
   const escalationIndex = source.indexOf("await escalateOwnerDecisionIssues(gh, scopedSnapshots, warn)");
+  const readinessIndex = source.indexOf("await evaluateIssueReadinessLabels(gh, snapshots, warn");
   const planIndex = source.indexOf("buildOrchestrationPlan(scopedSnapshots");
-  assert.notEqual(autoReadyIndex, -1);
   assert.notEqual(escalationIndex, -1);
+  assert.notEqual(readinessIndex, -1);
   assert.notEqual(planIndex, -1);
-  assert.ok(autoReadyIndex < escalationIndex);
-  assert.ok(escalationIndex < planIndex);
-  assert.match(source, /names\.has\("df:planned"\)/);
-  assert.match(source, /\\bdf-prd:/);
-  assert.match(source, /names\.has\("df:ready"\) \|\| names\.has\("df:running"\) \|\| names\.has\("df:blocked"\) \|\| names\.has\("df:done"\) \|\| names\.has\("df:ask-owner"\)/);
+  assert.ok(escalationIndex < readinessIndex);
+  assert.ok(readinessIndex < planIndex);
+  assert.match(source, /enforceReadinessContract: true/);
+  assert.match(source, /names\.has\("df:no-dispatch"\)/);
 });
 
 test("df-orchestrate blocks target auto-merge setup failures before worker dispatch", async () => {

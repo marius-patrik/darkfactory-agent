@@ -17,11 +17,12 @@ export const MANAGED_REPOS_PATH = ".darkfactory/managed-repos.json";
 export const MANAGED_REPO_STATES = new Set(["active", "parked", "archived", "completed", "removed"]);
 
 export const WORK_LABELS = [
-  { name: "df:ready", color: "0E8A16", description: "DarkFactory work loop may pick up this issue" },
+  { name: "df:ready", color: "0E8A16", description: "Machine-evaluated issue eligible for DarkFactory dispatch" },
   { name: "df:running", color: "1D76DB", description: "DarkFactory worker is running for this issue" },
   { name: "df:blocked", color: "B60205", description: "DarkFactory worker is blocked on this issue" },
   { name: "df:done", color: "5319E7", description: "DarkFactory worker completed this issue" },
-  { name: "df:ask-owner", color: "B60205", description: "DarkFactory needs owner input before continuing" },
+  { name: "df:ask-owner", color: "F9D0C4", description: "Needs owner input before DarkFactory continues" },
+  { name: "df:no-dispatch", color: "6E7781", description: "Record or owner-executed issue categorically excluded from dispatch" },
   { name: "df:class:mechanical", color: "C5DEF5", description: "DarkFactory mechanical task with a narrow deterministic surface" },
   { name: "df:class:standard", color: "BFDADC", description: "DarkFactory standard task with normal implementation complexity" },
   { name: "df:class:hard", color: "D4C5F9", description: "DarkFactory hard task with substantial implementation complexity" }
@@ -436,7 +437,7 @@ export async function preflightMergePolicy(gh, repository, baseBranch, repo) {
     reason: [
       `Target repository ${repoName(repository)} has branch protection with required status checks configured on \`${baseBranch}\`,`,
       "so DarkFactory policy requires GitHub auto-merge before dispatching a worker.",
-      "Enable repository auto-merge or open managed setup work to enable it, then re-apply `df:ready`."
+      "Enable repository auto-merge or open managed setup work to enable it; the system re-evaluates readiness automatically after the cause is resolved."
     ].join(" "),
     useAutomerge: false,
     autoMergeSupported,

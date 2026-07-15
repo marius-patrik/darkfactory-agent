@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "managedBy": "darkfactory",
-  "dataRepo": "marius-patrik/agents-data",
+  "dataRepo": "marius-patrik/darkfactory-data",
   "requiredSecrets": ["CODEX_AUTH_JSON"],
   "packageFiles": [
     ".darkfactory/trigger-policy.json",

@@ -549,7 +549,7 @@ async function upsertStaleBranchAskOwnerIssue(branch) {
     "## Acceptance Criteria",
     "",
     "- Delete the stale branch, restore the missing worker PR, or document why the branch should be preserved.",
-    "- Remove `df:ask-owner`/`df:blocked` from the original worker issue and reapply `df:ready` when it is safe to retry.",
+    "- Resolve the recorded owner decision and blocker; the system re-evaluates readiness automatically when it is safe to retry.",
     "",
     "## Token Use",
     "",

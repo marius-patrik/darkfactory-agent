@@ -1,5 +1,6 @@
 import "./bot.test.js";
 import "./cli.test.js";
+import "./clean-evidence.test.js";
 import "./config.test.js";
 import "./df-audit.test.js";
 import "./df-orchestrate.test.js";
@@ -8,8 +9,10 @@ import "./df-verify.test.js";
 import "./enforcement-rules.test.js";
 import "./managed-sync.test.js";
 import "./model-policy.test.js";
+import "./operator.test.js";
 import "./script-policy.test.js";
 import "./repository-setup.test.js";
 import "./server.test.js";
+import "./setup.test.js";
 import "./status.test.js";
 import "./trigger-policy.test.js";
