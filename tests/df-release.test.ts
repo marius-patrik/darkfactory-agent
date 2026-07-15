@@ -247,7 +247,8 @@ test("diverged reconciliation resumes from the exact trusted two-parent merge", 
         return {
           sha: SHA.merge,
           parents: [{ sha: SHA.dev }, { sha: SHA.main }],
-          committer: { login: "darkfactory-agent[bot]", type: "Bot" },
+          author: { login: "darkfactory-agent[bot]", type: "Bot" },
+          committer: { login: "web-flow", type: "User" },
           commit: { message: `Reconcile main ${SHA.main.slice(0, 12)} into dev ${SHA.dev.slice(0, 12)}` }
         };
       }

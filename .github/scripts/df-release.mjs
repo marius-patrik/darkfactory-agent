@@ -549,9 +549,8 @@ async function assertPlannedMergeCommit(repository, sha, observation) {
   if (commit?.sha !== sha || parents.length !== 2 || JSON.stringify([...parents].sort()) !== JSON.stringify(expectedParents)) {
     throw new Error("marker-owned reconciliation branch is not the exact planned two-parent merge");
   }
-  const actor = commit?.committer || commit?.author;
   const message = commit?.commit?.message || "";
-  if (normalizeWorkerPullRequestActor(actor) === null
+  if (normalizeWorkerPullRequestActor(commit?.author) === null
       || !message.startsWith(`Reconcile main ${observation.mainSha.slice(0, 12)} into dev ${observation.devSha.slice(0, 12)}`)) {
     throw new Error("marker-owned reconciliation merge lacks trusted automation provenance");
   }
