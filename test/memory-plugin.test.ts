@@ -76,6 +76,23 @@ describe("canonical reflection and dreams", () => {
     }
   });
 
+  test("encodes UUID session evidence without hiding the canonical subject", async () => {
+    const { root, state } = await fixture();
+    try {
+      const sessionId = "15b5dbfc-b494-4f29-a5a5-e95c8d3ddce8";
+      await completeSession(state, sessionId, "Keep provider session provenance reversible.");
+      const candidate = await reflectCanonicalSession(state, sessionId);
+
+      expect(candidate.subject).toBe(`session:${sessionId}`);
+      expect(candidate.evidence.uri).not.toContain(sessionId);
+      expect(candidate.evidence.uri).toContain("%31%35%62%35%64%62%66%63");
+      await applyMemoryCandidate(state, candidate);
+      expect(await listMemoryRecords(state, { scope: "reflection" })).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("runs only while idle and supersedes the previous dream through canonical mutation", async () => {
     const { root, state } = await fixture();
     try {
@@ -238,6 +255,35 @@ describe("historical corpus admission", () => {
       expect(records).toHaveLength(1);
       expect(records[0].evidence.sourceClass).toBe("inferred");
       expect((await readFile(new URL(records[0].evidence.uri), "utf8"))).toContain("Historical sessions");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects secret-like corpus metadata before canonical mutation", async () => {
+    const { root, state } = await fixture();
+    try {
+      const forbiddenPaths = [
+        ["", "api_key=secret-value-that-must-not-cross.txt"],
+        ["api%5Fkey%3Dsecret-value-that-must-not-cross", "session.txt"],
+      ] as const;
+      for (const [index, [directory, file]] of forbiddenPaths.entries()) {
+        const corpus = path.join(root, `corpus-${index}`);
+        const targetDirectory = path.join(corpus, directory);
+        await mkdir(targetDirectory, { recursive: true });
+        await writeFile(path.join(targetDirectory, file), "Safe historical note.");
+        await expect(processHistoricalCorpus(corpus)).rejects.toThrow(/secret-like candidate content/);
+      }
+
+      await completeSession(state, "metadata-admission-session", "Keep candidate metadata inside admission.");
+      const candidate = await reflectCanonicalSession(state, "metadata-admission-session");
+      await expect(
+        applyMemoryCandidate(state, {
+          ...candidate,
+          evidence: { ...candidate.evidence, uri: "file:///safe/api%5Fkey%3Dsecret-value-that-must-not-cross.txt" },
+        }),
+      ).rejects.toThrow(/secret-like candidate content/);
+      expect(await listMemoryRecords(state)).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

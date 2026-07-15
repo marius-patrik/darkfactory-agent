@@ -187,11 +187,20 @@ function assistantTexts(events: SessionEvent[]): string[] {
   });
 }
 
+function sessionEvidenceUri(sessionId: string): string {
+  const readable = `agent-session://${encodeURIComponent(sessionId)}/events`;
+  if (!findSecretLikePath(readable)) return readable;
+  return `agent-session:///${percentEncodeEveryByte(sessionId)}/events`;
+}
+
 function validateCandidate(candidate: MemoryCandidate): MemoryCandidate {
   if (candidate.schemaVersion !== MEMORY_PLUGIN_SCHEMA_VERSION) throw new Error("unsupported memory candidate schema");
   if (!SHA256.test(candidate.evidence.contentHash)) throw new Error("candidate evidence hash must be lowercase SHA-256");
-  if (findSecretLikePath(candidate.value) || candidate.sensitivity === ("secret" as MemorySensitivity)) {
-    throw new Error("secret-like values cannot cross the memory plugin boundary");
+  const secretPath = findSecretLikePath(candidate);
+  if (secretPath || candidate.sensitivity === ("secret" as MemorySensitivity)) {
+    throw new Error(
+      `secret-like candidate content cannot cross the memory plugin boundary${secretPath ? ` at ${secretPath}` : ""}`,
+    );
   }
   requiredTimestamp(candidate.observedAt, "candidate observedAt");
   return candidate;
@@ -276,7 +285,7 @@ export async function reflectCanonicalSession(
     predicate: "session-summary",
     value,
     evidence: {
-      uri: `agent-session://${encodeURIComponent(sessionId)}/events`,
+      uri: sessionEvidenceUri(sessionId),
       contentHash: sha256(canonicalJson(events)),
       sourceClass: "inferred",
       confidence: latestResponse ? 0.8 : 0.65,
@@ -455,7 +464,10 @@ async function corpusFiles(
   const rootInfo = await lstat(root);
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error("corpus root must be a regular directory");
   const physicalRoot = await realpath(root);
-  assertContainedPath(root, physicalRoot, "corpus root");
+  const physicalRootInfo = await lstat(physicalRoot);
+  if (rootInfo.dev !== physicalRootInfo.dev || rootInfo.ino !== physicalRootInfo.ino) {
+    throw new Error(`corpus root changed while resolving its physical path: ${root}`);
+  }
   const files: string[] = [];
   let directories = 0;
   const visit = async (directory: string, depth: number): Promise<void> => {
