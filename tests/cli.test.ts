@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseCleanCliArgs, parseDoctorCliArgs, parseSetupCliArgs } from "../src/cli.js";
+import { parseCleanCliArgs, parseDoctorCliArgs, parseReleaseCliArgs, parseSetupCliArgs } from "../src/cli.js";
 
 test("doctor CLI defaults to read-only control-repository diagnosis", () => {
   const parsed = parseDoctorCliArgs([]);
@@ -54,4 +54,17 @@ test("clean CLI defaults to plan and requires an explicit durable apply ID", () 
     if (previous === undefined) delete process.env.AGENTS_HOME;
     else process.env.AGENTS_HOME = previous;
   }
+});
+
+test("release CLI defaults to status and keeps watch separate from authorization", () => {
+  const status = parseReleaseCliArgs([]);
+  assert.equal(status.mode, "status");
+  assert.equal(status.target, "marius-patrik/DarkFactory");
+
+  const run = parseReleaseCliArgs(["run", "marius-patrik/Andromeda", "--watch", "--json"]);
+  assert.equal(run.mode, "run");
+  assert.equal(run.watch, true);
+  assert.equal(run.target, "marius-patrik/Andromeda");
+  assert.throws(() => parseReleaseCliArgs(["verify", "--watch"]), /only with release run/);
+  assert.throws(() => parseReleaseCliArgs(["run", "--bypass"]), /intentionally unavailable/);
 });

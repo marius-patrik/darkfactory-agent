@@ -900,6 +900,40 @@ test("df-follow-through workflow validates trusted refs before privileged tokens
   assert.doesNotMatch(workflow, /github\.ref_name|DARK_FACTORY_CONTROL_REF/);
 });
 
+test("df-release runs immutable control code and exposes no force or default-branch write path", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-release.yml", import.meta.url), "utf8");
+  const source = await readFile(new URL("../.github/scripts/df-release.mjs", import.meta.url), "utf8");
+  const gate = workflow.indexOf("Validate trusted control ref and input");
+  const checkout = workflow.indexOf("Checkout immutable trusted release controller");
+  const token = workflow.indexOf("Mint read-only release observation token");
+  const writeToken = workflow.indexOf("Mint bounded release mutation token");
+
+  assert.ok(gate >= 0 && checkout > gate && token > checkout && writeToken > token);
+  assert.match(workflow, /^  schedule:/m);
+  assert.match(workflow, /^  workflow_dispatch:/m);
+  assert.match(workflow, /GITHUB_REPOSITORY.*marius-patrik\/DarkFactory/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow, /permission-administration:\s+read/);
+  assert.match(workflow, /Mint read-only release observation token[\s\S]+permission-contents:\s+read/);
+  assert.match(workflow, /Mint bounded release mutation token[\s\S]+permission-contents:\s+write/);
+  assert.match(workflow, /Mint bounded release mutation token[\s\S]+permission-actions:\s+write/);
+  assert.match(workflow, /permission-contents:\s+write/);
+  assert.match(workflow, /node \.github\/scripts\/df-release\.mjs/);
+  assert.doesNotMatch(workflow, /repository:\s*\$\{\{ inputs\.repo/);
+  assert.match(workflow, /group:\s+darkfactory-release-mutation/);
+
+  assert.match(source, /enablePullRequestAutoMerge/);
+  assert.doesNotMatch(source, /git\/refs\/heads\/dev/);
+  assert.doesNotMatch(source, /PATCH.*git\/refs\/heads\/main/s);
+  assert.doesNotMatch(source, /force:\s*true|admin[_-]bypass/i);
+  assert.match(source, /reviewed-pr-versus-exact-sha-contract/);
+  assert.match(source, /darkfactory:release plan=/);
+  assert.match(source, /darkfactory:reconcile plan=/);
+  assert.match(source, /df:ask-owner/);
+  assert.match(source, /writeReleaseLedger\(repository, "df-release"/);
+});
+
 test("df-fix workflow validates trusted refs before privileged tokens", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-fix.yml", import.meta.url), "utf8");
   const gate = workflow.indexOf("Validate trusted control ref");

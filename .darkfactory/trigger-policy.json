@@ -207,11 +207,11 @@
     {
       "id": "release-convergence",
       "ownerIssue": 41,
-      "status": "planned",
+      "status": "active",
       "engine": "df release",
       "eventWorkflows": [".github/workflows/df-release.yml"],
       "recoveryWorkflow": ".github/workflows/df-release.yml",
-      "eventTriggers": [{ "event": "pull_request", "types": ["closed"] }, { "event": "workflow_run", "types": ["completed"] }],
+      "eventTriggers": [{ "event": "workflow_dispatch", "types": ["bot-forwarded-pull-request-closed", "manual"] }],
       "recovery": { "cron": "11 */2 * * *", "intervalMinutes": 120, "maxDetectionMinutes": 140 },
       "settleSeconds": 60,
       "debounceSeconds": 120,

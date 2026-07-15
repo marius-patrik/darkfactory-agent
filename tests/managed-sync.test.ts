@@ -14,14 +14,26 @@ import {
 } from "../src/managed-sync.js";
 import {
   DARK_FACTORY_ENFORCEMENT_SCRIPT_PATH,
+  DARK_FACTORY_AUTOREVIEW_POLICY_PATH,
+  DARK_FACTORY_AUTOREVIEW_PROTOCOL_PATH,
+  DARK_FACTORY_AUTOREVIEW_SCHEMA_PATH,
+  DARK_FACTORY_AUTOREVIEW_SCRIPT_PATH,
+  DARK_FACTORY_AUTOREVIEW_WORKFLOW_PATH,
   DARK_FACTORY_FOLLOW_THROUGH_WORKFLOW_PATH,
   DARK_FACTORY_MANAGED_CONFIG_PATH,
   DARK_FACTORY_ORCHESTRATE_SCRIPT_PATH,
   DARK_FACTORY_ORCHESTRATE_WORKFLOW_PATH,
+  DARK_FACTORY_MODEL_POLICY_PATH,
+  DARK_FACTORY_MODEL_POLICY_SCRIPT_PATH,
   DARK_FACTORY_PLAN_SCRIPT_PATH,
   DARK_FACTORY_PLAN_WORKFLOW_PATH,
   DARK_FACTORY_SCRIPT_LIB_PATH,
+  DARK_FACTORY_RELEASE_POLICY_PATH,
+  DARK_FACTORY_RELEASE_SCRIPT_PATH,
+  DARK_FACTORY_RELEASE_WORKFLOW_PATH,
   DARK_FACTORY_SWEEP_SCRIPT_PATH,
+  DARK_FACTORY_TRIGGER_POLICY_PATH,
+  DARK_FACTORY_TRIGGER_POLICY_SCRIPT_PATH,
   DARK_FACTORY_WORKFLOW_PATH,
   DARK_FACTORY_WORK_SCRIPT_PATH,
   readManagedFiles,
@@ -30,6 +42,14 @@ import {
 } from "../src/managed-files.js";
 
 const PACKAGE_MANAGED_PATHS = new Set([
+  DARK_FACTORY_AUTOREVIEW_POLICY_PATH,
+  DARK_FACTORY_MODEL_POLICY_PATH,
+  DARK_FACTORY_TRIGGER_POLICY_PATH,
+  DARK_FACTORY_RELEASE_POLICY_PATH,
+  DARK_FACTORY_AUTOREVIEW_SCHEMA_PATH,
+  DARK_FACTORY_AUTOREVIEW_WORKFLOW_PATH,
+  DARK_FACTORY_AUTOREVIEW_PROTOCOL_PATH,
+  DARK_FACTORY_AUTOREVIEW_SCRIPT_PATH,
   DARK_FACTORY_ENFORCEMENT_SCRIPT_PATH,
   DARK_FACTORY_PLAN_WORKFLOW_PATH,
   DARK_FACTORY_FOLLOW_THROUGH_WORKFLOW_PATH,
@@ -38,6 +58,10 @@ const PACKAGE_MANAGED_PATHS = new Set([
   DARK_FACTORY_SCRIPT_LIB_PATH,
   DARK_FACTORY_PLAN_SCRIPT_PATH,
   DARK_FACTORY_ORCHESTRATE_SCRIPT_PATH,
+  DARK_FACTORY_MODEL_POLICY_SCRIPT_PATH,
+  DARK_FACTORY_TRIGGER_POLICY_SCRIPT_PATH,
+  DARK_FACTORY_RELEASE_SCRIPT_PATH,
+  DARK_FACTORY_RELEASE_WORKFLOW_PATH,
   DARK_FACTORY_SWEEP_SCRIPT_PATH,
   DARK_FACTORY_WORK_SCRIPT_PATH
 ]);
@@ -58,7 +82,6 @@ async function seedCanonicalManagedSource(root: string): Promise<{ managedRoot: 
         requiredFiles,
         removedFiles: [
           ".darkfactory/release-conventions.md",
-          ".darkfactory/release-policy.json",
           ".github/scripts/dark-factory-release-check.mjs",
           ".github/workflows/dark-factory-release.yml"
         ]
@@ -233,8 +256,8 @@ test("control managed sync refuses contradictory release-control removals before
       packageFiles: [],
       requiredFiles: [],
       removedFiles: [
-        ".github/workflows/dark-factory-release.yml",
-        ".github/scripts/dark-factory-release-check.mjs"
+        ".github/workflows/df-release.yml",
+        ".github/scripts/df-release.mjs"
       ]
     })
   }];
@@ -242,8 +265,8 @@ test("control managed sync refuses contradictory release-control removals before
   await assert.rejects(
     ensureManagedRepositorySetup(requester, { owner: "marius-patrik", repo: "DarkFactory" }, files),
     (error: unknown) => error instanceof ManagedSourcePolicyContradiction
-      && /dark-factory-release-check\.mjs/.test(error.message)
-      && /dark-factory-release\.yml/.test(error.message)
+      && /df-release\.mjs/.test(error.message)
+      && /df-release\.yml/.test(error.message)
   );
   assert.equal(requests, 0);
 });

@@ -6,6 +6,7 @@ import "./df-audit.test.js";
 import "./df-autoreview.test.js";
 import "./df-orchestrate.test.js";
 import "./df-plan.test.js";
+import "./df-release.test.js";
 import "./df-verify.test.js";
 import "./enforcement-rules.test.js";
 import "./managed-sync.test.js";

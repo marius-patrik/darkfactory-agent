@@ -81,7 +81,7 @@ test("event and schedule recovery share one idempotency key while stale or untru
     /stale and must be replanned/
   );
   assert.throws(
-    () => admitLoopInvocation(policy, "release-convergence", context, new Date("2026-07-15T10:05:00.000Z")),
+    () => admitLoopInvocation(policy, "submodule-autoupdate", context, new Date("2026-07-15T10:05:00.000Z")),
     /planned, not active/
   );
 });
@@ -117,11 +117,11 @@ test("loop status projection exposes success, next run, source, retry, stale, an
   assert.equal(worker.state, "success");
   assert.equal(worker.source, "refs/heads/main@1234567890ab");
   assert.match(worker.nextExpected, /^2026-07-15T10:01:00/);
-  const release = statuses.find((entry: any) => entry.id === "release-convergence");
-  assert.equal(release.retry, "blocked-by:#41");
+  const submodules = statuses.find((entry: any) => entry.id === "submodule-autoupdate");
+  assert.equal(submodules.retry, "blocked-by:#43");
   const markdown = loopStatusMarkdownRows(statuses);
   assert.match(markdown, /worker-dispatch/);
-  assert.match(markdown, /blocked-by:#41/);
+  assert.match(markdown, /blocked-by:#43/);
 });
 
 test("workflow evidence is fetched only for active trusted workflow names", async () => {
@@ -134,6 +134,7 @@ test("workflow evidence is fetched only for active trusted workflow names", asyn
     }
   }, { owner: "marius-patrik", repo: "DarkFactory" }, policy);
   assert.ok(calls.every((call) => call.includes("/actions/workflows/") && call.includes("branch=main")));
-  assert.equal(calls.some((call) => call.includes("df-release.yml")), false);
+  assert.equal(calls.some((call) => call.includes("df-release.yml")), true);
+  assert.equal(calls.some((call) => call.includes("df-submodule-autoupdate.yml")), false);
   assert.ok(Object.prototype.hasOwnProperty.call(evidence, ".github/workflows/df-orchestrate.yml"));
 });

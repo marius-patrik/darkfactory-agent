@@ -13,10 +13,9 @@ export const DARK_FACTORY_CONTROL_REPOSITORY = {
   repo: "DarkFactory"
 } as const;
 export const REPOSITORY_OWNED_RELEASE_CONTROLS = new Set([
-  ".darkfactory/release-conventions.md",
   ".darkfactory/release-policy.json",
-  ".github/scripts/dark-factory-release-check.mjs",
-  ".github/workflows/dark-factory-release.yml"
+  ".github/scripts/df-release.mjs",
+  ".github/workflows/df-release.yml"
 ]);
 
 export class ManagedSourcePolicyContradiction extends Error {

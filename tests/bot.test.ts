@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   dispatchDevMergeClosure,
   dispatchOrchestrator,
+  dispatchReleaseConvergence,
   shouldDispatchDevMergeClosure,
   shouldDispatchForReadyLabel,
   shouldDispatchForRunComment,
+  shouldDispatchReleaseConvergence,
   syncRepositories,
   type GitHubRequester
 } from "../src/bot.js";
@@ -244,6 +246,29 @@ test("dispatchDevMergeClosure leaves scheduled recovery available on dispatch fa
     { owner: "marius-patrik", repo: "DarkFactory" },
     devMergePayload()
   ));
+});
+
+test("release convergence bridge follows merged main and dev PRs only", async () => {
+  assert.equal(shouldDispatchReleaseConvergence(devMergePayload()), true);
+  assert.equal(shouldDispatchReleaseConvergence(devMergePayload({ base: { ref: "main" } })), true);
+  assert.equal(shouldDispatchReleaseConvergence(devMergePayload({ base: { ref: "feature" } })), false);
+  assert.equal(shouldDispatchReleaseConvergence(devMergePayload({ merged: false })), false);
+
+  const requests: Array<{ route: string; parameters: Record<string, unknown> }> = [];
+  await dispatchReleaseConvergence({
+    async request(route, parameters) {
+      requests.push({ route, parameters });
+      return { data: {} };
+    }
+  }, { owner: "marius-patrik", repo: "DarkFactory" }, devMergePayload());
+
+  assert.deepEqual(requests[0].parameters, {
+    owner: "marius-patrik",
+    repo: "DarkFactory",
+    workflow_id: "df-release.yml",
+    ref: "main",
+    inputs: { repo: "marius-patrik/Andromeda", mode: "run" }
+  });
 });
 
 function devMergePayload(overrides: Record<string, unknown> = {}) {

@@ -19,6 +19,7 @@ test("checkRepositorySetup returns no comment when managed setup is current", as
       ".github/workflows/df-follow-through.yml": "name: DarkFactory Follow Through\n",
       ".github/workflows/df-orchestrate.yml": "name: DarkFactory Orchestrate\n",
       ".github/workflows/df-work.yml": "name: DarkFactory Work\n",
+      ".github/workflows/df-release.yml": "name: DarkFactory Release\n",
       ".github/workflows/darkfactory-autoreview.yml": "name: DarkFactory Autoreview\n",
       ".github/darkfactory-autoreview.schema.json": "{}\n",
       ".github/scripts/df-autoreview.mjs": "export {}\n",
@@ -32,6 +33,7 @@ test("checkRepositorySetup returns no comment when managed setup is current", as
       ".github/scripts/df-trigger-policy.mjs": "import './df-lib.mjs';\n",
       ".github/scripts/df-sweep.mjs": "import './df-lib.mjs';\n",
       ".github/scripts/df-work.mjs": "import './df-lib.mjs';\n",
+      ".github/scripts/df-release.mjs": "import './df-lib.mjs';\n",
       ".darkfactory/branching-policy.md": "# Branching\n",
       ".darkfactory/autoreview-policy.json": "{}\n",
       ".darkfactory/enforcement-rules.json": "{}\n",
@@ -41,7 +43,8 @@ test("checkRepositorySetup returns no comment when managed setup is current", as
       ".darkfactory/model-policy.json": "{}\n",
       ".darkfactory/orchestration.json": "{}\n",
       ".darkfactory/trigger-policy.json": "{}\n",
-      ".darkfactory/installer-policy.json": "{}\n"
+      ".darkfactory/installer-policy.json": "{}\n",
+      ".darkfactory/release-policy.json": "{}\n"
     }),
     { owner: "marius-patrik", repo: "example", ref: "abc123" }
   );
@@ -69,10 +72,12 @@ test("checkRepositorySetup reports missing repository policy without a version m
   assert.ok(comment?.includes(".github/workflows/df-plan.yml"));
   assert.ok(comment?.includes(".github/workflows/df-follow-through.yml"));
   assert.ok(comment?.includes(".github/workflows/df-work.yml"));
+  assert.ok(comment?.includes(".github/workflows/df-release.yml"));
   assert.ok(comment?.includes(".github/workflows/darkfactory-autoreview.yml"));
   assert.ok(comment?.includes(".darkfactory/enforcement-rules.json"));
   assert.ok(comment?.includes(".darkfactory/managed-repository.json"));
   assert.ok(comment?.includes(".darkfactory/trigger-policy.json"));
+  assert.ok(comment?.includes(".darkfactory/release-policy.json"));
 });
 
 function createRequester(files: Record<string, string>): GitHubRequester {

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "mode": "branch-only",
+  "releaseBranchPrefix": "release/",
+  "reconcileBranchPrefix": "reconcile/",
+  "requiredChecks": ["Validate", "DarkFactory Autoreview"],
+  "mainChecks": ["Validate"],
+  "tagPattern": null,
+  "artifactWorkflows": [],
+  "publicationChecks": [],
+  "producer": null
+}

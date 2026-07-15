@@ -687,10 +687,9 @@ export async function auditManagedFileDrift(github, repository, targetRef, contr
   }
 
   const releaseControlPaths = new Set([
-    ".darkfactory/release-conventions.md",
     ".darkfactory/release-policy.json",
-    ".github/scripts/dark-factory-release-check.mjs",
-    ".github/workflows/dark-factory-release.yml"
+    ".github/scripts/df-release.mjs",
+    ".github/workflows/df-release.yml"
   ]);
   const releaseLaneIssue = (options.issues || []).find((issue) => issue.state === "open" && (
     /<!--\s*darkfactory:release-convergence-lane\s*-->/i.test(String(issue.body || ""))

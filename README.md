@@ -114,6 +114,7 @@ df setup [owner/repo | --all] [--watch] [--json] [--local PATH] [--agents-home P
 df clean [plan] [owner/repo] [--local PATH] [--json]
 df clean apply <plan-id> [--local PATH] [--watch] [--json]
 df clean verify [owner/repo] [--local PATH] [--json]
+df release [status|plan|reconcile|run|verify] [owner/repo] [--watch] [--json]
 ```
 
 ## Repository doctor
@@ -199,6 +200,25 @@ refs, policy branches, active PR heads, dirty/untracked worktrees, unpublished
 commits, and ambiguous work are preserved. `apply` re-collects the full evidence
 and aborts on drift; each mutation requires a durable admission before it runs
 and a completion receipt afterward. There is no force, bypass, or prune mode.
+
+`df release` is status-only by default. `plan` classifies exact `main`/`dev`
+ancestry and declared release policy without writing. `reconcile` creates one
+marker-owned reviewed lane for diverged state; conflicts that GitHub cannot
+merge are escalated with bounded exact diff hunks instead of a guessed
+resolution. Main-ahead and missing-dev states fail closed with one App-owned
+`df:ask-owner` contract issue: GitHub cannot combine normal reviewed PR landing,
+identical post-release commit SHAs, and a ban on direct protected-ref writes.
+The owner must choose either evidence-gated compare-and-swap of `dev`, or
+PR-only convergence defined by reviewed ancestry and identical trees. `run`
+creates or resumes `release/<dev-sha>` and arms
+automerge only after current app-bound Validate and clean high-confirmed
+DarkFactory Autoreview gates. `verify` proves green main CI, release-PR evidence,
+linked issue closure, exact main/dev identity, branch protections, and declared
+tag/artifact/publication policy, then emits the receipt consumed by submodule
+autoupdate. GitHub's configured atomic delete-on-merge owns automation-branch
+cleanup; DarkFactory verifies trusted release and reconciliation branches are
+absent and never sends a branch-deletion request. `--watch`
+re-observes the same marker-owned lane and adds no force, bypass, or merge power.
 
 `df-work.yml` runs only on a trusted self-hosted runner labeled `df-local`. It
 requires `$AGENTS_HOME` to be an absolute path containing `bin\agents.ps1`,

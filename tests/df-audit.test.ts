@@ -310,7 +310,7 @@ test("post-branch health is bound to current head runs and checks and fails clos
     throw new Error(`unexpected ${requestPath}`);
   });
   const missing = await doctor.auditHealth(repo, "main", "current-head", missingGh, { now });
-  assert.ok(missing.some((finding) => finding.id === "workflow-main-head-required-checks-missing" && /DarkFactory Autoreview@app:15368/.test(finding.message)));
+  assert.equal(missing.some((finding) => finding.id === "workflow-main-head-required-checks-missing"), false);
 
   const { gh: inaccessibleGh } = mockGh(() => { throw Object.assign(new Error("forbidden"), { status: 403 }); });
   const inaccessible = await doctor.auditHealth(repo, "dev", "current-head", inaccessibleGh, { now });
@@ -772,7 +772,7 @@ test("managed baseline reports a release-control source contradiction without au
     schemaVersion: 1,
     requiredFiles: [],
     packageFiles: [],
-    removedFiles: [".github/workflows/dark-factory-release.yml"]
+    removedFiles: [".github/workflows/df-release.yml"]
   });
   const laneIssue = {
     number: 41,
@@ -789,7 +789,7 @@ test("managed baseline reports a release-control source contradiction without au
   const findings = await doctor.auditManagedFileDrift(gh, repo, "main", repo, { issues: [laneIssue] });
 
   assert.ok(findings.some((finding) => finding.id === "source-policy-contradiction-release-controls" && finding.repair_class === "blocked"));
-  assert.equal(findings.some((finding) => finding.id === "managed-removed-file-github-workflows-dark-factory-release-yml"), false);
+  assert.equal(findings.some((finding) => finding.id === "managed-removed-file-github-workflows-df-release-yml"), false);
 });
 
 test("machine runtime evidence is healthy only when every canonical prerequisite is proven", () => {

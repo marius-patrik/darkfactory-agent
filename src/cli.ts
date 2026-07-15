@@ -71,6 +71,11 @@ export async function runCli(args = process.argv.slice(2)): Promise<void> {
     return;
   }
 
+  if (command === "release") {
+    await runRelease(args.slice(1));
+    return;
+  }
+
   throw new Error(`unknown command: ${command}`);
 }
 
@@ -466,6 +471,82 @@ export type CleanCliOptions = {
   watch: boolean;
 };
 
+export type ReleaseCliOptions = {
+  mode: "status" | "plan" | "reconcile" | "run" | "verify";
+  target: string;
+  watch: boolean;
+  json: boolean;
+};
+
+export function parseReleaseCliArgs(args: string[]): ReleaseCliOptions {
+  const options: ReleaseCliOptions = {
+    mode: "status",
+    target: `${CONTROL_OWNER}/${CONTROL_REPO}`,
+    watch: false,
+    json: false
+  };
+  let index = 0;
+  if (["status", "plan", "reconcile", "run", "verify"].includes(args[0])) {
+    options.mode = args[0] as ReleaseCliOptions["mode"];
+    index += 1;
+  }
+  let targetSeen = false;
+  for (; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--watch") { options.watch = true; continue; }
+    if (argument === "--json") { options.json = true; continue; }
+    if (["--force", "--bypass", "--admin", "--delete-dev"].includes(argument)) {
+      throw new Error(`${argument} is intentionally unavailable for release`);
+    }
+    if (argument.startsWith("-")) throw new Error(`unknown release option: ${argument}`);
+    if (targetSeen || !/^[^/\s]+\/[^/\s]+$/.test(argument)) throw new Error("release accepts at most one owner/repo target");
+    options.target = argument;
+    targetSeen = true;
+  }
+  if (options.watch && options.mode !== "run") throw new Error("release --watch is available only with release run");
+  return options;
+}
+
+async function runRelease(args: string[]): Promise<void> {
+  const options = parseReleaseCliArgs(args);
+  const credentials = loadAppCredentials();
+  const app = new App({ appId: credentials.appId, privateKey: credentials.privateKey });
+  const [owner] = splitRepository(options.target);
+  const mutating = ["reconcile", "run", "verify"].includes(options.mode);
+  const targetGithub = createDoctorRequester(await getScopedInstallationOctokit(app, owner, {
+    administration: "read",
+    actions: "read",
+    checks: "read",
+    contents: mutating ? "write" : "read",
+    issues: mutating ? "write" : "read",
+    pull_requests: mutating ? "write" : "read",
+    statuses: "read"
+  }));
+  const dataGithub = mutating
+    ? createDoctorRequester(await getScopedInstallationOctokit(app, CONTROL_OWNER, { contents: "write" }, ["darkfactory-data"]))
+    : targetGithub;
+  const release = await import(new URL("../.github/scripts/df-release.mjs", import.meta.url).href) as {
+    configureReleaseRuntime(options: Record<string, unknown>): void;
+    runReleaseCommand(options: Record<string, unknown>): Promise<Record<string, unknown>>;
+  };
+  release.configureReleaseRuntime({
+    gh: targetGithub,
+    ledgerGh: dataGithub,
+    controlRepo: { owner: CONTROL_OWNER, repo: CONTROL_REPO }
+  });
+  const repository = { owner, repo: options.target.split("/")[1] };
+  const maxPasses = options.watch ? boundedInteger(process.env.DF_RELEASE_WATCH_PASSES, 40, 1, 240) : 1;
+  let result: Record<string, unknown> = {};
+  for (let pass = 1; pass <= maxPasses; pass += 1) {
+    result = await release.runReleaseCommand({ mode: options.mode, repository });
+    const status = typeof result.status === "string" ? result.status : "unknown";
+    if (!options.watch || ["verified", "blocked", "skipped", "failed"].includes(status)) break;
+    if (pass < maxPasses) await delay(15_000);
+  }
+  if (options.json) console.log(JSON.stringify(result, null, 2));
+  else printReleaseResult(result);
+}
+
 export function parseCleanCliArgs(args: string[]): CleanCliOptions {
   const options: CleanCliOptions = {
     mode: "plan",
@@ -711,6 +792,15 @@ function printSetupResult(result: {
   console.log(result.converged ? "Setup is a proven no-op." : "Setup is resumable; rerun after reviewed PRs and owner residue resolve.");
 }
 
+function printReleaseResult(result: Record<string, unknown>): void {
+  const plan = isRecord(result.plan) ? result.plan : {};
+  const action = isRecord(result.action) ? result.action : {};
+  console.log(`Release ${String(result.mode || "status")} for ${String(result.repository || (isRecord(result.observation) ? result.observation.repository : "unknown"))}.`);
+  console.log(`- Plan: ${String(plan.planId || "read-only")} (${String(plan.action || "observe")}: ${String(plan.reason || "current")})`);
+  if (Object.keys(action).length) console.log(`- Result: ${String(action.status || result.status || "complete")} (${String(action.action || "release")})`);
+  console.log("Rerun the same command to resume marker-owned work; no force or bypass mode exists.");
+}
+
 function printCleanPlan(plan: ReturnType<typeof buildCleanPlan>): void {
   const actions = plan.entries.filter((entry) => entry.action !== "preserve");
   const reviewFindings = plan.entries.filter((entry) => entry.kind === "lane-finding");
@@ -806,6 +896,7 @@ Usage:
   df clean [plan] [owner/repo] [--local PATH] [--json]
   df clean apply <plan-id> [--local PATH] [--watch] [--json]
   df clean verify [owner/repo] [--local PATH] [--json]
+  df release [status|plan|reconcile|run|verify] [owner/repo] [--watch] [--json]
 
 Command information:
   serve         Run the GitHub App webhook server.
@@ -815,15 +906,17 @@ Command information:
   doctor        Diagnose deterministic repository, workflow, branch, issue, and local-state drift.
   setup         Run doctor, execute ordered auto/PR convergence, and stop only at exact owner/blocked residue.
   clean         Plan, apply, or verify evidence-backed hygiene without force or prune bypasses.
+  release       Plan, reconcile, run, or verify the single protected dev-to-main release lane.
 
 Doctor safety:
   Diagnose mode is the default and performs no writes or repairs.
   --write-issues explicitly enables stable per-finding issue reconciliation and the doctor ledger.
   Repair is intentionally a separate reviewed work lane; --repair is rejected.
-Setup and clean safety:
+Setup, clean, and release safety:
   setup is resumable; reviewed PR repairs continue on later --watch or scheduled invocations.
   clean defaults to a read-only durable plan. Apply re-fetches every fact and aborts on drift.
   Dirty, unpublished, protected, open-PR, and ambiguous work is always preserved.
+  release is status-only by default; mutations require reviewed marker-owned branches and current green gates.
 Secrets are read from environment variables first, then AGENTS_SECRETS/*.secret.`);
 }
 
