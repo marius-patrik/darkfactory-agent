@@ -255,6 +255,7 @@ function secretLikeText(value: string): boolean {
   if (
     /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(value) ||
     /(?<![A-Za-z0-9])AKIA[A-Z0-9]{16}(?![A-Za-z0-9])/.test(value) ||
+    /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])/.test(value) ||
     /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/.test(value) ||
     /(?<![A-Za-z0-9])(?:sk-(?:ant-|proj-)?|xox[baprs]-|hf_|npm_|pypi-)[A-Za-z0-9_\-]{16,}(?![A-Za-z0-9_\-])/.test(
       value,
@@ -633,6 +634,11 @@ function secretFieldPath(value: unknown, field = "", path = ""): string | null {
     if (found) return found;
   }
   return null;
+}
+
+/** Manager-owned fail-closed admission policy for content entering roaming canonical state. */
+export function findSecretLikePath(value: unknown): string | null {
+  return secretFieldPath(value);
 }
 
 function assertSourceMetadata(source: { installId: string; machineId: string }): void {

@@ -50,6 +50,31 @@ export function stateV2Paths(state: SharedState): StateV2Paths {
   };
 }
 
+const SAFE_RUNTIME_COMPONENT = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const WINDOWS_RESERVED_COMPONENT = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i;
+export const MAX_PLUGIN_RUNTIME_PROJECTION_BYTES = 16 * 1024 * 1024;
+
+function validateRuntimeComponent(value: string, label: string): void {
+  if (
+    !SAFE_RUNTIME_COMPONENT.test(value) ||
+    WINDOWS_RESERVED_COMPONENT.test(value) ||
+    value.endsWith(".") ||
+    value.endsWith(" ")
+  ) {
+    throw new Error(`plugin runtime projection ${label} is invalid`);
+  }
+}
+
+export function pluginRuntimeProjectionPath(
+  state: SharedState,
+  pluginId: string,
+  projectionName: string,
+): string {
+  validateRuntimeComponent(pluginId, "id");
+  validateRuntimeComponent(projectionName, "name");
+  return path.join(stateV2Paths(state).runtimeDir, "plugins", pluginId, `${projectionName}.json`);
+}
+
 async function exists(filePath: string): Promise<boolean> {
   try {
     await stat(filePath);
@@ -218,6 +243,31 @@ export async function writeTextAtomic(
       );
     }
   });
+}
+
+/** Publish a reconstructible plugin cache through the manager-owned projection boundary. */
+export async function publishPluginRuntimeProjection(
+  state: SharedState,
+  pluginId: string,
+  projectionName: string,
+  value: unknown,
+): Promise<string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("plugin runtime projection must be an object");
+  }
+  const filePath = pluginRuntimeProjectionPath(state, pluginId, projectionName);
+  const serialized = JSON.stringify(value, null, 2);
+  if (serialized === undefined) throw new Error("plugin runtime projection must be JSON serializable");
+  if (!serialized.startsWith("{")) {
+    throw new Error("plugin runtime projection must serialize to a JSON object");
+  }
+  const content = `${serialized}\n`;
+  const contentBytes = Buffer.byteLength(content, "utf8");
+  if (contentBytes > MAX_PLUGIN_RUNTIME_PROJECTION_BYTES) {
+    throw new Error(`plugin runtime projection exceeds ${MAX_PLUGIN_RUNTIME_PROJECTION_BYTES} bytes`);
+  }
+  await writeTextAtomic(filePath, content);
+  return filePath;
 }
 
 export async function writeTextExclusive(

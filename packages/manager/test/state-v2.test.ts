@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { ensureSharedState, sharedStateAt } from "../src/state";
 import {
+  MAX_PLUGIN_RUNTIME_PROJECTION_BYTES,
+  pluginRuntimeProjectionPath,
   publishAtomicReplacement,
+  publishPluginRuntimeProjection,
   readStateManifest,
   stateV2Paths,
   writeTextAtomic,
@@ -12,6 +15,49 @@ import {
 } from "../src/state-v2";
 
 describe("Agent OS state v2 bootstrap", () => {
+  test("publishes bounded plugin runtime projections through the manager boundary", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-plugin-projection-"));
+    try {
+      const state = sharedStateAt(root, path.join(root, ".agents"), path.join(root, "user"));
+      await ensureSharedState(state);
+      const filePath = await publishPluginRuntimeProjection(state, "memory", "dream-v1.3-cursor", {
+        schemaVersion: 1,
+        authority: "canonical-memory-event",
+      });
+      expect(filePath).toBe(pluginRuntimeProjectionPath(state, "memory", "dream-v1.3-cursor"));
+      expect(await Bun.file(filePath).json()).toEqual({ schemaVersion: 1, authority: "canonical-memory-event" });
+      const admittedContent = await readFile(filePath, "utf8");
+      await expect(
+        publishPluginRuntimeProjection(state, "memory", "dream-v1.3-cursor", {
+          payload: "é".repeat(Math.ceil(MAX_PLUGIN_RUNTIME_PROJECTION_BYTES / 2)),
+        }),
+      ).rejects.toThrow(/exceeds 16777216 bytes/);
+      expect(await readFile(filePath, "utf8")).toBe(admittedContent);
+      await expect(
+        publishPluginRuntimeProjection(state, "Memory", "dream-v1.3-cursor", { schemaVersion: 2 }),
+      ).rejects.toThrow(/id is invalid/);
+      await expect(
+        publishPluginRuntimeProjection(state, "memory", "Dream-v1.3-cursor", { schemaVersion: 2 }),
+      ).rejects.toThrow(/name is invalid/);
+      await expect(
+        publishPluginRuntimeProjection(state, "memory", "dream-v1.3-cursor", { toJSON: () => "scalar" }),
+      ).rejects.toThrow(/must serialize to a JSON object/);
+      await expect(
+        publishPluginRuntimeProjection(state, "memory", "dream-v1.3-cursor", { toJSON: () => ["array"] }),
+      ).rejects.toThrow(/must serialize to a JSON object/);
+      expect(await readFile(filePath, "utf8")).toBe(admittedContent);
+      expect(() => pluginRuntimeProjectionPath(state, "../escape", "cursor")).toThrow(/id is invalid/);
+      expect(() => pluginRuntimeProjectionPath(state, "CON", "cursor")).toThrow(/id is invalid/);
+      expect(() => pluginRuntimeProjectionPath(state, "memory", "NUL.json")).toThrow(/name is invalid/);
+      expect(() => pluginRuntimeProjectionPath(state, "memory", "cursor.")).toThrow(/name is invalid/);
+      await expect(publishPluginRuntimeProjection(state, "memory", "cursor", "not-an-object")).rejects.toThrow(
+        /must be an object/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("success: Windows projection publication performs one atomic replace without waiting", async () => {
     const temporary = "C:\\state\\.projection.tmp";
     const destination = "C:\\state\\projection.json";

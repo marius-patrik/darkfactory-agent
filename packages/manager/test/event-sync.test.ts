@@ -20,6 +20,7 @@ import {
   enableEventSync,
   eventSyncStatus,
   exportEventBundle,
+  findSecretLikePath,
   importEventBundle,
   recoverPreparedEventImports,
 } from "../src/event-sync";
@@ -106,6 +107,14 @@ async function rewriteAuthenticatedBundlePath(
 }
 
 describe("encrypted cross-machine event exchange", () => {
+  test("manager-owned admission catches common and unlabelled credentials", () => {
+    expect(findSecretLikePath("github_pat_abcdefghijklmnopqrstuvwxyz0123456789")).not.toBeNull();
+    expect(findSecretLikePath(["xoxb", "123456789012", "abcdefghijklmnopqrstuvwxyz"].join("-"))).not.toBeNull();
+    expect(findSecretLikePath("AIzaabcdefghijklmnopqrstuvwxyz1234567890")).not.toBeNull();
+    expect(findSecretLikePath("dQwErTyUiOpAsDfGhJkLzXcVbNmQwErTyUiOpAsD")).not.toBeNull();
+    expect(findSecretLikePath("A short non-secret reflection.")).toBeNull();
+  });
+
   test("memory and session authority converge with identical projection hashes", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-sync-converge-"));
     try {
