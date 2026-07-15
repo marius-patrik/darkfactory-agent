@@ -85,6 +85,48 @@ test("clean plan preserves dirty, unpublished, open-PR, and ambiguous human work
   ]);
 });
 
+test("clean plan enumerates and removes only independently preserved local branches", () => {
+  const plan = buildCleanPlan(evidence([], {
+    localBranches: [
+      branch({ name: "merged-local", containedBy: ["dev"] }),
+      branch({ name: "unpublished-local", localUnpublished: true }),
+      branch({ name: "dirty-local", worktrees: [{ pathId: "wt-local", branch: "dirty-local", head: "dirty-local-sha", dirty: false, untracked: true, submoduleDirty: false }] })
+    ]
+  }), new Date("2026-07-15T00:00:00Z"));
+
+  assert.deepEqual(plan.entries.filter((entry) => entry.kind === "local-branch").map((entry) => [entry.target, entry.classification, entry.action]), [
+    ["dirty-local", "dirty-worktree", "preserve"],
+    ["merged-local", "proven-merged", "delete"],
+    ["unpublished-local", "unpublished", "preserve"]
+  ]);
+  assert.ok(plan.entries.some((entry) => entry.kind === "worktree" && entry.target === "wt-local" && entry.action === "preserve"));
+});
+
+test("clean plan classifies every open PR and issue while preserving review records", () => {
+  const plan = buildCleanPlan(evidence([], {
+    pullRequests: [
+      { number: 3, head: "pr-3", classification: "active", findingIds: [] },
+      { number: 4, head: "pr-4", classification: "red", findingIds: ["pr-4-red"] }
+    ],
+    issues: [
+      { number: 7, fingerprint: "issue-7", classification: "current", findingIds: [] },
+      { number: 8, fingerprint: "issue-8", classification: "finding", findingIds: ["issue-8-blocker-2-missing"] }
+    ],
+    reviewFindings: [{ id: "issue-8-blocker-2-missing", category: "issue lane", severity: "error", repairClass: "pr", message: "Issue #8 names a missing blocker.", evidence: [], fingerprint: "finding-8" }]
+  }), new Date("2026-07-15T00:00:00Z"));
+
+  assert.deepEqual(plan.entries.filter((entry) => entry.kind === "pull-request").map((entry) => [entry.target, entry.classification, entry.action]), [
+    ["#3", "active", "preserve"],
+    ["#4", "red", "preserve"]
+  ]);
+  assert.deepEqual(plan.entries.filter((entry) => entry.kind === "issue").map((entry) => [entry.target, entry.classification]), [
+    ["#7", "current"],
+    ["#8", "finding"]
+  ]);
+  assert.ok(plan.entries.some((entry) => entry.kind === "lane-finding" && entry.target === "issue-8-blocker-2-missing"));
+  assert.equal(plan.entries.every((entry) => !["pull-request", "issue", "lane-finding"].includes(entry.kind) || entry.action === "preserve"), true);
+});
+
 test("clean apply admission aborts when any observed fact drifts", () => {
   const original = buildCleanPlan(evidence([branch({ name: "merged", containedBy: ["main"] })]), new Date("2026-07-15T00:00:00Z"));
   const drifted = buildCleanPlan(evidence([branch({ name: "merged", head: "new-head", containedBy: ["main"] })]), new Date("2026-07-15T00:01:00Z"));
@@ -111,15 +153,20 @@ function branch(overrides: Partial<CleanBranchEvidence>): CleanBranchEvidence {
   };
 }
 
-function evidence(branches: CleanBranchEvidence[]): CleanEvidence {
+function evidence(branches: CleanBranchEvidence[], overrides: Partial<CleanEvidence> = {}): CleanEvidence {
   return {
     repository: "marius-patrik/example",
     defaultBranch: "main",
     observedRefs: { main: "main-sha", dev: "dev-sha" },
     branches,
+    localBranches: [],
     orphanRefs: [],
+    pullRequests: [],
+    issues: [],
+    reviewFindings: [],
     pullRequestFingerprint: "prs-v1",
     issueLaneFingerprint: "issues-v1",
-    prdFingerprint: "prd-v1"
+    prdFingerprint: "prd-v1",
+    ...overrides
   };
 }

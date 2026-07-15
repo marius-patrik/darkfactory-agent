@@ -56,7 +56,12 @@ export async function convergeRepositorySettings(
     }
   }
 
-  if (metadata.allow_auto_merge === true && metadata.delete_branch_on_merge === true) {
+  const autoMerge = await observeAutoMerge(github, repository, metadata.allow_auto_merge);
+  const deleteOnMerge = typeof metadata.delete_branch_on_merge === "boolean" ? metadata.delete_branch_on_merge : null;
+  if (autoMerge === null || deleteOnMerge === null) {
+    throw new SetupOwnerActionRequired("repository-automation-observation", "Repository automation settings are permission-omitted or unobservable; setup refused to infer drift or generate an automatic repair.");
+  }
+  if (autoMerge && deleteOnMerge) {
     receipts.push(receipt("repository-automation", `${repository.owner}/${repository.repo}`, "current", "Auto-merge and merged-branch deletion are enabled."));
   } else {
     await github.request("PATCH /repos/{owner}/{repo}", {
@@ -64,6 +69,11 @@ export async function convergeRepositorySettings(
       allow_auto_merge: true,
       delete_branch_on_merge: true
     }).catch((error) => { throw wrapOwnerBoundary("repository-automation", error); });
+    const verified = record((await github.request("GET /repos/{owner}/{repo}", { ...repository })).data, "repository metadata after automation repair");
+    const verifiedAutoMerge = await observeAutoMerge(github, repository, verified.allow_auto_merge);
+    if (verifiedAutoMerge !== true || verified.delete_branch_on_merge !== true) {
+      throw new SetupOwnerActionRequired("repository-automation-verification", "Repository automation repair did not become fully observable and enabled; setup stopped without assuming success.");
+    }
     receipts.push(receipt("repository-automation", `${repository.owner}/${repository.repo}`, "applied", "Enabled auto-merge and merged-branch deletion."));
   }
 
@@ -73,6 +83,27 @@ export async function convergeRepositorySettings(
     receipts.push(await convergeBranchProtection(github, repository, branch));
   }
   return receipts;
+}
+
+async function observeAutoMerge(
+  github: OperatorGitHubRequester,
+  repository: RepositoryRef,
+  restValue: unknown
+): Promise<boolean | null> {
+  if (typeof restValue === "boolean") return restValue;
+  if (typeof github.graphql !== "function") return null;
+  try {
+    const response = record(await github.graphql(
+      `query RepositoryAutoMerge($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) { autoMergeAllowed }
+      }`,
+      { owner: repository.owner, name: repository.repo }
+    ), "repository auto-merge GraphQL response");
+    const value = record(response.repository, "repository auto-merge GraphQL repository").autoMergeAllowed;
+    return typeof value === "boolean" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function convergeLabels(

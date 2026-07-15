@@ -310,13 +310,37 @@ test("post-branch health is bound to current head runs and checks and fails clos
     throw new Error(`unexpected ${requestPath}`);
   });
   const missing = await doctor.auditHealth(repo, "main", "current-head", missingGh, { now });
-  assert.ok(missing.some((finding) => finding.id === "workflow-main-head-required-checks-missing" && /Codex Review@app:15368/.test(finding.message)));
+  assert.equal(missing.some((finding) => finding.id === "workflow-main-head-required-checks-missing"), false);
 
   const { gh: inaccessibleGh } = mockGh(() => { throw Object.assign(new Error("forbidden"), { status: 403 }); });
   const inaccessible = await doctor.auditHealth(repo, "dev", "current-head", inaccessibleGh, { now });
   const inaccessibleIds = new Set(inaccessible.map((finding) => finding.id));
   assert.ok(inaccessibleIds.has("workflow-dev-runs-unobservable"));
   assert.ok(inaccessibleIds.has("workflow-dev-head-checks-unobservable"));
+});
+
+test("base-branch health still requires branch CI while leaving PR-only review gates on PR heads", async () => {
+  const { gh } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/protection")) return protectedBranch();
+    if (requestPath.includes("/actions/runs?")) return { workflow_runs: [{ name: "Validate", head_sha: "current-head", status: "completed", conclusion: "success" }] };
+    if (requestPath.includes("/check-runs")) return { check_runs: [{ name: "Codex Review", status: "completed", conclusion: "success", app: { id: 15368 } }] };
+    if (requestPath.includes("/status")) return { statuses: [] };
+    throw new Error(`unexpected ${requestPath}`);
+  });
+
+  const findings = await doctor.auditHealth(repo, "dev", "current-head", gh);
+  assert.ok(findings.some((finding) => finding.id === "workflow-dev-head-required-checks-missing" && /Validate@app:15368/.test(finding.message)));
+  assert.equal(findings.some((finding) => /Codex Review@app:15368/.test(finding.message)), false);
+});
+
+test("auto-merge observation uses REST, falls back to GraphQL, and fails closed when both are unobservable", async () => {
+  assert.deepEqual(await doctor.observeAutoMerge({}, repo, true), { enabled: true, source: "rest" });
+  assert.deepEqual(await doctor.observeAutoMerge({
+    async graphql() { return { repository: { autoMergeAllowed: false } }; }
+  }, repo, undefined), { enabled: false, source: "graphql" });
+  assert.deepEqual(await doctor.observeAutoMerge({
+    async graphql() { throw Object.assign(new Error("forbidden"), { status: 403 }); }
+  }, repo, undefined), { enabled: null, source: "graphql-inaccessible" });
 });
 
 test("branch policy classifies behind, diverged, missing, and main-only data repositories", async () => {

@@ -50,6 +50,7 @@ export const ANDROMEDA_LAYOUT = [
 const ANDROMEDA_ROOTS = ["apps", "commands", "data", "hooks", "packages", "plugins", "roles", "skills"];
 const HEALTHY_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 const RED_CONCLUSIONS = new Set(["action_required", "cancelled", "failure", "startup_failure", "stale", "timed_out"]);
+const PULL_REQUEST_ONLY_GATE_CONTEXTS = new Set(["Codex Review", "DarkFactory Autoreview"]);
 const DOCTOR_MODES = new Set(["diagnose", "report"]);
 const CONTROL_REPO = { owner: "marius-patrik", repo: "DarkFactory" };
 const DOCTOR_ISSUE_AUTHORS = new Set(["darkfactory-agent[bot]", "mp-agents[bot]"]);
@@ -359,11 +360,21 @@ export async function auditBranchAndReleaseState(github, repository, metadata, c
     }
   }
 
-  if (!isData && metadata.allow_auto_merge !== true) {
-    findings.push(doctorFinding("automerge-disabled", "branch protection", "Repository auto-merge is disabled for a protected automation lane.", {
-      severity: "error",
-      repair: ["Enable repository auto-merge after confirming required gates are enforced."]
-    }));
+  if (!isData) {
+    const autoMerge = await observeAutoMerge(github, repository, metadata.allow_auto_merge);
+    if (autoMerge.enabled === false) {
+      findings.push(doctorFinding("automerge-disabled", "branch protection", "Repository auto-merge is disabled for a protected automation lane.", {
+        severity: "error",
+        repair: ["Enable repository auto-merge after confirming required gates are enforced."]
+      }));
+    } else if (autoMerge.enabled === null) {
+      findings.push(doctorFinding("automerge-unobservable", "branch protection", "Repository auto-merge posture is unobservable through both scoped REST metadata and the repository GraphQL field.", {
+        severity: "critical",
+        repairClass: "blocked",
+        repair: ["Restore an observable App permission boundary; never infer disabled or generate an automatic repair from omitted metadata."]
+      }));
+    }
+    observations.push(`Repository auto-merge posture is ${autoMerge.enabled === null ? "unknown" : autoMerge.enabled ? "enabled" : "disabled"} (${autoMerge.source}).`);
   }
 
   for (const branch of ["main", ...(!isData ? ["dev"] : [])].filter((name) => branchNames.has(name))) {
@@ -1128,7 +1139,12 @@ export async function auditHealth(repository, branch, headSha, github, options =
   }
   const protection = await getBranchProtection(github, repository, branch);
   if (protection.configured) {
-    const expected = requiredStatusChecks(protection.data).checks;
+    // Review workflows are pull_request/pull_request_target gates. Their check
+    // suites are bound to the eligible PR head and need not be recreated on the
+    // post-merge base SHA. auditPullRequests verifies those gates on every open
+    // PR; base-branch health independently verifies push/branch CI here.
+    const expected = requiredStatusChecks(protection.data).checks
+      .filter((check) => !PULL_REQUEST_ONLY_GATE_CONTEXTS.has(check.context));
     const missing = expected.filter((required) => !checks.some((check) => (
       check.name === required.context &&
       (!Number.isInteger(required.appId) || required.appId <= 0 || check.appId === required.appId)
@@ -1152,6 +1168,29 @@ export async function auditHealth(repository, branch, headSha, github, options =
     }));
   }
   return findings;
+}
+
+export async function observeAutoMerge(github, repository, restValue) {
+  if (typeof restValue === "boolean") {
+    return { enabled: restValue, source: "rest" };
+  }
+  if (typeof github?.graphql !== "function") {
+    return { enabled: null, source: "graphql-unavailable" };
+  }
+  try {
+    const result = await github.graphql(
+      `query RepositoryAutoMerge($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) { autoMergeAllowed }
+      }`,
+      { owner: repository.owner, name: repository.repo }
+    );
+    const value = result?.repository?.autoMergeAllowed;
+    return typeof value === "boolean"
+      ? { enabled: value, source: "graphql" }
+      : { enabled: null, source: "graphql-malformed" };
+  } catch {
+    return { enabled: null, source: "graphql-inaccessible" };
+  }
 }
 
 export async function auditDocStaleness(repository, metadata, branch, github) {

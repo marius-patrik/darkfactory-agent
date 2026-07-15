@@ -26,8 +26,9 @@ test("setup settings convergence is a proven no-op when repository state is heal
 test("setup settings convergence repairs only deterministic settings and preserves safe protection fields", async () => {
   const calls: Array<{ route: string; parameters: Record<string, unknown> }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
+  let automationEnabled = false;
   const github = requester(calls, (route, parameters) => {
-    if (route === "GET /repos/{owner}/{repo}") return { default_branch: "main", allow_auto_merge: false, delete_branch_on_merge: false };
+    if (route === "GET /repos/{owner}/{repo}") return { default_branch: "main", allow_auto_merge: automationEnabled, delete_branch_on_merge: automationEnabled };
     if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
       if (parameters.ref === "heads/dev") throw notFound;
       return { object: { sha: "main-sha" } };
@@ -35,7 +36,8 @@ test("setup settings convergence repairs only deterministic settings and preserv
     if (route === "GET /repos/{owner}/{repo}/labels") return [];
     if (route === "GET /repos/{owner}/{repo}/actions/workflows") return { workflows: [{ id: 2, path: workflows[0], state: "disabled_manually" }] };
     if (route === "GET /repos/{owner}/{repo}/branches/{branch}/protection") throw notFound;
-    if (/^(POST|PATCH|PUT) /.test(route)) return {};
+    if (route === "PATCH /repos/{owner}/{repo}") { automationEnabled = true; return {}; }
+    if (/^(POST|PUT) /.test(route)) return {};
     throw new Error(`unexpected ${route}`);
   });
 
@@ -46,6 +48,45 @@ test("setup settings convergence repairs only deterministic settings and preserv
   const protections = calls.filter((call) => call.route === "PUT /repos/{owner}/{repo}/branches/{branch}/protection");
   assert.equal(protections.length, 2);
   assert.equal(protections.every((call) => call.parameters.enforce_admins === true && call.parameters.allow_force_pushes === false && call.parameters.allow_deletions === false), true);
+});
+
+test("setup observes App-omitted auto-merge through GraphQL without inventing a repair", async () => {
+  const calls: string[] = [];
+  const github = {
+    async request(route: string, parameters: Record<string, unknown>) {
+      calls.push(route);
+      if (route === "GET /repos/{owner}/{repo}") return { data: { default_branch: "main", delete_branch_on_merge: true } };
+      if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") return { data: { object: { sha: parameters.ref === "heads/main" ? "main-sha" : "dev-sha" } } };
+      if (route === "GET /repos/{owner}/{repo}/labels") return { data: [{ name: "df:ready", color: "0e8a16", description: "Machine-evaluated" }] };
+      if (route === "GET /repos/{owner}/{repo}/actions/workflows") return { data: { workflows: [{ id: 1, path: workflows[0], state: "active" }] } };
+      if (route === "GET /repos/{owner}/{repo}/branches/{branch}/protection") return { data: protection() };
+      throw new Error(`unexpected ${route}`);
+    },
+    async graphql() { return { repository: { autoMergeAllowed: true } }; }
+  };
+
+  const receipts = await convergeRepositorySettings(github, repo, labels, workflows);
+  assert.ok(receipts.some((receipt) => receipt.action === "repository-automation" && receipt.status === "current"));
+  assert.equal(calls.includes("PATCH /repos/{owner}/{repo}"), false);
+});
+
+test("setup refuses automation mutation when App-scoped settings remain unobservable", async () => {
+  const calls: string[] = [];
+  const github = {
+    async request(route: string, parameters: Record<string, unknown>) {
+      calls.push(route);
+      if (route === "GET /repos/{owner}/{repo}") return { data: { default_branch: "main" } };
+      if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") return { data: { object: { sha: parameters.ref === "heads/main" ? "main-sha" : "dev-sha" } } };
+      throw new Error(`unexpected ${route}`);
+    },
+    async graphql() { throw Object.assign(new Error("forbidden"), { status: 403 }); }
+  };
+
+  await assert.rejects(
+    () => convergeRepositorySettings(github, repo, labels, workflows),
+    (error: unknown) => error instanceof SetupOwnerActionRequired && error.action === "repository-automation-observation"
+  );
+  assert.equal(calls.includes("PATCH /repos/{owner}/{repo}"), false);
 });
 
 test("setup settings convergence surfaces App permission gaps as owner actions", async () => {

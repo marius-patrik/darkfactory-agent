@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 import {
@@ -9,11 +9,14 @@ import {
   type CleanBranchEvidence,
   type CleanEvidence,
   type CleanPlan,
-  type CleanWorktreeEvidence
+  type CleanWorktreeEvidence,
+  type DoctorFinding,
+  type PullRequestClassification
 } from "./operator.js";
 
 export interface OperatorGitHubRequester {
   request(route: string, parameters: Record<string, unknown>): Promise<{ data: unknown }>;
+  graphql?(query: string, variables?: Record<string, unknown>): Promise<unknown>;
 }
 
 export interface RepositoryRef {
@@ -24,14 +27,22 @@ export interface RepositoryRef {
 interface LocalCleanEvidence {
   worktreesByBranch: Map<string, CleanWorktreeEvidence[]>;
   rawWorktreeById: Map<string, string>;
-  localBranches: Map<string, { head: string; ahead: number | null; unpublished: boolean }>;
+  localBranches: Map<string, {
+    head: string;
+    tree: string;
+    ahead: number | null;
+    unpublished: boolean;
+    containedBy: string[];
+    treeEquivalentTo: string[];
+  }>;
   orphanRefs: CleanEvidence["orphanRefs"];
 }
 
 export async function collectCleanEvidence(
   github: OperatorGitHubRequester,
   repository: RepositoryRef,
-  localPath = ""
+  localPath = "",
+  reviewFindings: DoctorFinding[] = []
 ): Promise<CleanEvidence> {
   const metadata = asRecord((await github.request("GET /repos/{owner}/{repo}", { ...repository })).data, "repository metadata");
   const defaultBranch = requiredString(metadata.default_branch, "repository default branch");
@@ -46,9 +57,9 @@ export async function collectCleanEvidence(
     branchHeads.set(name, requiredString(commit.sha, `branch ${name} head`));
   }
   const policyBranches = new Set([defaultBranch, "main", "dev"].filter((name) => branchHeads.has(name)));
-  const local = localPath ? collectLocalEvidence(localPath, branchHeads) : emptyLocalEvidence();
   const trees = new Map<string, string>();
   for (const [name, head] of branchHeads) trees.set(name, await commitTree(github, repository, head));
+  const local = localPath ? collectLocalEvidence(localPath, branchHeads, trees, policyBranches) : emptyLocalEvidence();
 
   const normalizedPulls = pulls.map((pull, index) => normalizePull(pull, index, repository));
   const cleanBranches: CleanBranchEvidence[] = [];
@@ -84,13 +95,82 @@ export async function collectCleanEvidence(
     });
   }
 
+  const localBranches: CleanBranchEvidence[] = [...local.localBranches].map(([name, branch]) => {
+    const openPull = normalizedPulls.find((pull) => pull.state === "open" && pull.headRef === name && pull.headSha === branch.head && pull.sameRepository);
+    const mergedPull = normalizedPulls.find((pull) => pull.merged && pull.headRef === name && pull.headSha === branch.head && pull.sameRepository);
+    return {
+      name,
+      head: branch.head,
+      tree: branch.tree,
+      protected: false,
+      policyBranch: policyBranches.has(name),
+      openPullRequest: openPull?.number ?? null,
+      mergedPullRequest: mergedPull?.number ?? null,
+      mergedPullHead: mergedPull?.headSha ?? null,
+      containedBy: branch.containedBy,
+      treeEquivalentTo: branch.treeEquivalentTo,
+      localAhead: branch.ahead,
+      localUnpublished: branch.unpublished,
+      worktrees: local.worktreesByBranch.get(name) ?? []
+    };
+  });
+
+  const stableReviewFindings = reviewFindings.map((finding) => ({
+    id: finding.id,
+    category: finding.category,
+    severity: finding.severity,
+    repairClass: finding.repair_class,
+    message: finding.message,
+    evidence: finding.evidence || [],
+    fingerprint: stableHash({
+      id: finding.id,
+      category: finding.category,
+      severity: finding.severity,
+      repairClass: finding.repair_class,
+      message: finding.message,
+      evidence: finding.evidence || [],
+      repair: finding.repair || []
+    })
+  })).sort((a, b) => a.id.localeCompare(b.id));
+  const openPulls = normalizedPulls.filter((pull) => pull.state === "open").map((pull) => {
+    const findingIds = reviewFindings.filter((finding) => findingTouchesPull(finding, pull.number)).map((finding) => finding.id).sort();
+    return {
+      number: pull.number,
+      head: pull.headSha,
+      classification: classifyPullRequest(findingIds),
+      findingIds
+    };
+  });
+  const openIssues = issues.filter((issue) => !asRecord(issue, "issue").pull_request).map((issue) => {
+    const value = asRecord(issue, "issue");
+    const number = requiredNumber(value.number, "issue number");
+    const findingIds = reviewFindings.filter((finding) => findingTouchesIssue(finding, number)).map((finding) => finding.id).sort();
+    return {
+      number,
+      fingerprint: stableHash({
+        number,
+        title: value.title,
+        body: value.body,
+        state: value.state,
+        labels: Array.isArray(value.labels) ? value.labels : [],
+        updated_at: value.updated_at
+      }),
+      classification: findingIds.length ? "finding" as const : "current" as const,
+      findingIds
+    };
+  });
+
   const prdFingerprint = await contentFingerprint(github, repository, "PRD.md", defaultBranch);
   return {
     repository: `${repository.owner}/${repository.repo}`,
     defaultBranch,
     observedRefs: Object.fromEntries([...branchHeads].filter(([name]) => policyBranches.has(name)).sort(([a], [b]) => a.localeCompare(b))),
     branches: cleanBranches.sort((a, b) => a.name.localeCompare(b.name)),
+    localBranches: localBranches.sort((a, b) => a.name.localeCompare(b.name)),
     orphanRefs: local.orphanRefs,
+    pullRequests: openPulls.sort((a, b) => a.number - b.number),
+    issues: openIssues.sort((a, b) => a.number - b.number),
+    reviewFindings: stableReviewFindings,
     pullRequestFingerprint: stableHash(normalizedPulls.map((pull) => ({
       number: pull.number,
       state: pull.state,
@@ -153,6 +233,12 @@ export async function applyCleanPlan(
     await recordApplied(actions, { kind: entry.kind, target: entry.target, head: entry.head, status: "applied", reason: "atomic exact-head deletion after independent preservation proof" }, options.onApplied);
   }
 
+  for (const entry of saved.entries.filter((candidate) => candidate.kind === "local-branch" && candidate.action === "delete")) {
+    if (!options.localPath) throw new Error(`clean local branch ${entry.target} requires an explicit local checkout`);
+    runGit(options.localPath, ["update-ref", "-d", `refs/heads/${entry.target}`, entry.head]);
+    await recordApplied(actions, { kind: entry.kind, target: entry.target, head: entry.head, status: "applied", reason: "atomic exact-head deletion after independent preservation proof" }, options.onApplied);
+  }
+
   for (const entry of saved.entries.filter((candidate) => candidate.kind === "remote-branch" && candidate.action === "delete")) {
     const current = asRecord((await github.request("GET /repos/{owner}/{repo}/git/ref/{ref}", {
       ...repository,
@@ -165,7 +251,7 @@ export async function applyCleanPlan(
   }
 
   for (const entry of saved.entries.filter((candidate) => candidate.action === "preserve")) {
-    actions.push({ kind: entry.kind, target: entry.target, head: entry.head, status: "skipped", reason: entry.reasons.join(" ") });
+    await recordApplied(actions, { kind: entry.kind, target: entry.target, head: entry.head, status: "skipped", reason: entry.reasons.join(" ") }, options.onApplied);
   }
   return { planId: saved.planId, repository: saved.repository, actions };
 }
@@ -179,7 +265,12 @@ async function recordApplied(
   if (callback) await callback(receipt);
 }
 
-function collectLocalEvidence(localPath: string, remoteBranches: Map<string, string>): LocalCleanEvidence {
+function collectLocalEvidence(
+  localPath: string,
+  remoteBranches: Map<string, string>,
+  remoteTrees = new Map<string, string>(),
+  policyBranches = new Set<string>()
+): LocalCleanEvidence {
   const root = resolve(localPath);
   const worktreesByBranch = new Map<string, CleanWorktreeEvidence[]>();
   const rawWorktreeById = new Map<string, string>();
@@ -210,18 +301,47 @@ function collectLocalEvidence(localPath: string, remoteBranches: Map<string, str
     rawWorktreeById.set(pathId, resolve(worktreePath));
   }
 
-  const localBranches = new Map<string, { head: string; ahead: number | null; unpublished: boolean }>();
+  const localBranches = new Map<string, {
+    head: string;
+    tree: string;
+    ahead: number | null;
+    unpublished: boolean;
+    containedBy: string[];
+    treeEquivalentTo: string[];
+  }>();
   const refs = runGit(root, ["for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads"]);
   for (const line of refs.split(/\r?\n/).filter(Boolean)) {
     const [name, head] = line.split("\t");
     if (!name || !head) continue;
     const remoteHead = remoteBranches.get(name);
+    const tree = runGit(root, ["rev-parse", `${head}^{tree}`]).trim();
     let ahead: number | null = null;
-    if (remoteHead) {
+    if (remoteHead === head) {
+      ahead = 0;
+    } else if (remoteHead && gitObjectExists(root, remoteHead)) {
       const counts = runGit(root, ["rev-list", "--left-right", "--count", `${remoteHead}...${head}`]).trim().split(/\s+/).map(Number);
       ahead = Number.isFinite(counts[1]) ? counts[1] : null;
     }
-    localBranches.set(name, { head, ahead, unpublished: !remoteHead || (ahead !== null && ahead > 0) });
+    const containedBy: string[] = [];
+    const treeEquivalentTo: string[] = [];
+    for (const policy of policyBranches) {
+      const policyHead = remoteBranches.get(policy);
+      if (!policyHead) continue;
+      if (remoteTrees.get(policy) === tree) treeEquivalentTo.push(policy);
+      if (gitObjectExists(root, policyHead) && gitIsAncestor(root, head, policyHead)) containedBy.push(policy);
+    }
+    const independentlyPreserved = containedBy.length > 0 || treeEquivalentTo.length > 0;
+    const unpublished = remoteHead
+      ? remoteHead !== head && (ahead === null || ahead > 0)
+      : !independentlyPreserved;
+    localBranches.set(name, {
+      head,
+      tree,
+      ahead,
+      unpublished,
+      containedBy: containedBy.sort(),
+      treeEquivalentTo: treeEquivalentTo.sort()
+    });
   }
 
   const orphanRefs: CleanEvidence["orphanRefs"] = [];
@@ -249,6 +369,27 @@ function emptyLocalEvidence(): LocalCleanEvidence {
   return { worktreesByBranch: new Map(), rawWorktreeById: new Map(), localBranches: new Map(), orphanRefs: [] };
 }
 
+function gitObjectExists(cwd: string, object: string): boolean {
+  const result = spawnGit(cwd, ["cat-file", "-e", `${object}^{commit}`]);
+  return result.status === 0;
+}
+
+function gitIsAncestor(cwd: string, ancestor: string, descendant: string): boolean {
+  const result = spawnGit(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]);
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error("git ancestry evidence is unobservable");
+}
+
+function spawnGit(cwd: string, args: string[]) {
+  return spawnSync("git", ["-C", resolve(cwd), ...args], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 16 * 1024 * 1024
+  });
+}
+
 function runGit(cwd: string, args: string[]): string {
   return execFileSync("git", ["-C", resolve(cwd), ...args], {
     encoding: "utf8",
@@ -256,6 +397,25 @@ function runGit(cwd: string, args: string[]): string {
     timeout: 30_000,
     maxBuffer: 16 * 1024 * 1024
   });
+}
+
+function classifyPullRequest(findingIds: string[]): PullRequestClassification {
+  if (findingIds.some((id) => /(?:superseded|obsolete)/.test(id))) return "superseded";
+  if (findingIds.some((id) => /abandoned/.test(id))) return "abandoned";
+  if (findingIds.some((id) => /(?:-red|-not-mergeable|-checks-(?:missing|stuck|unobservable))$/.test(id))) return "red";
+  if (findingIds.some((id) => /-stale$/.test(id))) return "stale";
+  return "active";
+}
+
+function findingTouchesPull(finding: DoctorFinding, number: number): boolean {
+  return new RegExp(`(?:^|-)pr-${number}(?:-|$)`).test(finding.id)
+    || (finding.evidence || []).some((item) => new RegExp(`/pull/${number}(?:$|[?#])`).test(item.url || ""));
+}
+
+function findingTouchesIssue(finding: DoctorFinding, number: number): boolean {
+  return new RegExp(`(?:^|-)issue-${number}(?:-|$)`).test(finding.id)
+    || (finding.evidence || []).some((item) => new RegExp(`/issues/${number}(?:$|[?#])`).test(item.url || ""))
+    || new RegExp(`(?:^|\\s)#${number}(?!\\d)`).test(finding.message);
 }
 
 async function listPages(github: OperatorGitHubRequester, route: string, parameters: Record<string, unknown>): Promise<unknown[]> {

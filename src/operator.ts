@@ -29,6 +29,8 @@ export interface DoctorReport {
   schema_version: number;
   target_repository: string;
   lifecycle: string;
+  skipped?: boolean;
+  reason?: string;
   source_refs: Record<string, string | null>;
   findings: DoctorFinding[];
   observations?: string[];
@@ -140,6 +142,10 @@ export type BranchClassification =
   | "proven-merged"
   | "proven-redundant";
 
+export type PullRequestClassification = "active" | "stale" | "red" | "superseded" | "abandoned";
+export type IssueClassification = "current" | "finding";
+export type CleanClassification = BranchClassification | PullRequestClassification | IssueClassification | "review-finding";
+
 export interface CleanWorktreeEvidence {
   pathId: string;
   branch: string;
@@ -178,17 +184,39 @@ export interface CleanEvidence {
   defaultBranch: string;
   observedRefs: Record<string, string>;
   branches: CleanBranchEvidence[];
+  localBranches: CleanBranchEvidence[];
   orphanRefs: CleanRefEvidence[];
+  pullRequests: Array<{
+    number: number;
+    head: string;
+    classification: PullRequestClassification;
+    findingIds: string[];
+  }>;
+  issues: Array<{
+    number: number;
+    fingerprint: string;
+    classification: IssueClassification;
+    findingIds: string[];
+  }>;
+  reviewFindings: Array<{
+    id: string;
+    category: string;
+    severity: string;
+    repairClass: RepairClass;
+    message: string;
+    evidence: Array<{ label?: string; url?: string }>;
+    fingerprint: string;
+  }>;
   pullRequestFingerprint: string;
   issueLaneFingerprint: string;
   prdFingerprint: string;
 }
 
 export interface CleanPlanEntry {
-  kind: "remote-branch" | "local-branch" | "worktree" | "orphan-ref";
+  kind: "remote-branch" | "local-branch" | "worktree" | "orphan-ref" | "pull-request" | "issue" | "lane-finding";
   target: string;
   head: string;
-  classification: BranchClassification;
+  classification: CleanClassification;
   action: "preserve" | "delete" | "remove";
   reasons: string[];
 }
@@ -231,6 +259,35 @@ export function buildCleanPlan(evidence: CleanEvidence, now = new Date()): Clean
     }
   }
 
+  const remoteBranchNames = new Set(evidence.branches.map((branch) => branch.name));
+  for (const branch of [...evidence.localBranches].sort((a, b) => a.name.localeCompare(b.name))) {
+    const classification = classifyBranch(branch);
+    const safe = classification === "proven-merged" || classification === "proven-redundant";
+    entries.push({
+      kind: "local-branch",
+      target: branch.name,
+      head: branch.head,
+      classification,
+      action: safe ? "delete" : "preserve",
+      reasons: branchReasons(branch, classification)
+    });
+    if (!remoteBranchNames.has(branch.name)) {
+      for (const worktree of [...branch.worktrees].sort((a, b) => a.pathId.localeCompare(b.pathId))) {
+        const removable = safe && !worktree.dirty && !worktree.untracked && !worktree.submoduleDirty && worktree.head === branch.head;
+        entries.push({
+          kind: "worktree",
+          target: worktree.pathId,
+          head: worktree.head,
+          classification: removable ? classification : worktree.dirty || worktree.untracked || worktree.submoduleDirty ? "dirty-worktree" : "active-worktree",
+          action: removable ? "remove" : "preserve",
+          reasons: removable
+            ? ["Clean worktree exactly matches an independently preserved local branch head."]
+            : ["Worktree is active, dirty, untracked, submodule-dirty, or lacks exact independent preservation proof."]
+        });
+      }
+    }
+  }
+
   for (const ref of [...evidence.orphanRefs].sort((a, b) => a.ref.localeCompare(b.ref))) {
     const preserved = ref.independentlyPreservedBy.length > 0;
     const clean = !ref.worktree || (!ref.worktree.dirty && !ref.worktree.untracked && !ref.worktree.submoduleDirty);
@@ -244,6 +301,41 @@ export function buildCleanPlan(evidence: CleanEvidence, now = new Date()): Clean
       reasons: safe
         ? [`Exact tree/head is independently preserved by ${ref.independentlyPreservedBy.join(", ")}.`]
         : ["No exact independent preservation proof, or associated worktree state is not clean."]
+    });
+  }
+
+
+  for (const pull of [...evidence.pullRequests].sort((a, b) => a.number - b.number)) {
+    entries.push({
+      kind: "pull-request",
+      target: `#${pull.number}`,
+      head: pull.head,
+      classification: pull.classification,
+      action: "preserve",
+      reasons: pull.findingIds.length ? pull.findingIds : ["Open pull request is active and remains preserved for its review lane."]
+    });
+  }
+  for (const issue of [...evidence.issues].sort((a, b) => a.number - b.number)) {
+    entries.push({
+      kind: "issue",
+      target: `#${issue.number}`,
+      head: issue.fingerprint,
+      classification: issue.classification,
+      action: "preserve",
+      reasons: issue.findingIds.length ? issue.findingIds : ["Issue contract is current under deterministic lane review."]
+    });
+  }
+  for (const finding of [...evidence.reviewFindings].sort((a, b) => a.id.localeCompare(b.id))) {
+    entries.push({
+      kind: "lane-finding",
+      target: finding.id,
+      head: finding.fingerprint,
+      classification: "review-finding",
+      action: "preserve",
+      reasons: [
+        `${finding.severity}/${finding.repairClass}: ${finding.message}`,
+        ...finding.evidence.filter((item) => item.url).map((item) => `${item.label || "evidence"}: ${item.url}`)
+      ]
     });
   }
 

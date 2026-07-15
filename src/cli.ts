@@ -285,6 +285,7 @@ async function runSetup(args: string[]): Promise<void> {
   const ledger = await operatorLedgerModule();
   const receipts: SetupReceipt[] = [];
   const dispatchedIssueLanePlans = new Set<string>();
+  const dispatchedReadinessPlans = new Set<string>();
   const maxPasses = options.watch ? boundedInteger(process.env.DF_SETUP_WATCH_PASSES, 40, 1, 240) : 1;
   let finalPlan = planSetupConvergence([]);
 
@@ -299,7 +300,7 @@ async function runSetup(args: string[]): Promise<void> {
       planned_actions: plan.actions,
       residue: plan.residue
     });
-    const passReceipts = await executeSetupPlan(app, reports, plan, dispatchedIssueLanePlans);
+    const passReceipts = await executeSetupPlan(app, reports, plan, dispatchedIssueLanePlans, dispatchedReadinessPlans);
     receipts.push(...passReceipts);
     await ledger.writeRunLedger(dataGithub, "marius-patrik/darkfactory-data", "setup-completion", options.all ? "fleet" : options.target, {
       plan_id: plan.planId,
@@ -327,7 +328,8 @@ async function executeSetupPlan(
   app: App,
   reports: DoctorReport[],
   plan: ReturnType<typeof planSetupConvergence>,
-  dispatchedIssueLanePlans: Set<string>
+  dispatchedIssueLanePlans: Set<string>,
+  dispatchedReadinessPlans: Set<string>
 ): Promise<SetupReceipt[]> {
   const receipts: SetupReceipt[] = [];
   for (const report of reports) {
@@ -387,8 +389,26 @@ async function executeSetupPlan(
       }
     }
 
+    if (operations.has("evaluate-readiness")) {
+      const dispatchKey = `${plan.planId}:${report.target_repository}`;
+      if (!dispatchedReadinessPlans.has(dispatchKey)) {
+        const control = await getInstallationOctokit(app, CONTROL_OWNER);
+        await control.request("POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", {
+          owner: CONTROL_OWNER,
+          repo: CONTROL_REPO,
+          workflow_id: "df-orchestrate.yml",
+          ref: "main",
+          inputs: { repo: report.target_repository, source_event: "df-setup" }
+        });
+        dispatchedReadinessPlans.add(dispatchKey);
+        receipts.push({ action: "readiness", target: report.target_repository, status: "applied", detail: "Dispatched trusted machine evaluation; dispatch will recompute the predicate rather than trust a label." });
+      } else {
+        receipts.push({ action: "readiness", target: report.target_repository, status: "current", detail: "This exact evidence plan already requested readiness evaluation; waiting for the trusted run." });
+      }
+    }
+
     for (const operation of operations) {
-      if (["open-managed-setup-pr", "converge-settings", "reconcile-issue-lane"].includes(operation)) continue;
+      if (["open-managed-setup-pr", "converge-settings", "reconcile-issue-lane", "evaluate-readiness"].includes(operation)) continue;
       receipts.push({ action: operation, target: report.target_repository, status: "owner-required", detail: "The owning prerequisite has not yet exposed a trusted setup executor; setup refused to improvise." });
     }
   }
@@ -459,7 +479,8 @@ async function runClean(args: string[]): Promise<void> {
   const [owner, repo] = splitRepository(target);
   const octokit = await getInstallationOctokit(app, owner);
   const github = createOperatorRequester(octokit);
-  const evidence = await collectCleanEvidence(github, { owner, repo }, options.localPath);
+  const reviewFindings = await collectCleanReviewFindings(app, options, target);
+  const evidence = await collectCleanEvidence(github, { owner, repo }, options.localPath, reviewFindings);
   const plan = buildCleanPlan(evidence);
   const dataGithub = await operatorLedgerGithub(app);
   const ledger = await operatorLedgerModule();
@@ -480,10 +501,11 @@ async function runClean(args: string[]): Promise<void> {
 
   if (options.mode === "verify") {
     const actionable = plan.entries.filter((entry) => entry.action !== "preserve");
-    const result = { schemaVersion: 1, mode: "verify", repository: target, clean: actionable.length === 0, actionable };
+    const reviewResidue = plan.entries.filter((entry) => entry.kind === "lane-finding");
+    const result = { schemaVersion: 1, mode: "verify", repository: target, clean: actionable.length === 0 && reviewResidue.length === 0, actionable, reviewResidue };
     await ledger.writeRunLedger(dataGithub, "marius-patrik/darkfactory-data", "clean-verify", target, result);
     if (options.json) console.log(JSON.stringify(result, null, 2));
-    else console.log(result.clean ? `${target}: clean (proven no-op)` : `${target}: ${actionable.length} admitted hygiene actions remain; run df clean plan.`);
+    else console.log(result.clean ? `${target}: clean (proven no-op)` : `${target}: ${actionable.length} admitted hygiene actions and ${reviewResidue.length} deterministic review findings remain; run df clean plan.`);
     return;
   }
 
@@ -509,8 +531,62 @@ async function runClean(args: string[]): Promise<void> {
     actions: receipt.actions,
     watch_requested: options.watch
   });
-  if (options.json) console.log(JSON.stringify(receipt, null, 2));
-  else console.log(`${target}: applied ${receipt.actions.filter((action) => action.status === "applied").length} admitted actions; ${receipt.actions.filter((action) => action.status === "skipped").length} entries preserved.`);
+  let watchVerification: { clean: boolean; actionable: number; reviewResidue: number; passes: number; stalled: boolean } | null = null;
+  if (options.watch) {
+    const maxPasses = boundedInteger(process.env.DF_CLEAN_WATCH_PASSES, 40, 1, 240);
+    let previousEvidenceHash = "";
+    for (let pass = 1; pass <= maxPasses; pass += 1) {
+      const freshReview = await collectCleanReviewFindings(app, options, target);
+      const freshEvidence = await collectCleanEvidence(github, { owner, repo }, options.localPath, freshReview);
+      const freshPlan = buildCleanPlan(freshEvidence);
+      const actionable = freshPlan.entries.filter((entry) => entry.action !== "preserve");
+      const reviewResidue = freshPlan.entries.filter((entry) => entry.kind === "lane-finding");
+      const stalled: boolean = previousEvidenceHash.length > 0 && previousEvidenceHash === freshPlan.evidenceHash;
+      watchVerification = { clean: actionable.length === 0 && reviewResidue.length === 0, actionable: actionable.length, reviewResidue: reviewResidue.length, passes: pass, stalled };
+      await ledger.writeRunLedger(dataGithub, "marius-patrik/darkfactory-data", "clean-watch-verify", target, {
+        plan_id: saved.planId,
+        evidence_hash: freshPlan.evidenceHash,
+        pass,
+        actionable,
+        review_residue: reviewResidue
+      });
+      if (watchVerification.clean || watchVerification.stalled) break;
+      previousEvidenceHash = freshPlan.evidenceHash;
+      if (pass < maxPasses) await delay(15_000);
+    }
+  }
+  if (options.json) console.log(JSON.stringify({ ...receipt, watchVerification }, null, 2));
+  else {
+    console.log(`${target}: applied ${receipt.actions.filter((action) => action.status === "applied").length} admitted actions; ${receipt.actions.filter((action) => action.status === "skipped").length} entries preserved.`);
+    if (watchVerification) console.log(`${target}: watch verification clean=${watchVerification.clean}, stalled=${watchVerification.stalled} after ${watchVerification.passes} pass(es); actions=${watchVerification.actionable}, review findings=${watchVerification.reviewResidue}.`);
+  }
+}
+
+const CLEAN_REVIEW_CATEGORIES = new Set([
+  "branch hygiene",
+  "pull request health",
+  "release lane",
+  "issue lane",
+  "PRD drift",
+  "repository hygiene",
+  "state boundary",
+  "nested repository state",
+  "local checkout"
+]);
+
+async function collectCleanReviewFindings(app: App, options: CleanCliOptions, target: string) {
+  const { reports } = await collectDoctorReports(app, {
+    all: false,
+    target,
+    json: false,
+    writeIssues: false,
+    localPath: options.localPath,
+    agentsHome: options.agentsHome
+  });
+  if (reports.length !== 1 || reports[0].skipped || reports[0].lifecycle !== "active") {
+    throw new Error(`clean refuses ${target} because its active lifecycle and complete doctor review are unproven`);
+  }
+  return reports[0].findings.filter((finding) => CLEAN_REVIEW_CATEGORIES.has(finding.category));
 }
 
 function splitRepository(value: string): [string, string] {
@@ -555,6 +631,9 @@ function createOperatorRequester(octokit: Octokit): OperatorGitHubRequester {
     async request(route, parameters) {
       const response = await octokit.request(route, parameters);
       return { data: response.data };
+    },
+    async graphql(query, variables) {
+      return await octokit.graphql(query, variables);
     }
   };
 }
@@ -584,7 +663,8 @@ function printSetupResult(result: {
 
 function printCleanPlan(plan: ReturnType<typeof buildCleanPlan>): void {
   const actions = plan.entries.filter((entry) => entry.action !== "preserve");
-  console.log(`Clean plan ${plan.planId} for ${plan.repository}: ${actions.length} admitted actions, ${plan.entries.length - actions.length} preserved entries.`);
+  const reviewFindings = plan.entries.filter((entry) => entry.kind === "lane-finding");
+  console.log(`Clean plan ${plan.planId} for ${plan.repository}: ${actions.length} admitted actions, ${plan.entries.length - actions.length} preserved entries, ${reviewFindings.length} deterministic review findings.`);
   for (const entry of plan.entries) console.log(`- ${entry.action}: ${entry.kind} ${entry.target} @ ${entry.head.slice(0, 12)} (${entry.classification})`);
   console.log(`Apply only with: df clean apply ${plan.planId}`);
 }
