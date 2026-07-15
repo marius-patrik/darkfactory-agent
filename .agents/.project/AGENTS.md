@@ -5,8 +5,8 @@ for local execution and shared personal state.
 
 - Keep webhook handlers in `src/bot.ts` and HTTP routing in `src/server.ts`.
 - Keep managed-file discovery in `src/managed-files.ts` and fail closed unless
-  the sole `agent-os-data` registration resolves to
-  `$AGENTS_ROOT/data/agent-os`.
+  the sole `agent-os-data` registration names `marius-patrik/Andromeda-data`
+  and resolves exactly to the `$AGENTS_HOME` checkout root.
 - Keep repository setup checks in `src/repository-setup.ts`.
 - Open managed setup pull requests; never write directly to default branches.
 - Keep only repository-local context in `.agents/.project/`.

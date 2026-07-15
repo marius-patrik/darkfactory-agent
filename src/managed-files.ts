@@ -209,9 +209,9 @@ function resolveCanonicalDataRepoRoot(): string {
   if (!dataReposFile) throw new Error("DarkFactory requires AGENTS_DATA_REPOS from Agent OS");
   if (!existsSync(dataReposFile)) throw new Error(`Agent OS data repository registry does not exist: ${dataReposFile}`);
 
-  const agentsRoot = process.env.AGENTS_ROOT?.trim();
-  if (!agentsRoot) throw new Error("DarkFactory requires AGENTS_ROOT from Agent OS");
-  const expectedPath = resolve(agentsRoot, "data", "agent-os");
+  const agentsHome = process.env.AGENTS_HOME?.trim();
+  if (!agentsHome) throw new Error("DarkFactory requires AGENTS_HOME from Agent OS");
+  const expectedPath = resolve(agentsHome);
 
   try {
     const parsed = JSON.parse(readFileSync(dataReposFile, "utf8")) as unknown;
@@ -221,8 +221,8 @@ function resolveCanonicalDataRepoRoot(): string {
       throw new Error(`Agent OS data repository registry must contain only the agent-os-data record: ${dataReposFile}`);
     }
     const dataRepo = parsed[0];
-    if (dataRepo.repo !== "marius-patrik/agents-data") {
-      throw new Error(`agent-os-data must use repository marius-patrik/agents-data in ${dataReposFile}`);
+    if (dataRepo.repo !== "marius-patrik/Andromeda-data") {
+      throw new Error(`agent-os-data must use repository marius-patrik/Andromeda-data in ${dataReposFile}`);
     }
     if (typeof dataRepo.path !== "string" || !dataRepo.path.trim()) {
       throw new Error(`Invalid agent-os-data path in ${dataReposFile}`);

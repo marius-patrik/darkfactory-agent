@@ -1081,3 +1081,17 @@ test("human and JSON formats preserve deterministic zero-token evidence", () => 
   assert.match(doctor.formatDoctorReports(reports), /HEALTHY \(diagnose, read_only=true\)/);
   assert.equal(JSON.parse(JSON.stringify(reports))[0].token_usage.model_calls, 0);
 });
+
+test("retired authority audit includes repository-local project rules", async () => {
+  const { gh, calls } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/contents/.agents/.project/AGENTS.md")) {
+      return content("The managed source is $AGENTS_ROOT/data/agent-os.\n");
+    }
+    throw notFound();
+  });
+
+  const findings = await doctor.auditRetiredAuthorityNames(gh, repo, "main");
+
+  assert.ok(findings.some((finding) => finding.id === "retired-agent-os-data-path"));
+  assert.ok(calls.some((call) => call.path.includes("/contents/.agents/.project/AGENTS.md")));
+});

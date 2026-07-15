@@ -1117,6 +1117,7 @@ export async function auditRetiredAuthorityNames(github, repository, ref) {
     "README.md",
     "PRD.md",
     "AGENTS.md",
+    ".agents/.project/AGENTS.md",
     ".darkfactory/branching-policy.md",
     ".darkfactory/installer-policy.json",
     ".darkfactory/managed-repository.json",
