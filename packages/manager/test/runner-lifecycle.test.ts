@@ -2609,7 +2609,9 @@ describe("scheduled task mutation barriers", () => {
         expect((await installRunner(state, kit.deps)).ok, `${field}/${action}`).toBe(true);
         const recordFile = path.join(state.stateDir, "runner.json");
         const record = JSON.parse(await readFile(recordFile, "utf8")) as RunnerRecord;
-        record[field] = field === "scheduledTask" ? "Other-owned-task" : "C:\\Other\\launcher.ps1";
+        record[field] = field === "scheduledTask"
+          ? "Other-owned-task"
+          : path.resolve(path.dirname(record.launcherPath), "other-owned", "launcher.ps1");
         await writeFile(recordFile, `${JSON.stringify(record, null, 2)}\n`);
         const recordBefore = await readFile(recordFile, "utf8");
         kit.schedulerCalls.length = 0;
