@@ -6,6 +6,8 @@ import "./df-plan.test.js";
 import "./df-verify.test.js";
 import "./enforcement-rules.test.js";
 import "./managed-sync.test.js";
+import "./prompt-sync.test.js";
+import "./prompts.test.js";
 import "./script-policy.test.js";
 import "./repository-setup.test.js";
 import "./server.test.js";

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "run": {
+    "id": "run-20260713-orchestrate-001",
+    "kind": "orchestrate",
+    "purpose": "orchestration",
+    "triggeredBy": "schedule"
+  },
+  "repository": {
+    "owner": "marius-patrik",
+    "repo": "DarkFactory",
+    "defaultBranch": "dev"
+  },
+  "workItem": null,
+  "draftIntent": null,
+  "policy": {
+    "branching": "One worker = one issue = one branch = one PR; branch df/<issue>-<slug> from dev.",
+    "labels": ["P0", "P1", "P2", "df:ready", "df:running", "df:blocked"],
+    "enforcement": "All merges require green CI and the configured review gate; never force-push or bypass gates."
+  },
+  "validation": {
+    "commands": ["npm run check"]
+  },
+  "effort": "medium",
+  "verified": {
+    "facts": ["The managed repository registry is loaded and current."]
+  },
+  "output": { "id": "output/l0-orchestrator" },
+  "selection": {
+    "role": "role/l0-orchestrator",
+    "skills": ["skill/acceptance-driven-delivery"],
+    "modelTier": "high",
+    "overlays": ["overlay/github-control-plane", "overlay/agent-os-boundary", "overlay/token-economy"]
+  }
+}
