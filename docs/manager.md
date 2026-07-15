@@ -297,6 +297,11 @@ disabled, so local version truth remains Agent OS-owned.
 Runner mutations are Windows-only and fail closed on other platforms; `status`
 is read-only everywhere.
 
+Runner registration reads the canonical uppercase `GITHUB` secret only. Admit
+an already authorized owner credential through `agents secrets set GITHUB`
+(stdin by default, or `--from-file` for a verified local source); registration
+tokens remain short-lived and are never persisted.
+
 ### Runner status contract
 
 The authoritative readiness result is the seven-field `readiness` block:

@@ -6,6 +6,7 @@ import path from "node:path";
 import type { StateDoctorReport } from "../src/state-doctor";
 import { ensureSharedState, sharedState, type SharedState } from "../src/state";
 import { canonicalChildEnvironment } from "../src/runtime-paths";
+import { validateSecretName } from "../src/secrets";
 import {
   buildRunnerTaskSpec,
   createGitHubControlPlane,
@@ -23,6 +24,7 @@ import {
   runnerInstallDir,
   runnerLauncherPath,
   runnerStatus,
+  RUNNER_GITHUB_CREDENTIAL,
   RUNNER_LABELS,
   RUNNER_NAME,
   RUNNER_REPOSITORY,
@@ -404,6 +406,33 @@ afterEach(async () => {
     const root = roots.pop();
     if (root) await rm(root, { recursive: true, force: true });
   }
+});
+
+describe("runner GitHub credential contract", () => {
+  test("primary: the canonical runner credential is an admissible uppercase secret name", () => {
+    expect(validateSecretName(RUNNER_GITHUB_CREDENTIAL)).toBe("GITHUB");
+  });
+
+  test("edge: the live default control plane requests the canonical secret name exactly", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    const requested: string[] = [];
+    const report = await runnerStatus(state, {
+      ...kit.deps,
+      github: undefined,
+      readCredential: async (_state, name) => {
+        requested.push(name);
+        throw new Error("credential unavailable");
+      },
+    });
+
+    expect(requested).toEqual([RUNNER_GITHUB_CREDENTIAL]);
+    expect(report.issues).toContain("GitHub runner observation failed");
+  });
+
+  test("denied: the legacy lowercase spelling cannot bypass secret-name admission", () => {
+    expect(() => validateSecretName("github")).toThrow("invalid secret name");
+  });
 });
 
 // ---------------------------------------------------------------------------

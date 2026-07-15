@@ -28,7 +28,7 @@ export const RUNNER_REPOSITORY = "marius-patrik/DarkFactory";
 export const RUNNER_LABELS = ["self-hosted", "Windows", "X64", "df-local"] as const;
 export const RUNNER_SCHEDULED_TASK = "AgentOS-df-local-runner";
 export const RUNNER_SCHEDULED_TASK_PATH = "\\";
-export const RUNNER_GITHUB_CREDENTIAL = "github";
+export const RUNNER_GITHUB_CREDENTIAL = "GITHUB";
 
 /**
  * Resolve the inbox Windows PowerShell host from the OS-owned SystemRoot
