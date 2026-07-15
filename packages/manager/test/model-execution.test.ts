@@ -213,6 +213,35 @@ describe("canonical model execution route and receipt", () => {
     expect(result.receipt.usage).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
   });
 
+  test("reserves a blocked receipt before any provider turn starts", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const input = request(root, receiptDir, "high", "high", "workspace-write");
+    const result = await executeModelRequest(state, input, {
+      ...successfulDependencies(),
+      execute: async () => {
+        const pending = JSON.parse(await Bun.file(input.receiptPath).text());
+        expect(pending.outcome).toBe("blocked");
+        expect(pending.blockReason).toBe("execution_pending");
+        expect(pending.attempts).toEqual([
+          { number: 1, outcome: "blocked", reason: "execution_pending" },
+        ]);
+        return {
+          sessionId: "reserved-session",
+          outcome: {
+            resolvedExecutionPolicy: "workspace-write",
+            result: {
+              content: "complete",
+              role: "assistant",
+              usage: { tokensIn: 2, tokensOut: 3, totalTokens: 5 },
+            },
+          },
+        };
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.receipt.outcome).toBe("success");
+  });
+
   test("malformed usage and provider failures remain sanitized and fail closed", async () => {
     const { root, state, receiptDir } = await fixture();
     const secret = "AUTH_TOKEN_SHOULD_NOT_SURVIVE";
@@ -276,6 +305,28 @@ describe("canonical model execution route and receipt", () => {
       "must be a new file",
     );
     expect(await Bun.file(existing.receiptPath).text()).toBe("owner data");
+
+    const tampered = request(root, receiptDir, "medium", "high");
+    await expect(
+      executeModelRequest(state, tampered, {
+        ...successfulDependencies(),
+        execute: async () => {
+          await writeFile(tampered.receiptPath, "external receipt tamper");
+          return {
+            sessionId: "must-not-land",
+            outcome: {
+              resolvedExecutionPolicy: "read-only",
+              result: {
+                content: "must not land",
+                role: "assistant",
+                usage: { tokensIn: 1, tokensOut: 1, totalTokens: 2 },
+              },
+            },
+          };
+        },
+      }),
+    ).rejects.toThrow("execution receipt identity changed");
+    expect(await Bun.file(tampered.receiptPath).text()).toBe("external receipt tamper");
   });
 
   test("receipt containment accepts a lexical workdir alias but rejects a linked parent escape", async () => {

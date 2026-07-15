@@ -313,10 +313,13 @@ class ReceiptReservation {
   async commit(receipt: AgentExecutionReceipt): Promise<void> {
     if (this.closed) throw new Error("execution receipt reservation is closed");
     const before = fileIdentity(await this.handle.stat({ bigint: true }));
+    if (!sameIdentity(this.identity, before)) {
+      throw new Error("execution receipt identity changed");
+    }
     const named = await lstat(this.receiptPath, { bigint: true }).catch(() => null);
     if (!named || named.isSymbolicLink()) throw new Error("execution receipt identity changed");
     const namedIdentity = fileIdentity(named as unknown as Awaited<ReturnType<FileHandle["stat"]>>);
-    if (before.dev !== namedIdentity.dev || before.ino !== namedIdentity.ino) {
+    if (!sameIdentity(before, namedIdentity)) {
       throw new Error("execution receipt identity changed");
     }
     const content = Buffer.from(receiptText(receipt), "utf8");
