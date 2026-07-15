@@ -256,11 +256,12 @@ repository or owner target; use `--dry-run` to validate command construction.
 `df-local` GitHub Actions runner (`df-darkfactory-agent`): it provisions and
 registers the runner with the `self-hosted, Windows, X64, df-local` labels,
 persists it across reboot/logon through a least-privilege per-user scheduled
-task bound to the canonical `bin\agents.ps1` launcher, starts only after a
-healthy `agents state doctor`, never persists a registration token, reconciles
-stale/duplicate registrations and processes, and reports redacted health via
-`status --json`. The checksum-verified runner build is version-pinned with its
-upstream self-updater disabled, so local version truth remains Agent OS-owned.
+task bound through an absolute inbox Windows PowerShell path to the canonical
+`bin\agents.ps1` launcher, starts only after a healthy `agents state doctor`,
+never persists a registration token, reconciles stale/duplicate registrations
+and processes, and reports redacted health via `status --json`. The
+checksum-verified runner build is version-pinned with its upstream self-updater
+disabled, so local version truth remains Agent OS-owned.
 Runner mutations are Windows-only and fail closed on other platforms; `status`
 is read-only everywhere.
 
@@ -303,7 +304,11 @@ separately.
 
 Status is read-only and performs no live repair. Install, enable, disable, and
 repair remain the mutation commands, and each fails closed when required
-evidence is uncertain.
+evidence is uncertain. A Task Scheduler state of `Running` is never accepted as
+process health: a successful start must observe one exact
+`Runner.Listener.exe` identity from the canonical install. Direct supervised
+starts retain that PID, executable path, and creation time and terminate only
+that identity if startup times out or fails.
 
 All mutations serialize through one renewable runner-lifecycle lock. Local
 ownership comes from the physical `.runner` file's exact positive runner ID;
@@ -311,10 +316,11 @@ the canonical `runner.json` ID is only a recovery fallback when `.runner` is
 absent. Same-name rows never authorize deletion or takeover without that exact
 ID, and every retained or removed row must also match the canonical Windows OS
 and exact label set. Runner enumeration consumes every GitHub API page before
-reconciliation. A stale local configuration is cleared with the upstream
-runner's local-only `config.cmd remove --local` operation before a fresh
-short-lived registration token is used; no removal or registration token is
-persisted.
+reconciliation. A stale local configuration is cleared by invoking the
+upstream `Runner.Listener.exe remove --local` operation directly before a fresh
+short-lived registration token is used; neither a removal nor registration
+token is persisted. Configure and run use that same exact Listener executable,
+so lifecycle code never relies on ambient batch-command parsing.
 
 The scheduled-task definition also fixes duplicate and durability behavior:
 `IgnoreNew`, battery-safe start/continuation, three one-minute restart attempts,

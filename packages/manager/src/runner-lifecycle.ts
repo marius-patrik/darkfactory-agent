@@ -30,6 +30,25 @@ export const RUNNER_SCHEDULED_TASK = "AgentOS-df-local-runner";
 export const RUNNER_SCHEDULED_TASK_PATH = "\\";
 export const RUNNER_GITHUB_CREDENTIAL = "github";
 
+/**
+ * Resolve the inbox Windows PowerShell host from the OS-owned SystemRoot
+ * contract. Never let Task Scheduler or a manager subprocess search ambient
+ * PATH for a same-named executable.
+ */
+export function windowsPowerShellExecutable(env: NodeJS.ProcessEnv = process.env): string {
+  const systemRoot = (env.SystemRoot || env.SYSTEMROOT || "C:\\Windows").trim();
+  if (!path.win32.isAbsolute(systemRoot) || systemRoot.includes('"')) {
+    throw new Error("Windows SystemRoot is not an absolute trusted path");
+  }
+  return path.win32.join(
+    path.win32.normalize(systemRoot),
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
+
 /** Pinned upstream GitHub Actions runner used to provision the host software. */
 export const RUNNER_SOFTWARE = {
   version: "2.335.1",
@@ -41,6 +60,9 @@ export const RUNNER_SOFTWARE = {
 
 const REDACTED = "<redacted>";
 const RUNNER_RECORD_KEY = "runner";
+const RUNNER_START_OBSERVATION_TIMEOUT_MS = 15_000;
+const RUNNER_START_OBSERVATION_INTERVAL_MS = 100;
+const RUNNER_TERMINATION_GRACE_MS = 2_500;
 
 export interface RunnerRecord {
   schemaVersion: 1;
@@ -64,7 +86,7 @@ export interface ScheduledTaskIdentity {
 }
 
 export interface ScheduledTaskSpec extends ScheduledTaskIdentity {
-  /** The executable the task runs (powershell.exe). */
+  /** Absolute inbox Windows PowerShell executable used by the task. */
   executable: string;
   /** Full argument string bound to the canonical launcher. */
   arguments: string;
@@ -111,6 +133,14 @@ export interface RunnerProcess {
   commandLine?: string;
 }
 
+/** Exact process ownership returned by the host start boundary. */
+export interface RunnerRunHandle {
+  process: RunnerProcess;
+  exited: Promise<number>;
+  /** Terminate only the PID + executable + creation-time identity above. */
+  terminate(): Promise<void>;
+}
+
 interface RunnerConfiguration {
   agentId: number;
   agentName: string;
@@ -151,7 +181,7 @@ export interface RunnerHost {
   runnerVersion(dir: string): Promise<string | null>;
   runningInstances(dir: string): Promise<RunnerProcess[]>;
   stopInstances(instances: RunnerProcess[]): Promise<void>;
-  run(dir: string, env: Record<string, string | undefined>): Promise<number>;
+  run(dir: string, env: Record<string, string | undefined>): Promise<RunnerRunHandle>;
 }
 
 interface RunnerSoftwareDescriptor {
@@ -179,6 +209,14 @@ interface WindowsRunnerHostOptions {
   lstat?: (filePath: string) => Promise<{ isFile(): boolean; isSymbolicLink(): boolean }>;
   configurationLstat?: (filePath: string) => Promise<{ isFile(): boolean; isSymbolicLink(): boolean }>;
   readFile?: (filePath: string, encoding: "utf8") => Promise<string>;
+  spawnRunner?: (
+    argv: string[],
+    options: { cwd: string; env: Record<string, string | undefined> },
+  ) => { pid: number; exited: Promise<number>; kill(): void };
+  /** Test-only host ownership timings; production shares the lifecycle start contract. */
+  ownershipObservationTimeoutMs?: number;
+  ownershipObservationIntervalMs?: number;
+  terminationGraceMs?: number;
 }
 
 export interface RunnerDeps {
@@ -192,6 +230,9 @@ export interface RunnerDeps {
   principal?: () => string;
   /** Read the canonical GitHub credential; injectable so tests never read personal secrets. */
   readCredential?: (state: SharedState, name: string) => Promise<string>;
+  /** Test-only bounded observation controls; production uses the constants below. */
+  startObservationTimeoutMs?: number;
+  startObservationIntervalMs?: number;
 }
 
 let injectedDeps: RunnerDeps | null = null;
@@ -212,6 +253,8 @@ interface ResolvedDeps {
   host: RunnerHost;
   principal: () => string;
   readCredential: (state: SharedState, name: string) => Promise<string>;
+  startObservationTimeoutMs: number;
+  startObservationIntervalMs: number;
 }
 
 function resolveDeps(overrides: RunnerDeps = {}): ResolvedDeps {
@@ -224,6 +267,8 @@ function resolveDeps(overrides: RunnerDeps = {}): ResolvedDeps {
     host: merged.host ?? windowsRunnerHost(),
     principal: merged.principal ?? currentWindowsPrincipal,
     readCredential: merged.readCredential ?? ((state, name) => readSecret(state, name)),
+    startObservationTimeoutMs: merged.startObservationTimeoutMs ?? RUNNER_START_OBSERVATION_TIMEOUT_MS,
+    startObservationIntervalMs: merged.startObservationIntervalMs ?? RUNNER_START_OBSERVATION_INTERVAL_MS,
   };
 }
 
@@ -416,7 +461,15 @@ async function runProcess(
 }
 
 async function runPowerShell(script: string): Promise<ProcessResult> {
-  return runProcess(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+  return runProcess([
+    windowsPowerShellExecutable(),
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script,
+  ]);
 }
 
 function powerShellQuote(value: string): string {
@@ -853,6 +906,25 @@ export function createWindowsRunnerHost(options: WindowsRunnerHostOptions = {}):
   const lstatImpl = options.lstat ?? ((filePath: string) => lstat(filePath));
   const configurationLstat = options.configurationLstat ?? ((filePath: string) => lstat(filePath));
   const readFileImpl = options.readFile ?? ((filePath: string, encoding: "utf8") => readFile(filePath, encoding));
+  const spawnRunner = options.spawnRunner ?? ((argv, spawnOptions) => {
+    const child = Bun.spawn(argv, {
+      cwd: spawnOptions.cwd,
+      env: spawnOptions.env,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    return {
+      pid: child.pid,
+      exited: child.exited,
+      kill: () => { child.kill(); },
+    };
+  });
+  const ownershipObservationTimeoutMs =
+    options.ownershipObservationTimeoutMs ?? RUNNER_START_OBSERVATION_TIMEOUT_MS;
+  const ownershipObservationIntervalMs =
+    options.ownershipObservationIntervalMs ?? RUNNER_START_OBSERVATION_INTERVAL_MS;
+  const terminationGraceMs = options.terminationGraceMs ?? RUNNER_TERMINATION_GRACE_MS;
 
   const isMissing = (error: unknown): boolean =>
     Boolean(error && typeof error === "object" && (error as NodeJS.ErrnoException).code === "ENOENT");
@@ -886,7 +958,7 @@ export function createWindowsRunnerHost(options: WindowsRunnerHostOptions = {}):
     }
   }
 
-  return {
+  const host: RunnerHost = {
     async isProvisioned(dir) {
       for (const relativePath of REQUIRED_RUNNER_FILES) {
         if (!(await physicalRunnerFileExists(path.join(dir, ...relativePath.split("/"))))) return false;
@@ -953,7 +1025,7 @@ export function createWindowsRunnerHost(options: WindowsRunnerHostOptions = {}):
       );
     },
     async resetLocalConfiguration(dir) {
-      const result = await runProcessImpl([path.join(dir, "config.cmd"), "remove", "--local"], {
+      const result = await runProcessImpl([path.join(dir, "bin", "Runner.Listener.exe"), "remove", "--local"], {
         cwd: dir,
         env: canonicalChildEnvironment(),
       });
@@ -973,7 +1045,10 @@ export function createWindowsRunnerHost(options: WindowsRunnerHostOptions = {}):
         "--labels",
         options.labels.join(","),
       ];
-      const result = await runProcessImpl([path.join(dir, "config.cmd"), ...args], { cwd: dir, env: canonicalChildEnvironment() });
+      const result = await runProcessImpl([path.join(dir, "bin", "Runner.Listener.exe"), "configure", ...args], {
+        cwd: dir,
+        env: canonicalChildEnvironment(),
+      });
       if (result.code !== 0) throw new Error(`runner configuration failed: ${result.stderr.trim()}`);
     },
     async runnerVersion(dir) {
@@ -1092,16 +1167,99 @@ export function createWindowsRunnerHost(options: WindowsRunnerHostOptions = {}):
       }
     },
     async run(dir, env) {
-      const child = Bun.spawn(commandInvocation(path.join(dir, "run.cmd"), [], env), {
-        cwd: dir,
-        env,
-        stdin: "ignore",
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-      return child.exited;
+      const listenerPath = path.win32.join(dir, "bin", "Runner.Listener.exe");
+      const child = spawnRunner([listenerPath, "run"], { cwd: dir, env });
+      if (!Number.isSafeInteger(child.pid) || child.pid <= 0) {
+        throw new Error("runner host spawn returned an invalid process identity");
+      }
+      const exitState: { settled: boolean; code?: number; error?: unknown } = { settled: false };
+      void child.exited.then(
+        (code) => { exitState.settled = true; exitState.code = code; },
+        (error) => { exitState.settled = true; exitState.error = error; },
+      );
+
+      async function cleanFailedSpawn(): Promise<void> {
+        try { child.kill(); } catch { /* observation below still has to prove absence */ }
+        const deadline = Date.now() + terminationGraceMs;
+        do {
+          if (exitState.settled) return;
+          try {
+            const observed = await host.runningInstances(dir);
+            const exact = observed.find((instance) => instance.pid === child.pid) ?? null;
+            if (exact !== null) {
+              await host.stopInstances([exact]);
+              const after = await host.runningInstances(dir);
+              if (after.every(
+                (instance) =>
+                  instance.pid !== exact.pid ||
+                  instance.executablePath.toLowerCase() !== exact.executablePath.toLowerCase() ||
+                  instance.startedAt !== exact.startedAt,
+              )) return;
+            }
+          } catch {
+            // Direct child exit remains an independent proof. Keep polling it
+            // until the bounded grace expires when CIM is unavailable.
+          }
+          await Bun.sleep(ownershipObservationIntervalMs);
+        } while (Date.now() < deadline);
+        throw new Error("runner host ownership establishment failed and child cleanup did not complete");
+      }
+
+      let owned: RunnerProcess | null = null;
+      try {
+        const deadline = Date.now() + ownershipObservationTimeoutMs;
+        do {
+          const observed = await host.runningInstances(dir);
+          owned = observed.find((instance) => instance.pid === child.pid) ?? null;
+          if (owned) break;
+          if (exitState.settled) {
+            if (exitState.error !== undefined) throw exitState.error;
+            throw new Error(`runner host exited with code ${exitState.code ?? -1} before ownership was established`);
+          }
+          await Bun.sleep(ownershipObservationIntervalMs);
+        } while (Date.now() < deadline);
+        if (!owned) throw new Error("runner host process ownership could not be established");
+        if (owned.executablePath.toLowerCase() !== listenerPath.toLowerCase()) {
+          throw new Error("runner host process ownership did not match the canonical listener");
+        }
+      } catch (error) {
+        await cleanFailedSpawn();
+        throw error;
+      }
+
+      const process = owned;
+      let termination: Promise<void> | null = null;
+      return {
+        process,
+        exited: child.exited,
+        terminate() {
+          termination ??= (async () => {
+            await host.stopInstances([process]);
+            let settled = false;
+            await Promise.race([
+              child.exited.then(
+                () => { settled = true; },
+                () => { settled = true; },
+              ),
+              Bun.sleep(terminationGraceMs),
+            ]);
+            if (!settled) {
+              const after = await host.runningInstances(dir);
+              const ownedRemains = after.some(
+                (instance) =>
+                  instance.pid === process.pid &&
+                  instance.executablePath.toLowerCase() === process.executablePath.toLowerCase() &&
+                  instance.startedAt === process.startedAt,
+              );
+              if (ownedRemains) throw new Error("runner host termination grace period expired");
+            }
+          })();
+          return termination;
+        },
+      };
     },
   };
+  return host;
 }
 
 function windowsRunnerHost(): RunnerHost {
@@ -1206,7 +1364,7 @@ export function buildRunnerTaskSpec(state: SharedState, principalUser: string): 
   return {
     name: RUNNER_SCHEDULED_TASK,
     path: RUNNER_SCHEDULED_TASK_PATH,
-    executable: "powershell.exe",
+    executable: windowsPowerShellExecutable(),
     arguments:
       `-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden ` +
       `-File "${runnerLauncherPath(state, "win32")}" runner run`,
@@ -1375,8 +1533,6 @@ export interface RunnerStatusReport {
 // ---------------------------------------------------------------------------
 
 const RUNNER_LIFECYCLE_LOCK_KEY = "runner-lifecycle";
-const RUNNER_START_OBSERVATION_TIMEOUT_MS = 15_000;
-const RUNNER_START_OBSERVATION_INTERVAL_MS = 100;
 
 async function executeRunnerMutation(
   state: SharedState,
@@ -1533,40 +1689,158 @@ async function reconcileProcesses(
 }
 
 /**
- * Keep the lifecycle lock across the spawn-to-observable transition. Starting
- * `run.cmd` is synchronous, but its child Runner.Listener is not; releasing
- * the lock before CIM can identify that exact listener would leave a window
- * where a concurrent direct `runner run` could launch a second host.
+ * Keep the lifecycle lock across the spawn-to-observable transition. Releasing
+ * the lock before CIM can confirm the exact spawned Listener identity would
+ * leave a window where a concurrent direct `runner run` could launch a second
+ * host.
  */
 async function waitForStartedRunner(
   host: RunnerHost,
   installDir: string,
-  exited: Promise<number>,
+  handle: RunnerRunHandle,
   markMutationBoundary: () => void,
+  timeoutMs: number,
+  intervalMs: number,
 ): Promise<{ process: RunnerProcess; stopped: number[] }> {
   const exitState: { value: { code: number } | { error: unknown } | null } = { value: null };
-  void exited.then(
+  void handle.exited.then(
     (code) => { exitState.value = { code }; },
     (error) => { exitState.value = { error }; },
   );
-  const deadline = Date.now() + RUNNER_START_OBSERVATION_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   const stopped: number[] = [];
-  do {
-    const observed = await host.runningInstances(installDir);
-    const reconciled = await reconcileProcesses(host, observed, markMutationBoundary);
-    stopped.push(...reconciled.stopped);
-    if (reconciled.kept !== null) return { process: reconciled.kept, stopped };
-    if (exitState.value !== null) {
-      if ("error" in exitState.value) throw exitState.value.error;
-      throw new Error(`runner host exited with code ${exitState.value.code} before its process became observable`);
+  try {
+    do {
+      const observed = await host.runningInstances(installDir);
+      requireValidRunnerProcesses(observed);
+      const owned = observed.find(
+        (instance) =>
+          instance.pid === handle.process.pid &&
+          instance.executablePath.toLowerCase() === handle.process.executablePath.toLowerCase() &&
+          instance.startedAt === handle.process.startedAt,
+      ) ?? null;
+      // Do not stop a process merely because the owned process has not become
+      // observable yet. Once ownership is proven, every other exact-install
+      // Listener is a duplicate and can be reconciled safely.
+      const extras = owned === null
+        ? []
+        : observed.filter(
+            (instance) =>
+              instance.pid !== owned.pid ||
+              instance.executablePath.toLowerCase() !== owned.executablePath.toLowerCase() ||
+              instance.startedAt !== owned.startedAt,
+          );
+      if (extras.length > 0) {
+        markMutationBoundary();
+        await host.stopInstances(extras);
+        stopped.push(...extras.map((instance) => instance.pid));
+      }
+      if (owned !== null) return { process: owned, stopped };
+      if (exitState.value !== null) {
+        if ("error" in exitState.value) throw exitState.value.error;
+        throw new Error(`runner host exited with code ${exitState.value.code} before its process became observable`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    } while (Date.now() < deadline);
+    throw new Error("runner host start postcondition timed out before its process became observable");
+  } catch (error) {
+    try {
+      await handle.terminate();
+    } catch {
+      throw new Error("runner host start failed and exact-process cleanup did not complete");
     }
-    await new Promise((resolve) => setTimeout(resolve, RUNNER_START_OBSERVATION_INTERVAL_MS));
+    throw error;
+  }
+}
+
+async function waitForRunnerReady(
+  host: RunnerHost,
+  github: RunnerGitHub,
+  installDir: string,
+  exactRunnerId: number,
+  timeoutMs: number,
+  intervalMs: number,
+): Promise<{ process: RunnerProcess; registration: RunnerRegistration }> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const [processes, registrations] = await Promise.all([
+      host.runningInstances(installDir),
+      github.listRunners(RUNNER_REPOSITORY),
+    ]);
+    requireValidRunnerProcesses(processes);
+    const sameName = registrations.filter((registration) => registration.name === RUNNER_NAME);
+    const exact = sameName.find((registration) => registration.id === exactRunnerId) ?? null;
+    if (
+      sameName.length !== 1 ||
+      exact === null ||
+      !registrationHasCanonicalIdentity(exact)
+    ) {
+      throw new Error("GitHub runner registration changed during startup observation");
+    }
+    const process = processes.length === 1 ? processes[0]! : null;
+    if (process !== null && exact.status === "online") {
+      // Sandwich the control-plane observation between two exact local reads.
+      // A Listener that exits or is replaced while GitHub is queried cannot
+      // satisfy the final conjunction.
+      const after = await host.runningInstances(installDir);
+      requireValidRunnerProcesses(after);
+      const sameProcess = after.length === 1 && after.some(
+        (instance) =>
+          instance.pid === process.pid &&
+          instance.executablePath.toLowerCase() === process.executablePath.toLowerCase() &&
+          instance.startedAt === process.startedAt,
+      );
+      if (sameProcess) return { process, registration: exact };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   } while (Date.now() < deadline);
-  throw new Error("runner host start postcondition timed out before its process became observable");
+  throw new Error(
+    "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+  );
+}
+
+async function finalizeRunnerReadiness(
+  state: SharedState,
+  deps: ResolvedDeps,
+  github: RunnerGitHub,
+  result: RunnerActionResult,
+  exactRunnerId: number | null,
+  redact: (text: string) => string,
+): Promise<RunnerActionResult> {
+  if (!result.ok) return result;
+  if (exactRunnerId === null) {
+    return redactRunnerOutput({
+      ok: false,
+      action: result.action,
+      changed: result.changed,
+      issues: ["runner readiness identity was not retained across the mutation boundary"],
+      details: result.changed ? { partialMutation: true } : {},
+    }, redact);
+  }
+  try {
+    await waitForRunnerReady(
+      deps.host,
+      github,
+      runnerInstallDir(state),
+      exactRunnerId,
+      deps.startObservationTimeoutMs,
+      deps.startObservationIntervalMs,
+    );
+    return result;
+  } catch (error) {
+    return redactRunnerOutput({
+      ok: false,
+      action: result.action,
+      changed: result.changed,
+      issues: [redactError(error, redact)],
+      details: result.changed ? { partialMutation: true } : {},
+    }, redact);
+  }
 }
 
 function isInstalledAndHealthy(observation: RunnerObservation, spec: ScheduledTaskSpec): boolean {
   const launcher = launcherCheck(observation.doctor);
+  const registrations = matchingRegistrations(observation);
   return (
     observation.record !== null &&
     observation.provisioned &&
@@ -1577,15 +1851,15 @@ function isInstalledAndHealthy(observation: RunnerObservation, spec: ScheduledTa
     observation.record.runnerId === observation.config.agentId &&
     observation.doctor.ok &&
     launcher?.ok === true &&
-    matchingRegistrations(observation).length === 1 &&
-    matchingRegistrations(observation)[0]?.id === observation.config.agentId &&
-    registrationHasCanonicalIdentity(matchingRegistrations(observation)[0]!) &&
+    registrations.length === 1 &&
+    registrations[0]?.id === observation.config.agentId &&
+    registrations[0]?.status === "online" &&
+    registrationHasCanonicalIdentity(registrations[0]!) &&
     observation.task !== null &&
     observation.task.enabled &&
     taskMatchesSpec(observation.task, spec) &&
     taskHasCanonicalPersistence(observation.task, spec) &&
-    observation.processes.length <= 1 &&
-    (observation.processes.length === 1 || observation.task.state === "Running")
+    observation.processes.length === 1
   );
 }
 
@@ -1598,7 +1872,8 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
   const github = resolveGitHub(state, deps, overrides);
   const sensitive: Array<string | null> = [];
   const redact = makeRedactor(sensitive);
-  return executeRunnerMutation(state, "install", redact, async (markMutationBoundary) => {
+  let readinessRunnerId: number | null = null;
+  const mutation = await executeRunnerMutation(state, "install", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const doctor = await deps.doctor(state);
     requireHealthyDoctor(doctor, redact);
@@ -1616,6 +1891,7 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
     requireHealthyDoctor(observation.doctor, redact);
     requireRunnerBinding(observation.configured, observation.config, RUNNER_REPOSITORY);
     if (isInstalledAndHealthy(observation, spec)) {
+      readinessRunnerId = observation.config!.agentId;
       return {
         ok: true,
         action: "install",
@@ -1704,6 +1980,7 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
       throw new Error("local and GitHub runner identity postcondition failed");
     }
     record.runnerId = registration.id;
+    readinessRunnerId = registration.id;
     record.registered = true;
     record.registeredAt ??= deps.now().toISOString();
 
@@ -1747,13 +2024,15 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
       },
     };
   });
+  return finalizeRunnerReadiness(state, deps, github, mutation, readinessRunnerId, redact);
 }
 
 export async function enableRunner(state: SharedState, overrides: RunnerDeps = {}): Promise<RunnerActionResult> {
   const deps = resolveDeps(overrides);
   const github = resolveGitHub(state, deps, overrides);
   const redact = makeRedactor([]);
-  return executeRunnerMutation(state, "enable", redact, async (markMutationBoundary) => {
+  let readinessRunnerId: number | null = null;
+  const mutation = await executeRunnerMutation(state, "enable", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const observation = await observeRunner(state, deps, github);
     requireHealthyDoctor(observation.doctor, redact);
@@ -1790,6 +2069,7 @@ export async function enableRunner(state: SharedState, overrides: RunnerDeps = {
       markMutationBoundary,
     );
     if (!registration.kept) throw new Error("exact GitHub runner registration is missing; run `agents runner repair`");
+    readinessRunnerId = registration.kept.id;
     const processes = await reconcileProcesses(deps.host, observation.processes, markMutationBoundary);
     const changes: string[] = [];
     if (registration.removed.length > 0) changes.push(`removed duplicate registrations ${registration.removed.join(",")}`);
@@ -1803,16 +2083,18 @@ export async function enableRunner(state: SharedState, overrides: RunnerDeps = {
     if (!enabledTask?.enabled || !taskMatchesSpec(enabledTask, spec) || !taskHasCanonicalPersistence(enabledTask, spec)) {
       throw new Error("scheduled task enable postcondition failed");
     }
-    if (processes.kept === null && task.state !== "Running") {
-      markMutationBoundary();
-      await deps.scheduler.start(spec);
-      changes.push("started scheduled task");
-    }
+    // Commit authority before Start-ScheduledTask. Its `agents runner run`
+    // child must see enabled truth after this lock is released.
     if (!record.enabled) {
       record.enabled = true;
       markMutationBoundary();
       await writeRunnerRecord(state, record);
       changes.push("updated runner record");
+    }
+    if (processes.kept === null) {
+      markMutationBoundary();
+      await deps.scheduler.start(spec);
+      changes.push("started scheduled task");
     }
     return {
       ok: true,
@@ -1822,6 +2104,7 @@ export async function enableRunner(state: SharedState, overrides: RunnerDeps = {
       details: { task: RUNNER_SCHEDULED_TASK, changes },
     };
   });
+  return finalizeRunnerReadiness(state, deps, github, mutation, readinessRunnerId, redact);
 }
 
 export async function disableRunner(state: SharedState, overrides: RunnerDeps = {}): Promise<RunnerActionResult> {
@@ -1876,7 +2159,8 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
   const github = resolveGitHub(state, deps, overrides);
   const sensitive: Array<string | null> = [];
   const redact = makeRedactor(sensitive);
-  return executeRunnerMutation(state, "repair", redact, async (markMutationBoundary) => {
+  let readinessRunnerId: number | null = null;
+  const mutation = await executeRunnerMutation(state, "repair", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const doctor = await deps.doctor(state);
     requireHealthyDoctor(doctor, redact);
@@ -1985,6 +2269,7 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
       throw new Error("local and GitHub runner identity postcondition failed");
     }
     record.runnerId = registration.id;
+    readinessRunnerId = registration.id;
     record.registered = true;
     record.registeredAt ??= deps.now().toISOString();
 
@@ -2011,7 +2296,7 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
     }
     record.enabled = true;
     const recordChanged = existing === null || JSON.stringify(record) !== originalRecord;
-    const shouldStart = keptProcess === null && current?.state !== "Running";
+    const shouldStart = keptProcess === null;
     if (recordChanged || changed.length > 0 || shouldStart) {
       record.lastRepairedAt = deps.now().toISOString();
       markMutationBoundary();
@@ -2031,6 +2316,7 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
       details: { runnerId: record.runnerId, repairs: changed },
     };
   });
+  return finalizeRunnerReadiness(state, deps, github, mutation, readinessRunnerId, redact);
 }
 
 /**
@@ -2043,7 +2329,8 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
   const deps = resolveDeps(overrides);
   const github = resolveGitHub(state, deps, overrides);
   const redact = makeRedactor([]);
-  let exitPromise: Promise<number> | null = null;
+  let runHandle: RunnerRunHandle | null = null;
+  let readinessRunnerId: number | null = null;
   const preflight = await executeRunnerMutation(state, "run", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const observation = await observeRunner(state, deps, github);
@@ -2083,6 +2370,7 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
       markMutationBoundary,
     );
     if (!registration.kept) throw new Error("exact GitHub runner registration is missing; run `agents runner repair`");
+    readinessRunnerId = registration.kept.id;
     const processes = await reconcileProcesses(deps.host, observation.processes, markMutationBoundary);
     if (processes.kept !== null) {
       return {
@@ -2105,12 +2393,14 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
       AGENTS_ROOT: state.root,
     };
     markMutationBoundary();
-    exitPromise = deps.host.run(runnerInstallDir(state), env);
+    runHandle = await deps.host.run(runnerInstallDir(state), env);
     const started = await waitForStartedRunner(
       deps.host,
       runnerInstallDir(state),
-      exitPromise,
+      runHandle,
       markMutationBoundary,
+      deps.startObservationTimeoutMs,
+      deps.startObservationIntervalMs,
     );
     return {
       ok: true,
@@ -2124,9 +2414,51 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
       },
     };
   });
-  if (exitPromise === null || !preflight.ok) return preflight;
+  // The handle is assigned inside the locked callback. Capture it explicitly;
+  // TypeScript cannot infer closure assignment through that async boundary.
+  const completedHandle = runHandle as RunnerRunHandle | null;
+  if (!preflight.ok) return preflight;
+  let ready: Awaited<ReturnType<typeof waitForRunnerReady>>;
   try {
-    const code = await exitPromise;
+    if (readinessRunnerId === null) throw new Error("runner readiness identity was not retained across the mutation boundary");
+    ready = await waitForRunnerReady(
+      deps.host,
+      github,
+      runnerInstallDir(state),
+      readinessRunnerId,
+      deps.startObservationTimeoutMs,
+      deps.startObservationIntervalMs,
+    );
+  } catch (error) {
+    if (completedHandle !== null) {
+      try {
+        await completedHandle.terminate();
+      } catch {
+        return redactRunnerOutput({
+          ok: false,
+          action: "run",
+          changed: preflight.changed,
+          issues: ["runner registration start failed and exact-process cleanup did not complete"],
+          details: preflight.changed ? { partialMutation: true } : {},
+        }, redact);
+      }
+    }
+    return redactRunnerOutput({
+      ok: false,
+      action: "run",
+      changed: preflight.changed,
+      issues: [redactError(error, redact)],
+      details: preflight.changed ? { partialMutation: true } : {},
+    }, redact);
+  }
+  if (completedHandle === null) {
+    return {
+      ...preflight,
+      details: { ...preflight.details, pids: [ready.process.pid] },
+    };
+  }
+  try {
+    const code = await completedHandle.exited;
     return redactRunnerOutput({
       ok: code === 0,
       action: "run",

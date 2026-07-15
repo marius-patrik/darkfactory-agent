@@ -32,10 +32,12 @@ import {
   setRunnerDeps,
   taskHasCanonicalPersistence,
   taskMatchesSpec,
+  windowsPowerShellExecutable,
   type RunnerDeps,
   type RunnerGitHub,
   type RunnerHost,
   type RunnerProcess,
+  type RunnerRunHandle,
   type RunnerReadiness,
   type RunnerRecord,
   type RunnerRegistration,
@@ -98,7 +100,7 @@ function taskInfo(overrides: Partial<ScheduledTaskInfo> & Pick<ScheduledTaskInfo
     enabled: true,
     state: "Ready",
     actionCount: 1,
-    actionExecutable: "powershell.exe",
+    actionExecutable: windowsPowerShellExecutable(),
     actionArguments: "",
     triggerCount: 1,
     triggerKind: "AtLogOn",
@@ -180,6 +182,7 @@ function makeKit(options: {
       schedulerCalls.push(`start:${identity.name}`);
       const task = tasks.get(identity.name);
       if (task) task.state = "Running";
+      if (task && hostState.instances.length === 0) hostState.instances.push(runnerProcess(6000));
     },
   };
 
@@ -264,7 +267,21 @@ function makeKit(options: {
     async run() {
       hostCalls.push("run");
       if (hostState.instances.length === 0) hostState.instances.push(runnerProcess(6000));
-      return 0;
+      const process = hostState.instances[0]!;
+      return {
+        process: { ...process },
+        exited: Promise.resolve(0),
+        async terminate() {
+          hostCalls.push(`terminate:${process.pid}`);
+          const index = hostState.instances.findIndex(
+            (candidate) =>
+              candidate.pid === process.pid &&
+              candidate.executablePath.toLowerCase() === process.executablePath.toLowerCase() &&
+              candidate.startedAt === process.startedAt,
+          );
+          if (index >= 0) hostState.instances.splice(index, 1);
+        },
+      };
     },
   };
 
@@ -422,6 +439,8 @@ describe("runner install", () => {
     expect(task.enabled).toBe(true);
     expect(task.actionExecutable).toBe(spec.executable);
     expect(task.actionArguments).toBe(spec.arguments);
+    expect(task.state).toBe("Running");
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
     expect(root.length).toBeGreaterThan(0);
   });
 
@@ -654,7 +673,7 @@ describe("runner enable and disable", () => {
 
     expect(result.ok).toBe(true);
     expect(result.changed).toBe(true);
-    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:900"]);
+    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:900", "listRunners"]);
     expect(kit.hostCalls).toEqual(["stopInstances:1"]);
     expect(kit.hostState.instances.map((instance) => instance.pid)).toEqual([900]);
     expect(kit.schedulerCalls).toEqual([`setEnabled:${RUNNER_SCHEDULED_TASK}:true`]);
@@ -724,6 +743,7 @@ describe("runner repair", () => {
       "createRegistrationToken",
       "listRunners",
       "removeRunner:500",
+      "listRunners",
     ]);
     expect((await readRunnerRecord(state))!.registered).toBe(true);
     expect((await readRunnerRecord(state))!.runnerId).toBe(501);
@@ -747,7 +767,7 @@ describe("runner repair", () => {
     expect(JSON.parse(await readFile(configPath, "utf8")).disableUpdate).toBe(true);
   });
 
-  test("repair reconciles the supplied preflight registrations after process mutation without relisting", async () => {
+  test("repair uses preflight rows for mutation but final readiness rejects a later control-plane identity change", async () => {
     const { state } = await freshState();
     const kit = makeKit();
     expect((await installRunner(state, kit.deps)).ok).toBe(true);
@@ -780,9 +800,10 @@ describe("runner repair", () => {
 
     const result = await repairRunner(state, deps);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.changed).toBe(true);
-    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:900"]);
+    expect(result.issues).toEqual(["GitHub runner registration changed during startup observation"]);
+    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:900", "listRunners"]);
     expect(kit.hostCalls).toEqual(["stopInstances:200"]);
     expect(kit.serverRunners.map((runner) => runner.id)).toEqual([999]);
     expect((await readRunnerRecord(state))!.runnerId).toBe(500);
@@ -862,7 +883,7 @@ describe("runner repair", () => {
 
     expect(result.ok).toBe(true);
     expect(result.changed).toBe(true);
-    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:999"]);
+    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:999", "listRunners"]);
     expect(kit.serverRunners.map((registration) => registration.id)).toEqual([500]);
     expect((await readRunnerRecord(state))?.runnerId).toBe(500);
   });
@@ -915,6 +936,193 @@ describe("runner repair", () => {
     expect(kit.githubCalls).toEqual(["listRunners"]);
     expect(kit.hostCalls).toEqual([]);
     expect(kit.serverRunners.map((registration) => registration.id)).toEqual([999]);
+  });
+});
+
+describe("runner lifecycle start postconditions", () => {
+  test("install, enable, and repair never trust stale Task Scheduler Running state without a Listener", async () => {
+    for (const action of ["install", "enable", "repair"] as const) {
+      const { state } = await freshState();
+      const kit = makeKit();
+      expect((await installRunner(state, kit.deps)).ok, action).toBe(true);
+      kit.hostState.instances = [];
+      kit.tasks.get(RUNNER_SCHEDULED_TASK)!.state = "Running";
+      kit.schedulerCalls.length = 0;
+      const baseScheduler = kit.deps.scheduler!;
+      const scheduler: RunnerScheduler = {
+        ...baseScheduler,
+        async start(identity) {
+          kit.schedulerCalls.push(`start:${identity.name}`);
+          const task = kit.tasks.get(identity.name);
+          if (task) task.state = "Running";
+          // Deliberately never materialize Runner.Listener.exe.
+        },
+      };
+      const deps: RunnerDeps = {
+        ...kit.deps,
+        scheduler,
+        startObservationTimeoutMs: 20,
+        startObservationIntervalMs: 2,
+      };
+
+      const result = action === "install"
+        ? await installRunner(state, deps)
+        : action === "enable"
+          ? await enableRunner(state, deps)
+          : await repairRunner(state, deps);
+
+      expect(result.ok, action).toBe(false);
+      expect(result.changed, action).toBe(true);
+      expect(result.details.partialMutation, action).toBe(true);
+      expect(result.issues, action).toEqual([
+        "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+      ]);
+      expect(kit.schedulerCalls, action).toEqual([`start:${RUNNER_SCHEDULED_TASK}`]);
+      expect(kit.hostState.instances, action).toEqual([]);
+    }
+  });
+
+  test("install never reports success while an observed Listener registration remains offline", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.serverRunners[0]!.status = "offline";
+
+    const result = await installRunner(state, {
+      ...kit.deps,
+      startObservationTimeoutMs: 20,
+      startObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(true);
+    expect(result.issues).toEqual([
+      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+    ]);
+  });
+
+  test("an initially online registration that flips offline during start cannot satisfy the final conjunction", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.hostState.instances = [];
+    const scheduler: RunnerScheduler = {
+      ...kit.deps.scheduler!,
+      async start(identity) {
+        const task = kit.tasks.get(identity.name);
+        if (task) task.state = "Running";
+        kit.hostState.instances.push(runnerProcess(6100));
+        kit.serverRunners[0]!.status = "offline";
+      },
+    };
+
+    const result = await installRunner(state, {
+      ...kit.deps,
+      scheduler,
+      startObservationTimeoutMs: 25,
+      startObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(true);
+    expect(result.issues).toEqual([
+      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+    ]);
+  });
+
+  test("a Listener that exits while an offline registration becomes online cannot satisfy readiness", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.hostState.instances = [];
+    kit.serverRunners[0]!.status = "offline";
+    const scheduler: RunnerScheduler = {
+      ...kit.deps.scheduler!,
+      async start(identity) {
+        const task = kit.tasks.get(identity.name);
+        if (task) task.state = "Running";
+        kit.hostState.instances.push(runnerProcess(6200));
+        setTimeout(() => { kit.hostState.instances = []; }, 5);
+        setTimeout(() => { kit.serverRunners[0]!.status = "online"; }, 10);
+      },
+    };
+
+    const result = await enableRunner(state, {
+      ...kit.deps,
+      scheduler,
+      startObservationTimeoutMs: 30,
+      startObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(true);
+    expect(result.issues).toEqual([
+      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+    ]);
+  });
+
+  test("post-lock readiness is read-only when a second Listener appears after the locked preflight", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    const first = runnerProcess(6000);
+    const second = runnerProcess(6001);
+    let reads = 0;
+    let stopCalls = 0;
+    const deps = withHostOverrides(kit, {
+      async runningInstances() {
+        reads += 1;
+        return reads === 1 ? [{ ...first }] : [{ ...first }, { ...second }];
+      },
+      async stopInstances() {
+        stopCalls += 1;
+      },
+    });
+
+    const result = await installRunner(state, {
+      ...deps,
+      startObservationTimeoutMs: 20,
+      startObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(false);
+    expect(result.issues).toEqual([
+      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+    ]);
+    expect(stopCalls).toBe(0);
+  });
+
+  test("enable releases the lifecycle lock after committing enabled truth so its scheduled child can boot", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    expect((await disableRunner(state, kit.deps)).ok).toBe(true);
+    let childPromise: Promise<Awaited<ReturnType<typeof runRunner>>> | null = null;
+    let deps!: RunnerDeps;
+    const scheduler: RunnerScheduler = {
+      ...kit.deps.scheduler!,
+      async start(identity) {
+        const task = kit.tasks.get(identity.name);
+        if (task) task.state = "Running";
+        setTimeout(() => { childPromise = runRunner(state, deps); }, 0);
+      },
+    };
+    deps = {
+      ...kit.deps,
+      scheduler,
+      startObservationTimeoutMs: 500,
+      startObservationIntervalMs: 2,
+    };
+
+    const enabled = await enableRunner(state, deps);
+    for (let attempt = 0; attempt < 100 && childPromise === null; attempt += 1) await Bun.sleep(2);
+    const child = childPromise === null ? null : await childPromise;
+
+    expect(enabled.ok).toBe(true);
+    expect((await readRunnerRecord(state))?.enabled).toBe(true);
+    expect(child).toMatchObject({ ok: true, action: "run", details: { exitCode: 0 } });
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
   });
 });
 
@@ -1153,7 +1361,10 @@ describe("Windows runner provisioning boundary", () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.argv[0]).toBe(path.join(installDir, "config.cmd"));
+    expect(calls[0]!.argv.slice(0, 2)).toEqual([
+      path.join(installDir, "bin", "Runner.Listener.exe"),
+      "configure",
+    ]);
     expect(calls[0]!.argv).toContain("--unattended");
     expect(calls[0]!.argv).toContain("--replace");
     expect(calls[0]!.argv).toContain("--disableupdate");
@@ -1174,10 +1385,136 @@ describe("Windows runner provisioning boundary", () => {
     await host.resetLocalConfiguration(installDir);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.argv).toEqual([path.join(installDir, "config.cmd"), "remove", "--local"]);
+    expect(calls[0]!.argv).toEqual([
+      path.join(installDir, "bin", "Runner.Listener.exe"),
+      "remove",
+      "--local",
+    ]);
     expect(calls[0]!.argv).not.toContain("--token");
     expect(calls[0]!.cwd).toBe(installDir);
     expect(calls[0]!.env).toEqual(canonicalChildEnvironment());
+  });
+
+  test("spawns the exact Listener and terminates only its PID plus executable plus creation identity", async () => {
+    const installDir = "C:\\canonical\\runner";
+    const executablePath = path.win32.join(installDir, "bin", "Runner.Listener.exe");
+    const startedAt = "2026-07-15T12:34:56.789Z";
+    const spawnCalls: Array<{ argv: string[]; cwd: string; env: Record<string, string | undefined> }> = [];
+    const powerShellCalls: string[] = [];
+    let terminated = false;
+    let resolveExit!: (code: number) => void;
+    const exited = new Promise<number>((resolve) => { resolveExit = resolve; });
+    const host = createWindowsRunnerHost({
+      spawnRunner(argv, options) {
+        spawnCalls.push({ argv: [...argv], cwd: options.cwd, env: { ...options.env } });
+        return { pid: 8123, exited, kill: () => resolveExit(143) };
+      },
+      async runPowerShell(script) {
+        powerShellCalls.push(script);
+        if (script.includes("Where-Object")) {
+          return {
+            code: 0,
+            stdout: terminated
+              ? "[]"
+              : JSON.stringify({
+                  ProcessId: 8123,
+                  ExecutablePath: executablePath,
+                  CreationTime: startedAt,
+                  CommandLine: `\"${executablePath}\" run`,
+                }),
+            stderr: "",
+          };
+        }
+        terminated = true;
+        resolveExit(143);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    const env = { AGENTS_HOME: "C:\\canonical\\.agents" };
+
+    const handle = await host.run(installDir, env);
+    await Promise.all([handle.terminate(), handle.terminate()]);
+
+    expect(spawnCalls).toEqual([{ argv: [executablePath, "run"], cwd: installDir, env }]);
+    expect(handle.process).toEqual({ pid: 8123, executablePath, startedAt, commandLine: `\"${executablePath}\" run` });
+    const stopScripts = powerShellCalls.filter((script) => script.includes("Invoke-CimMethod"));
+    expect(stopScripts).toHaveLength(1);
+    expect(stopScripts[0]).toContain("ProcessId = 8123");
+    expect(stopScripts[0]).toContain(executablePath.replace(/'/g, "''"));
+    expect(stopScripts[0]).toContain(startedAt);
+  });
+
+  test("default host cleans a late Listener after ownership timeout even when child.exited never settles", async () => {
+    const installDir = "C:\\canonical\\runner";
+    const executablePath = path.win32.join(installDir, "bin", "Runner.Listener.exe");
+    const startedAt = "2026-07-15T12:35:56.789Z";
+    let visible = false;
+    let stopped = false;
+    let killCalls = 0;
+    let stopCalls = 0;
+    const lateVisibility = setTimeout(() => { visible = true; }, 15);
+    const host = createWindowsRunnerHost({
+      ownershipObservationTimeoutMs: 8,
+      ownershipObservationIntervalMs: 2,
+      terminationGraceMs: 80,
+      spawnRunner() {
+        return {
+          pid: 8124,
+          exited: new Promise<number>(() => undefined),
+          kill: () => { killCalls += 1; },
+        };
+      },
+      async runPowerShell(script) {
+        if (script.includes("Where-Object")) {
+          return {
+            code: 0,
+            stdout: visible && !stopped
+              ? JSON.stringify({
+                  ProcessId: 8124,
+                  ExecutablePath: executablePath,
+                  CreationTime: startedAt,
+                  CommandLine: `\"${executablePath}\" run`,
+                })
+              : "[]",
+            stderr: "",
+          };
+        }
+        stopCalls += 1;
+        stopped = true;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    await expect(host.run(installDir, {})).rejects.toThrow(
+      "runner host process ownership could not be established",
+    );
+    clearTimeout(lateVisibility);
+
+    expect(killCalls).toBe(1);
+    expect(stopCalls).toBe(1);
+    expect(await host.runningInstances(installDir)).toEqual([]);
+  });
+
+  test("default host surfaces cleanup failure when neither child exit nor CIM absence can prove termination", async () => {
+    let killCalls = 0;
+    const host = createWindowsRunnerHost({
+      ownershipObservationTimeoutMs: 4,
+      ownershipObservationIntervalMs: 1,
+      terminationGraceMs: 6,
+      spawnRunner() {
+        return {
+          pid: 8125,
+          exited: new Promise<number>(() => undefined),
+          kill: () => { killCalls += 1; },
+        };
+      },
+      runPowerShell: async () => { throw new Error("CIM unavailable"); },
+    });
+
+    await expect(host.run("C:\\canonical\\runner", {})).rejects.toThrow(
+      "runner host ownership establishment failed and child cleanup did not complete",
+    );
+    expect(killCalls).toBe(1);
   });
 
   test("publishes only a complete verified runner and removes archive/staging leftovers", async () => {
@@ -1939,7 +2276,7 @@ describe("scheduled task mutation barriers", () => {
     expect(result.ok).toBe(true);
     expect(enableResolutions).toBe(1);
     expect(kit.principalCalls).toEqual(["principal"]);
-    expect(kit.schedulerCalls).toEqual([`start:${RUNNER_SCHEDULED_TASK}`]);
+    expect(kit.schedulerCalls).toEqual([]);
   });
 
   test("enable performs zero mutation for missing, drifted, extra, ambiguous, uncertain, or unresolved task evidence", async () => {
@@ -3704,6 +4041,116 @@ describe("runner run (supervised host)", () => {
     expect(kit.hostCalls).not.toContain("run");
   });
 
+  test("run starts one exact Listener and returns its exit result", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.hostState.instances = [];
+    kit.hostCalls.length = 0;
+
+    const result = await runRunner(state, kit.deps);
+
+    expect(result).toMatchObject({ ok: true, action: "run", changed: true, details: { exitCode: 0 } });
+    expect(kit.hostCalls).toEqual(["run"]);
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
+  });
+
+  test("run timeout cancels a late spawn and cleans only the owned process identity", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.hostState.instances = [];
+    const process = runnerProcess(7331);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let terminateCalls = 0;
+    let resolveExit!: (code: number) => void;
+    const exited = new Promise<number>((resolve) => { resolveExit = resolve; });
+    const deps = withHostOverrides(kit, {
+      async run(): Promise<RunnerRunHandle> {
+        timer = setTimeout(() => {
+          kit.hostState.instances.push({ ...process });
+        }, 60);
+        return {
+          process: { ...process },
+          exited,
+          async terminate() {
+            terminateCalls += 1;
+            if (timer !== null) clearTimeout(timer);
+            timer = null;
+            kit.hostState.instances = kit.hostState.instances.filter(
+              (candidate) =>
+                candidate.pid !== process.pid ||
+                candidate.executablePath.toLowerCase() !== process.executablePath.toLowerCase() ||
+                candidate.startedAt !== process.startedAt,
+            );
+            resolveExit(143);
+          },
+        };
+      },
+    });
+
+    const result = await runRunner(state, {
+      ...deps,
+      startObservationTimeoutMs: 20,
+      startObservationIntervalMs: 2,
+    });
+    await Bun.sleep(80);
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(true);
+    expect(result.details.partialMutation).toBe(true);
+    expect(result.issues).toEqual([
+      "runner host start postcondition timed out before its process became observable",
+    ]);
+    expect(terminateCalls).toBe(1);
+    expect(kit.hostState.instances).toEqual([]);
+  });
+
+  test("run cleans its exact Listener when the registration never comes online", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.hostState.instances = [];
+    kit.serverRunners[0]!.status = "offline";
+    kit.hostCalls.length = 0;
+
+    const result = await runRunner(state, {
+      ...kit.deps,
+      startObservationTimeoutMs: 20,
+      startObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(true);
+    expect(result.issues).toEqual([
+      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+    ]);
+    expect(kit.hostCalls).toEqual(["run", "terminate:6000"]);
+    expect(kit.hostState.instances).toEqual([]);
+  });
+
+  test("run does not accept an already-running Listener whose sole registration is offline", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.serverRunners[0]!.status = "offline";
+    kit.hostCalls.length = 0;
+
+    const result = await runRunner(state, {
+      ...kit.deps,
+      startObservationTimeoutMs: 20,
+      startObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(false);
+    expect(result.issues).toEqual([
+      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+    ]);
+    expect(kit.hostCalls).toEqual([]);
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
+  });
+
   test("run reconciles stale registrations and duplicate process identities before refusing another start", async () => {
     const { state } = await freshState();
     const kit = makeKit();
@@ -3727,7 +4174,7 @@ describe("runner run (supervised host)", () => {
 
     expect(result.ok).toBe(true);
     expect(result.changed).toBe(true);
-    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:900"]);
+    expect(kit.githubCalls).toEqual(["listRunners", "removeRunner:900", "listRunners"]);
     expect(kit.hostCalls).toEqual(["stopInstances:2"]);
     expect(kit.hostState.instances.map((instance) => instance.pid)).toEqual([800]);
     expect(result.details.pids).toEqual([800]);
@@ -3744,16 +4191,33 @@ describe("runner run (supervised host)", () => {
       releaseRun = resolve;
     });
     const deps = withHostOverrides(kit, {
-      run: async () => {
+      run: async (): Promise<RunnerRunHandle> => {
         runCalls += 1;
         const process = runnerProcess(7000 + runCalls);
-        // Model run.cmd spawning Runner.Listener asynchronously. The lifecycle
-        // lock must remain held until the listener is actually observable.
+        // Model the Listener becoming observable shortly after spawn. The
+        // lifecycle lock must remain held until that exact identity is seen.
         await Bun.sleep(30);
         kit.hostState.instances.push(process);
-        await runGate;
-        kit.hostState.instances = kit.hostState.instances.filter((candidate) => candidate !== process);
-        return 0;
+        return {
+          process,
+          exited: runGate.then(() => {
+            kit.hostState.instances = kit.hostState.instances.filter(
+              (candidate) =>
+                candidate.pid !== process.pid ||
+                candidate.executablePath.toLowerCase() !== process.executablePath.toLowerCase() ||
+                candidate.startedAt !== process.startedAt,
+            );
+            return 0;
+          }),
+          async terminate() {
+            kit.hostState.instances = kit.hostState.instances.filter(
+              (candidate) =>
+                candidate.pid !== process.pid ||
+                candidate.executablePath.toLowerCase() !== process.executablePath.toLowerCase() ||
+                candidate.startedAt !== process.startedAt,
+            );
+          },
+        };
       },
     });
 
@@ -4001,7 +4465,7 @@ function taskQueryPayload(overrides: Record<string, unknown> = {}): Record<strin
     Enabled: true,
     State: "Ready",
     ActionCount: 1,
-    Actions: [{ Execute: "powershell.exe", Arguments: "" }],
+    Actions: [{ Execute: windowsPowerShellExecutable(), Arguments: "" }],
     TriggerCount: 1,
     Triggers: [{ Kind: "MSFT_TaskLogonTrigger", User: TEST_PRINCIPAL }],
     Principal: { UserId: TEST_PRINCIPAL, LogonType: "Interactive", RunLevel: "Limited" },
@@ -4027,9 +4491,22 @@ describe("scheduled task contract", () => {
     expect(spec.name).toBe(RUNNER_SCHEDULED_TASK);
     expect(spec.path).toBe(RUNNER_SCHEDULED_TASK_PATH);
     expect(spec.principalUser).toBe(TEST_PRINCIPAL);
-    expect(spec.executable).toBe("powershell.exe");
+    expect(spec.executable).toBe(windowsPowerShellExecutable());
+    expect(path.win32.isAbsolute(spec.executable)).toBe(true);
     expect(spec.arguments).toBe(
       `-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${record.launcherPath}" runner run`,
+    );
+  });
+
+  test("PowerShell resolution is absolute and rejects an untrusted relative SystemRoot", () => {
+    expect(windowsPowerShellExecutable({ SystemRoot: "D:\\Windows" } as NodeJS.ProcessEnv)).toBe(
+      "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    );
+    expect(() => windowsPowerShellExecutable({ SystemRoot: "relative-root" } as NodeJS.ProcessEnv)).toThrow(
+      "Windows SystemRoot is not an absolute trusted path",
+    );
+    expect(() => windowsPowerShellExecutable({ SystemRoot: 'C:\\Windows\" -Command evil' } as NodeJS.ProcessEnv)).toThrow(
+      "Windows SystemRoot is not an absolute trusted path",
     );
   });
 
