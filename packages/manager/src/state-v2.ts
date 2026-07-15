@@ -60,7 +60,21 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 const TRANSIENT_WINDOWS_PUBLICATION_ERRORS = new Set(["EACCES", "EBUSY", "ENOENT", "EPERM"]);
+
+interface WindowsFileOperationRetryPolicy {
+  readonly attempts: number;
+  readonly maxWaitMilliseconds: number;
+}
+
 const WINDOWS_PUBLICATION_ATTEMPTS = 10;
+const WINDOWS_FILE_OPERATION_RETRY_POLICY: WindowsFileOperationRetryPolicy = {
+  attempts: WINDOWS_PUBLICATION_ATTEMPTS,
+  maxWaitMilliseconds: 160,
+};
+const WINDOWS_ATOMIC_REPLACEMENT_RETRY_POLICY: WindowsFileOperationRetryPolicy = {
+  attempts: 12,
+  maxWaitMilliseconds: 1_000,
+};
 const atomicPublicationTails = new Map<string, Promise<void>>();
 
 async function serializeAtomicPublication(filePath: string, operation: () => Promise<void>): Promise<void> {
@@ -78,20 +92,21 @@ export async function retryWindowsFileOperation<T>(
   operation: () => Promise<T>,
   platform = process.platform,
   wait: (milliseconds: number) => Promise<void> = delay,
+  retryPolicy: WindowsFileOperationRetryPolicy = WINDOWS_FILE_OPERATION_RETRY_POLICY,
 ): Promise<T> {
   if (platform !== "win32") {
     return await operation();
   }
-  for (let attempt = 0; attempt < WINDOWS_PUBLICATION_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < retryPolicy.attempts; attempt += 1) {
     try {
       return await operation();
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? "";
       if (
         !TRANSIENT_WINDOWS_PUBLICATION_ERRORS.has(code) ||
-        attempt === WINDOWS_PUBLICATION_ATTEMPTS - 1
+        attempt === retryPolicy.attempts - 1
       ) throw error;
-      await wait(Math.min(160, 10 * 2 ** attempt));
+      await wait(Math.min(retryPolicy.maxWaitMilliseconds, 10 * 2 ** attempt));
     }
   }
   throw new Error("unreachable Windows file-operation retry state");
@@ -139,6 +154,7 @@ export async function publishAtomicReplacement(
     () => operations.rename(temporary, filePath),
     operations.platform,
     operations.wait,
+    WINDOWS_ATOMIC_REPLACEMENT_RETRY_POLICY,
   );
 }
 
