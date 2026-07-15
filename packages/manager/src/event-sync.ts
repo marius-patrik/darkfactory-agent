@@ -253,22 +253,175 @@ const STRUCTURAL_STRING_FIELDS = new Set([
 function secretLikeText(value: string): boolean {
   if (
     /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(value) ||
-    /\bAKIA[A-Z0-9]{16}\b/.test(value) ||
-    /\bgh[pousr]_[A-Za-z0-9]{20,}\b/.test(value) ||
-    /\b(?:sk-(?:ant-|proj-)?|xox[baprs]-|hf_|npm_|pypi-)[A-Za-z0-9_\-]{16,}\b/.test(value) ||
-    /\bAIza[A-Za-z0-9_-]{30,}\b/.test(value) ||
-    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/.test(value) ||
-    /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}={0,2}\b/i.test(value) ||
-    /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|https?):\/\/[^\s/:@]+:[^\s/@]+@/i.test(value) ||
-    /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|authorization|connection[_-]?string|dsn)\s*[:=]\s*["']?[^\s"']{8,}/i.test(value)
+    /(?<![A-Za-z0-9])AKIA[A-Z0-9]{16}(?![A-Za-z0-9])/.test(value) ||
+    /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/.test(value) ||
+    /(?<![A-Za-z0-9])(?:sk-(?:ant-|proj-)?|xox[baprs]-|hf_|npm_|pypi-)[A-Za-z0-9_\-]{16,}(?![A-Za-z0-9_\-])/.test(
+      value,
+    ) ||
+    /(?<![A-Za-z0-9])AIza[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/.test(value) ||
+    /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])/.test(
+      value,
+    ) ||
+    /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+\/-]{16,}={0,2}(?![A-Za-z0-9._~+\/=-])/i.test(value) ||
+    /(?<![A-Za-z0-9])(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|https?):\/\/[^\s/:@]+:[^\s/@]+@/i.test(
+      value,
+    ) ||
+    /(?<![A-Za-z0-9])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|authorization|connection[_-]?string|dsn)\s*[:=]\s*["']?[^\s"']{8,}/i.test(
+      value,
+    )
   ) {
     return true;
   }
   // Evidence fields can embed local file URIs; explicit secret signatures above
   // still scan the full value, while URI path material is excluded only from the
   // generic high-entropy fallback.
-  const entropyInput = value
-    .replace(/\bfile:\/\/[^\s)]+/gi, "")
+  const pathClosers = new Map<string, string>([
+    ['"', '"'],
+    ["'", "'"],
+    ["`", "`"],
+    ["[", "]"],
+    ["(", ")"],
+    ["{", "}"],
+    ["<", ">"],
+  ]);
+  const hardUnquotedPathBoundary = (character: string): boolean =>
+    /[\r\n\t"'`\[\]{}<>,;:=|?*]/.test(character);
+  const looksLikeFileLeaf = (component: string): boolean =>
+    /[^.]\.[A-Za-z0-9][A-Za-z0-9._-]{0,15}$/.test(component.trim());
+  const containsOpaquePathToken = (segment: string): boolean =>
+    (segment.match(/[A-Za-z0-9_+.-]{16,}/g) ?? []).some((token) => {
+      const counts = new Map<string, number>();
+      for (const character of token) counts.set(character, (counts.get(character) ?? 0) + 1);
+      const entropy = [...counts.values()].reduce((total, count) => {
+        const probability = count / token.length;
+        return total - probability * Math.log2(probability);
+      }, 0);
+      return entropy >= 4;
+    });
+  const findPathEnd = (
+    input: string,
+    start: number,
+    limit: number,
+    delimited: boolean,
+  ): number => {
+    let end = start;
+    let componentStart = start;
+    while (end < limit) {
+      const character = input[end] ?? "";
+      if (/\s/.test(character)) {
+        if (character !== " ") break;
+        // Whitespace is ambiguous in free-form diagnostics: the same bytes can
+        // be a multi-word path or a path followed by unrelated secret material.
+        // Require a matched quote/bracket as structured producer evidence.
+        if (!delimited) break;
+        const currentComponent = input.slice(componentStart, end);
+        if (looksLikeFileLeaf(currentComponent)) break;
+        if (["//", "\\\\"].includes(input.slice(end + 1, end + 3))) break;
+        end += 1;
+        continue;
+      }
+      if (hardUnquotedPathBoundary(character)) break;
+      if (character === "/" || character === "\\") {
+        componentStart = end + 1;
+      }
+      end += 1;
+    }
+    return end;
+  };
+  const omitInspectedAbsolutePaths = (input: string): { value: string; longSegment: boolean } => {
+    const output = input.split("");
+    const omitted = new Array<boolean>(input.length).fill(false);
+    let longSegment = false;
+    let matchedCloserByOpener: Int32Array | null = null;
+    const delimitedPathEnd = (openerIndex: number): number | null => {
+      if (!matchedCloserByOpener) {
+        const matches = new Int32Array(input.length);
+        matches.fill(-1);
+        const structuralOpeners = new Set(["(", "[", "{", "<"]);
+        const openerByCloser = new Map([
+          [")", "("],
+          ["]", "["],
+          ["}", "{"],
+          [">", "<"],
+        ]);
+        const structuralStack: Array<{ character: string; index: number }> = [];
+        const pendingQuotes = new Map<string, number>([
+          ['"', -1],
+          ["'", -1],
+          ["`", -1],
+        ]);
+        for (let index = 0; index < input.length; index += 1) {
+          const character = input[index] ?? "";
+          if (character === "\r" || character === "\n") {
+            structuralStack.length = 0;
+            for (const quote of pendingQuotes.keys()) pendingQuotes.set(quote, -1);
+            continue;
+          }
+          const pendingQuote = pendingQuotes.get(character);
+          if (pendingQuote !== undefined) {
+            if (pendingQuote < 0) pendingQuotes.set(character, index);
+            else {
+              matches[pendingQuote] = index;
+              pendingQuotes.set(character, -1);
+            }
+          }
+          if (structuralOpeners.has(character)) {
+            structuralStack.push({ character, index });
+            continue;
+          }
+          const expectedOpener = openerByCloser.get(character);
+          if (!expectedOpener) continue;
+          const pendingOpener = structuralStack.at(-1);
+          if (pendingOpener?.character === expectedOpener) {
+            matches[pendingOpener.index] = index;
+            structuralStack.pop();
+          } else if (pendingOpener) {
+            // Crossing or mismatched delimiters do not establish a trustworthy
+            // path boundary. Invalidate the open structure on this line.
+            structuralStack.length = 0;
+          }
+        }
+        matchedCloserByOpener = matches;
+      }
+      const end = matchedCloserByOpener[openerIndex] ?? -1;
+      return end >= 0 ? end : null;
+    };
+    const roots = /(?<![A-Za-z0-9_+.\-\\/])(?:[A-Za-z]:[\\/]|\\\\|\/(?![\\/]))/g;
+    for (const match of input.matchAll(roots)) {
+      const start = match.index;
+      const root = match[0];
+      if (start === undefined || omitted[start]) continue;
+      const opener = input[start - 1] ?? "";
+      const delimitedEnd = pathClosers.has(opener)
+        ? delimitedPathEnd(start - 1)
+        : undefined;
+      // An unmatched quote/bracket is ambiguous. Leave it in the generic
+      // fail-closed lane instead of treating the rest of the line as a path.
+      if (delimitedEnd === null) continue;
+      const end = findPathEnd(
+        input,
+        start + root.length,
+        delimitedEnd ?? input.length,
+        delimitedEnd !== undefined,
+      );
+      if (end <= start + root.length || /[\u0000-\u001f\u007f]/.test(input.slice(start, end))) continue;
+      const absolutePath = input.slice(start, end);
+      if (absolutePath.split(/[\\/]+/).some((segment) =>
+        segment.trim().length >= 32 || containsOpaquePathToken(segment)
+      )) {
+        longSegment = true;
+      }
+      for (let index = start; index < end; index += 1) {
+        output[index] = " ";
+        omitted[index] = true;
+      }
+    }
+    return { value: output.join(""), longSegment };
+  };
+  let entropyInput = value
+    // Strip only the scheme of an unambiguous local file URI. The remaining
+    // absolute path must pass the same segment inspection as native paths.
+    .replace(/\bfile:\/\/(?=\/|[A-Za-z]:[\\/])/gi, (scheme) => " ".repeat(scheme.length))
     // Canonical GitHub repository URLs and an adjacent, explicitly labelled
     // repository lineage are identifiers, not bearer material. The lineage
     // exemption intentionally accepts one to three identifier segments with at
@@ -281,17 +434,22 @@ function secretLikeText(value: string): boolean {
     .replace(
       /\(renamed from (?=[a-z0-9._/-]*(?:[-.][a-z0-9._/-]*){2})[a-z0-9][a-z0-9._-]{0,99}(?:\/[a-z0-9][a-z0-9._-]{0,99}){1,2}\)/gi,
       "",
-    )
-    // Remove only a credential-free HTTP(S) origin. Repository slugs and opaque
-    // path/query material remain in the entropy scan.
+    );
+  // Inspect only exact, bounded local-path spans. Forward `//` remains ambiguous
+  // URL material and stays in the fail-closed generic lane.
+  const inspectedPaths = omitInspectedAbsolutePaths(entropyInput);
+  if (inspectedPaths.longSegment) return true;
+  entropyInput = inspectedPaths.value
+    // Remove only a credential-free HTTP(S) origin after local path inspection.
+    // Repository slugs and opaque path/query material remain in the fallback.
     .replace(/\bhttps?:\/\/(?:\[[^\]]+\]|[^\s/:@]+)(?::\d+)?(?=\/)/gi, "");
-  for (const candidate of entropyInput.match(/[A-Za-z0-9_+.\/-]{32,}={0,2}/g) ?? []) {
+  for (const candidate of entropyInput.match(/[A-Za-z0-9_+.\\/-]{32,}={0,2}/g) ?? []) {
     if (UUID.test(candidate)) continue;
     if (/^(?:[a-f0-9]{40}|[a-f0-9]{64})\.?$/.test(candidate)) continue;
     // Bare GitHub-style owner/repository slugs in prose are identifiers. Requiring
     // repository punctuation avoids exempting arbitrary lowercase slash tokens.
     if (CANONICAL_REPO_SLUG.test(candidate) && /[.-]/.test(candidate)) continue;
-    if (/[A-Za-z]/.test(candidate) && (/[0-9]/.test(candidate) || /[_+\/-]/.test(candidate))) return true;
+    if (/[A-Za-z]/.test(candidate) && (/[0-9]/.test(candidate) || /[_+\\/-]/.test(candidate))) return true;
     if (/[a-z]/.test(candidate) && /[A-Z]/.test(candidate)) {
       const counts = new Map<string, number>();
       for (const character of candidate) counts.set(character, (counts.get(character) ?? 0) + 1);
