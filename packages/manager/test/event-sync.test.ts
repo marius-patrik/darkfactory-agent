@@ -975,6 +975,7 @@ describe("encrypted cross-machine event exchange", () => {
         "Keep abc1d23e-4567-890f-ab12-cdefg34h567i as a bounded provider session identifier.",
         "Keep clis/agy/.gemini/oauth_creds.json local while documenting provider state.",
         "Track https://github.com/marius-patrik/Andromeda/issues/245 as public issue metadata.",
+        "Inspect C:\\Users\\patrik\\AppData\\Local\\Temp\\andromeda-253-kimi-blockers.txt.",
         "Inspect C:\\Users\\patrik\\AppData\\Local\\Temp\\andromeda-260-kimi-blockers.txt.",
         "Observe Microsoft.PowerShell.Cmdletization.GeneratedTypes.ScheduledTask.CimClassProperties as a public type.",
       ] as const;
@@ -1138,6 +1139,9 @@ describe("encrypted cross-machine event exchange", () => {
         `abc1d23e-4567-890f-ab12-cdefg34h567i${opaque}`,
         `clis/agy/.gemini/oauth_creds.json/${opaque}`,
         `Microsoft.PowerShell.Cmdletization.GeneratedTypes.ScheduledTask.CimClassProperties/${opaque}`,
+        "C:\\Temp\\correct-horse-battery-1.txt",
+        "C:\\Temp\\api-secret-value-123.txt",
+        "C:\\Temp\\andromeda-260-kimi-blockers.txt-opaque",
         "token: `config.cmd-opaquevalue`",
         `token: ghr_FAKE_REGISTRATION_TOKEN_0123456789${opaque}`,
       ] as const;

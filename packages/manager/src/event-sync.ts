@@ -317,6 +317,22 @@ const PUBLIC_OPERATIONAL_IDENTIFIERS = new Set([
 
 const PUBLIC_RELEASE_BRANCH_WORDS = new Set(["after", "main", "reconcile", "release"]);
 
+// These basenames are public diagnostic artifacts named in canonical evidence.
+// Keep this closed over complete leaves: a lexical or numeric filename heuristic
+// can accidentally admit passphrase-shaped material inside an absolute path.
+const PUBLIC_ABSOLUTE_PATH_LEAVES = new Set([
+  "andromeda-253-kimi-blockers.txt",
+  "andromeda-260-kimi-blockers.txt",
+]);
+
+// Some canonical evidence predates the stable diagnostic names above. Pin the
+// complete public basename without copying rejected event text into source or
+// logs. Hash pinning admits only that exact leaf; extensions and descendants
+// still enter the fail-closed path-token scanner.
+const PUBLIC_ABSOLUTE_PATH_LEAF_HASHES = new Set([
+  "94e8c98f13c41e8698a9b48326297bc7c52fa290a2a2ab6ae1f9ce6b07eccf48",
+]);
+
 function isPublicOperationalIdentifier(candidate: string): boolean {
   if (PUBLIC_OPERATIONAL_IDENTIFIERS.has(candidate)) return true;
   const normalizedCandidate = candidate.endsWith(".") ? candidate.slice(0, -1) : candidate;
@@ -429,23 +445,36 @@ function secretLikeText(value: string): boolean {
     const normalized = segment.trim();
     const inspectedSegment = isLeaf && normalized.endsWith(".") ? normalized.slice(0, -1) : normalized;
     if (isLeaf && canonicalCompactionSnapshotLeaf) return false;
+    if (
+      isLeaf &&
+      (PUBLIC_ABSOLUTE_PATH_LEAVES.has(inspectedSegment.toLowerCase()) ||
+        PUBLIC_ABSOLUTE_PATH_LEAF_HASHES.has(createHash("sha256").update(inspectedSegment).digest("hex")))
+    ) {
+      return false;
+    }
     if (UUID.test(inspectedSegment)) return true;
-    const wordSlugFile = inspectedSegment.match(
-      /^((?:[a-z]{3,15}|\d{1,8})(?:-(?:[a-z]{3,15}|\d{1,8})){2,})\.([a-z0-9]{1,10})$/,
+    const datedWordSlugFile = inspectedSegment.match(
+      /^([a-z]{3,15}(?:-[a-z]{3,15}){2,})-(\d{8})\.([a-z0-9]{1,10})$/,
     );
-    if (isLeaf && wordSlugFile) {
-      const slugParts = (wordSlugFile[1] ?? "").split("-");
-      const lexicalWords = slugParts.filter((part) => /^[a-z]+$/.test(part));
-      const numericParts = slugParts.filter((part) => /^\d+$/.test(part));
+    if (isLeaf && datedWordSlugFile) {
+      const lexicalWords = (datedWordSlugFile[1] ?? "").split("-");
       const vowelCounts = lexicalWords.map((word) => (word.match(/[aeiouy]/g) ?? []).length);
       if (
-        lexicalWords.length >= 3 &&
-        numericParts.length <= 1 &&
         vowelCounts.every((count) => count >= 2) &&
         lexicalWords.every((word) => !/[^aeiouy]{4}/.test(word))
       ) {
         return false;
       }
+    }
+    // A long lexical slug can itself be a passphrase. Once the complete public
+    // leaves and the pre-existing dated-artifact form have been handled above,
+    // keep any remaining three-or-more-part slug in the fail-closed lane even
+    // when its Shannon score happens to be low.
+    if (
+      isLeaf &&
+      /^(?:[a-z]{3,15}-){2,}(?:[a-z]{3,15}|\d{1,8})\.[a-z0-9]{1,10}$/.test(inspectedSegment)
+    ) {
+      return true;
     }
     return (inspectedSegment.match(/[A-Za-z0-9_+.-]{16,}/g) ?? []).some((candidate) => {
       const token = candidate.replace(/[_+.-]/g, "");
