@@ -26,6 +26,7 @@ paths, expose raw provider execution, or synchronize mutable machine snapshots.
 
 ```text
 agents run|tui|sessions ...
+agents route probe ...
 agents state init|env|doctor|status
 agents memory remember|list|status|supersede|retract|render
 agents cli list|doctor|pin|env

@@ -10,8 +10,9 @@ import { readSessionConfig, type SessionConfig, type SharedState } from "./state
  *
  * Resolves a logical model tier plus an independent effort to the canonical
  * provider/model route, and optionally runs exactly one bounded reachability
- * probe through an injected executor (consumed by DarkFactory #263). No CLI
- * wiring: the smallest binding lands in a later integration step after #245.
+ * probe through an injected executor (consumed by DarkFactory #263). The CLI
+ * exposes only read-only resolution; reachability remains an injected seam
+ * until a production executor can preserve these bounds and trust invariants.
  *
  * Invariants:
  * - Tier and effort are independent; effort never alters provider, model, tier.

@@ -181,6 +181,7 @@ There is no compatibility mode or alternate loader to bypass.
 ```text
 agents run --model-tier low|medium|high|max --effort low|medium|high --execution-policy read-only|workspace-write --receipt <absolute-new-path> [--mode orchestrator|default|chat|task] [--prompt-file <absolute-path> | --prompt-stdin | <prompt>]
 agents run [--mode orchestrator|default] [--provider <id>] [--model <model>] [--tui] <prompt>
+agents route probe [--model-tier low|medium|high|max] [--effort low|medium|high] [--json]
 agents tui [--provider <id>] [--model <model>] [--mode <mode>]
 agents sessions list [--json]
 agents sessions resume <id> <prompt>
@@ -278,6 +279,15 @@ before provider work begins, then replaces it through the same file identity
 with the final route, provider version, attempt, usage, outcome, and sanitized
 block reason. Provider errors and prompt content never enter receipts or blocked
 CLI output; a route, doctor, policy, usage, or provider failure remains blocked.
+
+`agents route probe` is the read-only, zero-token readiness check for the same
+canonical route boundary. With no flags it checks DarkFactory's default
+`medium` tier at `medium` effort; explicit model tier and effort remain
+independent. JSON output preserves the versioned route-probe report and exits
+nonzero when canonical configuration, the provider pin, executable
+verification, or credential presence is unready. The CLI never invokes a
+provider and deliberately exposes no reachability flag until a production
+executor can satisfy the bounded disposable-state contract.
 
 Memory mutations require `--source`, `--hash`, `--source-class`, and
 `--confidence`. Secret commands never print secret values. A live
