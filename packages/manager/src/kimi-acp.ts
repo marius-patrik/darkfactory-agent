@@ -18,6 +18,7 @@ import type {
   TurnResult,
 } from "../../harness/session";
 import { commandInvocation } from "./process-command";
+import { runAnchoredFileAuthority } from "./anchored-file-authority";
 
 const KIMI_RECEIPT_KEYS = ["model", "provider", "providerSessionId", "transport"] as const;
 const MAX_PROVIDER_SESSION_ID_BYTES = 512;
@@ -240,6 +241,7 @@ interface WorkspaceFileLocation {
   lexicalRoot: string;
   lexicalTarget: string;
   physicalRoot: string;
+  physicalTarget: string;
 }
 
 interface FileIdentity {
@@ -275,6 +277,7 @@ async function workspaceFileLocation(
 
   const relative = path.relative(lexicalRoot, lexicalTarget);
   let cursor = lexicalRoot;
+  let physicalTarget: string | null = null;
   const components = relative.split(path.sep);
   for (const [index, component] of components.entries()) {
     cursor = path.join(cursor, component);
@@ -292,26 +295,23 @@ async function workspaceFileLocation(
     }
     const physical = await realpath(cursor).catch(() => null);
     if (!physical || !containsPath(physicalRoot, physical)) return null;
+    if (isTarget) physicalTarget = physical;
   }
-  return { lexicalRoot, lexicalTarget, physicalRoot };
+  return physicalTarget ? { lexicalRoot, lexicalTarget, physicalRoot, physicalTarget } : null;
 }
 
 async function openWorkspaceFile(
   workdir: string,
   candidate: string,
-  options: { write: boolean },
 ): Promise<FileHandle> {
   const location = await workspaceFileLocation(workdir, candidate);
   if (!location) throw new KimiContinuityError("Kimi ACP filesystem request escaped managed containment");
-  // Existing files only: opening a missing target by pathname could create an
-  // unauthorized file if a parent were swapped after admission but before the
-  // OS resolves open(). Existing-file open has no mutation side effect; the
-  // physical post-open checks below run before any truncate/write.
-  const handle = await open(location.lexicalTarget, options.write ? "r+" : "r");
+  // Reads retain the existing handle-based admission. Writes never use this
+  // path: they cross the manager's anchored mutation authority below.
+  const handle = await open(location.lexicalTarget, "r");
   try {
-    // Mutation happens only through this pinned handle. Re-admit the physical
-    // file after open and compare the named entry to close pathname TOCTOU: a
-    // provider cannot redirect the later write by replacing a parent or target.
+    // Re-admit the physical file after open and compare the named entry so a
+    // read cannot be redirected between pathname admission and handle use.
     const [opened, named, finalRoot, physicalTarget] = await Promise.all([
       handle.stat({ bigint: true }),
       lstat(location.lexicalTarget, { bigint: true }).catch(() => null),
@@ -352,7 +352,7 @@ async function readWorkspaceTextFile(
   ) {
     throw new KimiContinuityError("Kimi ACP filesystem request is malformed");
   }
-  const handle = await openWorkspaceFile(workdir, params.path, { write: false });
+  const handle = await openWorkspaceFile(workdir, params.path);
   try {
     const info = await handle.stat({ bigint: true });
     if (info.size > BigInt(MAX_ACP_INPUT_LINE_CHARS)) {
@@ -386,21 +386,23 @@ async function writeWorkspaceTextFile(
   ) {
     throw new KimiContinuityError("Kimi ACP filesystem request is not authorized");
   }
-  const handle = await openWorkspaceFile(workdir, params.path, { write: true });
   try {
-    await handle.truncate(0);
-    await handle.writeFile(params.content, "utf8");
-    await handle.sync();
-    const [opened, named] = await Promise.all([
-      handle.stat({ bigint: true }),
-      lstat(params.path, { bigint: true }).catch(() => null),
-    ]);
-    if (!named || named.isSymbolicLink() || opened.nlink !== 1n || named.nlink !== 1n || !sameFile(opened, named)) {
-      throw new KimiContinuityError("Kimi ACP filesystem target changed during mutation");
+    const location = await workspaceFileLocation(workdir, params.path);
+    if (!location) {
+      throw new KimiContinuityError("Kimi ACP filesystem request escaped managed containment");
     }
+    const relativeTarget = path.relative(location.physicalRoot, location.physicalTarget);
+    const components = relativeTarget.split(path.sep);
+    await runAnchoredFileAuthority({
+      operation: "replace",
+      root: location.physicalRoot,
+      components,
+      content: Buffer.from(params.content, "utf8"),
+    });
     return {};
-  } finally {
-    await handle.close();
+  } catch (error) {
+    if (error instanceof KimiContinuityError) throw error;
+    throw new KimiContinuityError("Kimi ACP filesystem target changed during mutation");
   }
 }
 

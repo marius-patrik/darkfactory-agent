@@ -20,6 +20,10 @@ import {
 } from "./route-probe";
 import type { SharedState } from "./state";
 import { orchestratorSystemPrompt, startOrchestratorHeartbeat } from "./orchestrator";
+import {
+  runAnchoredFileAuthority,
+  type AnchoredFileProof,
+} from "./anchored-file-authority";
 
 /**
  * Canonical model execution boundary for DarkFactory #24/#36.
@@ -31,9 +35,10 @@ import { orchestratorSystemPrompt, startOrchestratorHeartbeat } from "./orchestr
  * - Exactly one bounded prompt source is admitted. Prompt text is never placed
  *   in an Agent OS receipt or error and file-backed input is verified through
  *   one pinned handle before use.
- * - The absolute receipt path is reserved with an identity-bound blocked
- *   receipt before a provider turn can start. A crash therefore leaves durable
- *   fail-closed evidence rather than an unreceipted mutation.
+ * - The absolute receipt path is reserved through the manager's physical-root
+ *   authority with an identity/content-bound blocked receipt before a provider
+ *   turn can start. A crash therefore leaves durable fail-closed evidence
+ *   rather than an unreceipted mutation.
  * - Only read-only and workspace-write are representable. A provider result is
  *   accepted only when its resolved policy equals the requested policy.
  */
@@ -294,9 +299,9 @@ class ReceiptReservation {
   private closed = false;
 
   private constructor(
-    private readonly receiptPath: string,
-    private readonly handle: FileHandle,
-    private identity: FileIdentity,
+    private readonly root: string,
+    private readonly components: readonly string[],
+    private proof: AnchoredFileProof,
   ) {}
 
   static async create(
@@ -324,51 +329,53 @@ class ReceiptReservation {
       throw new Error("execution receipt parent must be a physical directory");
     }
 
-    let handle: FileHandle;
+    const relativeParent = path.relative(canonicalWorkdir, physicalParent);
+    const components = [
+      ...(relativeParent ? relativeParent.split(path.sep) : []),
+      path.basename(target),
+    ];
+    let proof: AnchoredFileProof;
     try {
-      handle = await open(target, "wx", 0o600);
+      proof = await runAnchoredFileAuthority({
+        operation: "create",
+        root: canonicalWorkdir,
+        components,
+        content: Buffer.from(receiptText(pending), "utf8"),
+      });
     } catch {
       throw new Error("execution receipt path must be a new file");
     }
-    try {
-      const content = Buffer.from(receiptText(pending), "utf8");
-      await handle.write(content, 0, content.length, 0);
-      await handle.sync();
-      const identity = fileIdentity(await handle.stat({ bigint: true }));
-      return new ReceiptReservation(target, handle, identity);
-    } catch (error) {
-      await handle.close().catch(() => undefined);
-      throw error;
-    }
+    return new ReceiptReservation(canonicalWorkdir, components, proof);
   }
 
   async commit(receipt: AgentExecutionReceipt): Promise<void> {
     if (this.closed) throw new Error("execution receipt reservation is closed");
-    const before = fileIdentity(await this.handle.stat({ bigint: true }));
-    if (!sameIdentity(this.identity, before)) {
+    try {
+      this.proof = await runAnchoredFileAuthority({
+        operation: "replace",
+        root: this.root,
+        components: this.components,
+        content: Buffer.from(receiptText(receipt), "utf8"),
+        expected: this.proof,
+      });
+    } catch {
       throw new Error("execution receipt identity changed");
     }
-    const named = await lstat(this.receiptPath, { bigint: true }).catch(() => null);
-    if (!named || named.isSymbolicLink()) throw new Error("execution receipt identity changed");
-    const namedIdentity = fileIdentity(named as unknown as Awaited<ReturnType<FileHandle["stat"]>>);
-    if (!sameIdentity(before, namedIdentity)) {
-      throw new Error("execution receipt identity changed");
-    }
-    const content = Buffer.from(receiptText(receipt), "utf8");
-    await this.handle.truncate(0);
-    await this.handle.write(content, 0, content.length, 0);
-    await this.handle.sync();
-    this.identity = fileIdentity(await this.handle.stat({ bigint: true }));
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.handle.close();
-    const named = await lstat(this.receiptPath, { bigint: true }).catch(() => null);
-    if (!named || named.isSymbolicLink()) throw new Error("execution receipt identity changed");
-    const finalIdentity = fileIdentity(named as unknown as Awaited<ReturnType<FileHandle["stat"]>>);
-    if (!sameIdentity(this.identity, finalIdentity)) throw new Error("execution receipt identity changed");
+    try {
+      await runAnchoredFileAuthority({
+        operation: "verify",
+        root: this.root,
+        components: this.components,
+        expected: this.proof,
+      });
+    } catch {
+      throw new Error("execution receipt identity changed");
+    }
   }
 }
 

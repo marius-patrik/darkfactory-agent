@@ -79,12 +79,15 @@ malformed, conflicting, or model-mismatched receipts fail before launch; an
 ACP resume failure never falls back to `session/new`. Read-only turns select
 Kimi's `plan` mode. Workspace-write turns select `manual` mode, advertise the
 ACP client filesystem boundary, and service bounded replacement operations on
-existing regular files through manager-owned, identity-pinned file handles.
-New-file creation is denied before the OS opens a target, because portable
-pathname creation cannot prove parent identity atomically. Provider-side
-pathname writes are never granted. The manager re-attests physical containment
-at open and mutation time; shell execution, create/delete/move operations,
-linked-path escapes, hard links, and all permission requests are denied. ACP
+existing regular files through one manager-owned anchored mutation authority.
+That authority resolves component-only paths beneath a canonical physical root,
+holds every ancestor, then requires a second identity-equal anchored traversal
+before its first truncate/write side effect. Windows handles deny delete
+sharing; POSIX traversal uses `openat` plus `O_NOFOLLOW`. New-file creation is
+not exposed to Kimi, linked and multiply-linked targets are denied, and
+provider-side pathname writes are never granted. Shell execution,
+create/delete/move operations, linked-path escapes, hard links, and all
+permission requests are denied. ACP
 control requests have a 30-second deadline, prompts have a
 10-minute deadline, and process exit plus stderr draining use bounded one-second
 cleanup windows; an expired phase terminates the provider and records only a
@@ -292,10 +295,13 @@ temporary-directory exclusions and an empty extra `writable_roots` list.
 
 `--receipt` must name an absolute, nonexistent file inside the physical
 worktree. The manager reserves it with a blocked `execution_pending` receipt
-before provider work begins, then replaces it through the same file identity
-with the final route, provider version, attempt, usage, outcome, and sanitized
-block reason. Provider errors and prompt content never enter receipts or blocked
-CLI output; a route, doctor, policy, usage, or provider failure remains blocked.
+before provider work begins through the same anchored authority used for Kimi
+writes. Each update must reproduce the physical root and receipt identities and
+the exact prior-content hash before it replaces the receipt with the final
+route, provider version, attempt, usage, outcome, and sanitized block reason.
+Parent or ancestor swaps are rejected before creation or truncation. Provider
+errors and prompt content never enter receipts or blocked CLI output; a route,
+doctor, policy, usage, or provider failure remains blocked.
 
 `agents route probe` is the read-only, zero-token readiness check for the same
 canonical route boundary. With no flags it checks DarkFactory's default
