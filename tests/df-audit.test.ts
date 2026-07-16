@@ -503,6 +503,15 @@ test("main-only policy is restricted to the two canonical data repositories", ()
   assert.equal(doctor.isMainOnlyDataRepository({ owner: "another-owner", repo: "Andromeda-data" }), false);
 });
 
+test("doctor lifecycle admits exact canonical data repositories without making arbitrary data repos active", () => {
+  const registry = { schemaVersion: 1, repositories: {} };
+  assert.equal(doctor.doctorLifecycleState(repo, repo, registry), "active");
+  assert.equal(doctor.doctorLifecycleState({ owner: "marius-patrik", repo: "Andromeda-data" }, repo, registry), "active");
+  assert.equal(doctor.doctorLifecycleState({ owner: "marius-patrik", repo: "darkfactory-data" }, repo, registry), "active");
+  assert.equal(doctor.doctorLifecycleState({ owner: "marius-patrik", repo: "other-data" }, repo, registry), "removed");
+  assert.equal(doctor.doctorLifecycleState({ owner: "another-owner", repo: "Andromeda-data" }, repo, registry), "removed");
+});
+
 test("the #241 shape remains diagnosed while its active head branch is exempt", async () => {
   const branches = [{ name: "main", commit: { sha: "a" } }, { name: "dev", commit: { sha: "a" } }, { name: "dark-factory/managed-repository-setup", commit: { sha: "b" } }];
   const pull = { number: 241, head: { ref: "dark-factory/managed-repository-setup", sha: "b", repo: { full_name: "marius-patrik/DarkFactory" } }, base: { ref: "main" } };
@@ -781,7 +790,11 @@ test("submodule audit distinguishes invalid URLs, missing gitlinks, and released
   const { gh } = mockGh((_method, requestPath) => {
     if (requestPath.includes("/repos/marius-patrik/Andromeda/contents/.gitmodules")) return content(modules);
     if (requestPath.includes("/contents/plugins/missing")) throw notFound();
-    if (requestPath.includes("/contents/plugins/drift")) return { type: "submodule", sha: oldSha };
+    if (requestPath.includes("/contents/plugins/drift")) return {
+      type: "file",
+      sha: oldSha,
+      submodule_git_url: "git://github.com/marius-patrik/Child.git"
+    };
     if (requestPath === "/repos/marius-patrik/Child") return { default_branch: "main" };
     if (requestPath.endsWith("/repos/marius-patrik/Child/commits/main")) return { sha: newSha };
     throw new Error(`unexpected ${requestPath}`);
@@ -792,6 +805,30 @@ test("submodule audit distinguishes invalid URLs, missing gitlinks, and released
   assert.ok(ids.has("submodule-plugins-missing-gitlink-missing-main"));
   assert.ok(ids.has("submodule-plugins-drift-branch-drift"));
   assert.ok(ids.has("submodule-plugins-drift-pointer-drift-main"));
+});
+
+test("submodule gitlink admission accepts both REST representations and rejects a plain file", async () => {
+  const parent = { owner: "marius-patrik", repo: "Andromeda" };
+  const sha = "3".repeat(40);
+  const gitmodules = '[submodule "child"]\n path = plugins/child\n url = https://github.com/marius-patrik/Child.git\n';
+  const cases = [
+    ["current file representation", { type: "file", sha, submodule_git_url: "git://github.com/marius-patrik/Child.git" }, false],
+    ["legacy submodule representation", { type: "submodule", sha }, false],
+    ["plain file", { type: "file", sha }, true]
+  ] as const;
+
+  for (const [label, response, missing] of cases) {
+    const { gh } = mockGh((_method, requestPath) => {
+      if (requestPath.includes("/contents/.gitmodules")) return content(gitmodules);
+      if (requestPath.includes("/contents/plugins/child")) return response;
+      if (requestPath === "/repos/marius-patrik/Child") return { default_branch: "main" };
+      if (requestPath.endsWith("/repos/marius-patrik/Child/commits/main")) return { sha };
+      throw new Error(`unexpected ${requestPath}`);
+    });
+
+    const findings = await doctor.auditSubmoduleState(gh, parent, "main");
+    assert.equal(findings.some((finding) => finding.id === "submodule-plugins-child-gitlink-missing-main"), missing, label);
+  }
 });
 
 test("root-layout and naming fixtures catch Andromeda and DarkFactory contract drift", async () => {

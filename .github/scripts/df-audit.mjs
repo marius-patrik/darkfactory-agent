@@ -133,9 +133,7 @@ export async function runRepositoryDoctor(github, options = {}) {
   const reports = [];
 
   for (const repository of targets) {
-    const lifecycle = normalizedName(repository) === normalizedName(controlRepo)
-      ? "active"
-      : managedRepoLifecycleState(repository, registry);
+    const lifecycle = doctorLifecycleState(repository, controlRepo, registry);
     if (isParkedRepo(repository) || lifecycle === "parked") {
       const report = skippedReport(repository, mode, "Repository is parked; doctor performed no target-repository writes or repair work.");
       if (mode === "report") await publishSkippedDoctorReport(options.ledgerGithub, repository, report);
@@ -184,6 +182,16 @@ export async function runRepositoryDoctor(github, options = {}) {
   }
 
   return reports;
+}
+
+export function doctorLifecycleState(repository, controlRepo, registry) {
+  if (
+    normalizedName(repository) === normalizedName(controlRepo)
+    || isMainOnlyDataRepository(repository)
+  ) {
+    return "active";
+  }
+  return managedRepoLifecycleState(repository, registry);
 }
 
 export function assertDoctorReportAuthorities(mode, targetGithub, ledgerGithub) {
@@ -1757,7 +1765,9 @@ async function getLatestCommitForPath(repository, filePath, branch, github) {
 async function getSubmoduleCommit(github, repository, submodulePath, branch) {
   try {
     const data = await github.request("GET", `/repos/${repoName(repository)}/contents/${encodePath(submodulePath)}?ref=${encodeURIComponent(branch)}`);
-    return data?.type === "submodule" && typeof data.sha === "string" ? data.sha : null;
+    const legacySubmodule = data?.type === "submodule";
+    const currentSubmodule = data?.type === "file" && typeof data?.submodule_git_url === "string" && Boolean(data.submodule_git_url.trim());
+    return (legacySubmodule || currentSubmodule) && typeof data.sha === "string" ? data.sha : null;
   } catch (error) {
     if (error.status === 403 || error.status === 404) return null;
     throw error;
