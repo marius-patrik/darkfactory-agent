@@ -99,16 +99,24 @@ export function validateTriggerPolicy(value) {
         throw new Error(`Trigger loop ${entry.id} ${name} must be one line`);
       }
     }
-    if (
-      !Array.isArray(entry.eventWorkflows) || entry.eventWorkflows.length === 0 ||
-      entry.eventWorkflows.some((workflow) => typeof workflow !== "string" || !SAFE_PATH.test(workflow)) ||
-      new Set(entry.eventWorkflows).size !== entry.eventWorkflows.length ||
-      !SAFE_PATH.test(entry.recoveryWorkflow)
-    ) {
+    const localHumanLoop = entry.id === "interactive-issue-drafting";
+    if (!Array.isArray(entry.eventWorkflows)
+        || entry.eventWorkflows.some((workflow) => typeof workflow !== "string" || !SAFE_PATH.test(workflow))
+        || new Set(entry.eventWorkflows).size !== entry.eventWorkflows.length) {
       throw new Error(`Trigger loop ${entry.id} must name trusted workflow paths`);
     }
-    if (!Array.isArray(entry.eventTriggers) || entry.eventTriggers.length === 0) {
-      throw new Error(`Trigger loop ${entry.id} must declare at least one event trigger`);
+    if (localHumanLoop) {
+      if (entry.status !== "planned" || entry.eventWorkflows.length !== 0 || entry.recoveryWorkflow !== null
+          || !Array.isArray(entry.eventTriggers) || entry.eventTriggers.length !== 0 || entry.recovery !== null) {
+        throw new Error("Interactive issue drafting must remain an explicitly local, human-driven planned loop without workflow or schedule claims");
+      }
+    } else {
+      if (entry.eventWorkflows.length === 0 || !SAFE_PATH.test(entry.recoveryWorkflow)) {
+        throw new Error(`Trigger loop ${entry.id} must name trusted workflow paths`);
+      }
+      if (!Array.isArray(entry.eventTriggers) || entry.eventTriggers.length === 0) {
+        throw new Error(`Trigger loop ${entry.id} must declare at least one event trigger`);
+      }
     }
     const eventNames = new Set();
     for (const event of entry.eventTriggers) {
@@ -123,15 +131,17 @@ export function validateTriggerPolicy(value) {
       }
       if (new Set(event.types).size !== event.types.length) throw new Error(`Trigger loop ${entry.id} event types must be unique`);
     }
-    if (!isRecord(entry.recovery)) throw new Error(`Trigger loop ${entry.id} recovery must be an object`);
-    assertExactKeys(entry.recovery, RECOVERY_KEYS, `Trigger loop ${entry.id} recovery`);
-    if (typeof entry.recovery.cron !== "string" || entry.recovery.cron.trim().split(/\s+/).length !== 5) {
-      throw new Error(`Trigger loop ${entry.id} recovery cron must have five fields`);
-    }
-    assertPositiveInteger(entry.recovery.intervalMinutes, `Trigger loop ${entry.id} recovery interval`);
-    assertPositiveInteger(entry.recovery.maxDetectionMinutes, `Trigger loop ${entry.id} maximum detection latency`);
-    if (entry.recovery.maxDetectionMinutes < entry.recovery.intervalMinutes) {
-      throw new Error(`Trigger loop ${entry.id} maximum detection latency must cover its schedule interval`);
+    if (!localHumanLoop) {
+      if (!isRecord(entry.recovery)) throw new Error(`Trigger loop ${entry.id} recovery must be an object`);
+      assertExactKeys(entry.recovery, RECOVERY_KEYS, `Trigger loop ${entry.id} recovery`);
+      if (typeof entry.recovery.cron !== "string" || entry.recovery.cron.trim().split(/\s+/).length !== 5) {
+        throw new Error(`Trigger loop ${entry.id} recovery cron must have five fields`);
+      }
+      assertPositiveInteger(entry.recovery.intervalMinutes, `Trigger loop ${entry.id} recovery interval`);
+      assertPositiveInteger(entry.recovery.maxDetectionMinutes, `Trigger loop ${entry.id} maximum detection latency`);
+      if (entry.recovery.maxDetectionMinutes < entry.recovery.intervalMinutes) {
+        throw new Error(`Trigger loop ${entry.id} maximum detection latency must cover its schedule interval`);
+      }
     }
     assertPositiveInteger(entry.settleSeconds, `Trigger loop ${entry.id} settleSeconds`, true);
     assertPositiveInteger(entry.debounceSeconds, `Trigger loop ${entry.id} debounceSeconds`, true);
