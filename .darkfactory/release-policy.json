@@ -1,18 +1,13 @@
 {
   "schemaVersion": 1,
-  "release": {
-    "packageManager": "auto",
-    "required": {
-      "validate": true,
-      "build": false,
-      "smoke": true
-    },
-    "scripts": {
-      "validate": ["ci", "check", "test"],
-      "build": ["build:release", "release:build", "build"],
-      "smoke": ["release:smoke", "smoke:release", "test:release"]
-    },
-    "artifactGlobs": ["dist/release/**", "dist/**"],
-    "notes": "Every managed repo must validate before release. Repos that ship binaries or installers should add build and smoke scripts so this managed workflow exercises the actual release path."
-  }
+  "enabled": true,
+  "mode": "branch-only",
+  "releaseBranchPrefix": "release/",
+  "reconcileBranchPrefix": "reconcile/",
+  "requiredChecks": ["Validate", "DarkFactory Autoreview"],
+  "mainChecks": ["Validate"],
+  "tagPattern": null,
+  "artifactWorkflows": [],
+  "publicationChecks": [],
+  "producer": null
 }
