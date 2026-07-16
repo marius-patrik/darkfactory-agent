@@ -968,7 +968,9 @@ test("df-release runs immutable control code and exposes no force or default-bra
   assert.doesNotMatch(source, /git\/refs\/heads\/dev/);
   assert.doesNotMatch(source, /PATCH.*git\/refs\/heads\/main/s);
   assert.doesNotMatch(source, /force:\s*true|admin[_-]bypass/i);
-  assert.match(source, /reviewed-pr-versus-exact-sha-contract/);
+  assert.match(source, /reviewed-pr-tree-converged/);
+  assert.match(source, /review-main-into-dev/);
+  assert.match(source, /reviewed-ancestry-and-exact-tree-identity/);
   assert.match(source, /darkfactory:release plan=/);
   assert.match(source, /darkfactory:reconcile plan=/);
   assert.match(source, /df:ask-owner/);
@@ -2066,6 +2068,55 @@ test("verified worker state is explicit and ledger reads reject Agent OS state",
   await assert.rejects(
     readLatestRunLedger({}, "marius-patrik/agents-data", "df-work", "marius-patrik/example"),
     /marius-patrik\/darkfactory-data/
+  );
+});
+
+test("latest ledger switches from the capped Contents listing to exact Git-tree evidence", async () => {
+  const stale = Array.from({ length: 1000 }, (_, index) => ({
+    name: `2026-07-15T00-00-${String(index).padStart(4, "0")}Z-df-work.json`,
+    type: "file"
+  }));
+  const trees = new Map([
+    ["root-tree", [{ path: "runs", type: "tree", sha: "runs-tree" }]],
+    ["runs-tree", [{ path: "marius-patrik", type: "tree", sha: "owner-tree" }]],
+    ["owner-tree", [{ path: "example", type: "tree", sha: "repo-tree" }]],
+    ["repo-tree", [{ path: "2026-07-16T12-00-00-000Z-df-work.json", type: "blob", sha: "ledger-blob" }]]
+  ]);
+  const gh = {
+    request: async (method: string, requestPath: string) => {
+      assert.equal(method, "GET");
+      if (requestPath.endsWith("/contents/runs/marius-patrik/example")) return stale;
+      if (requestPath.endsWith("/git/ref/heads/main")) return { object: { sha: "main-commit" } };
+      if (requestPath.endsWith("/git/commits/main-commit")) return { tree: { sha: "root-tree" } };
+      const treeSha = requestPath.split("/git/trees/")[1];
+      if (treeSha && trees.has(treeSha)) return { truncated: false, tree: trees.get(treeSha) };
+      if (requestPath.endsWith("/contents/runs/marius-patrik/example/2026-07-16T12-00-00-000Z-df-work.json")) {
+        return { type: "file", encoding: "base64", content: Buffer.from(JSON.stringify({ status: "fresh" })).toString("base64") };
+      }
+      throw new Error(`unexpected ${method} ${requestPath}`);
+    }
+  };
+
+  assert.deepEqual(
+    await readLatestRunLedger(gh, "marius-patrik/darkfactory-data", "df-work", "marius-patrik/example"),
+    { status: "fresh" }
+  );
+});
+
+test("latest ledger fails closed when capped directory tree evidence is truncated", async () => {
+  const gh = {
+    request: async (_method: string, requestPath: string) => {
+      if (requestPath.includes("/contents/")) return Array.from({ length: 1000 }, () => ({ name: "stale.json", type: "file" }));
+      if (requestPath.endsWith("/git/ref/heads/main")) return { object: { sha: "main-commit" } };
+      if (requestPath.endsWith("/git/commits/main-commit")) return { tree: { sha: "root-tree" } };
+      if (requestPath.endsWith("/git/trees/root-tree")) return { truncated: true, tree: [] };
+      throw new Error(`unexpected ${requestPath}`);
+    }
+  };
+
+  await assert.rejects(
+    readLatestRunLedger(gh, "marius-patrik/darkfactory-data", "df-work", "marius-patrik/example"),
+    /truncated or malformed/
   );
 });
 

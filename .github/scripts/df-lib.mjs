@@ -952,7 +952,10 @@ export async function readLatestRunLedger(gh, dataRepo, kind, targetRepoName) {
   }
 
   const suffix = `-${kind}.json`;
-  const matches = response
+  const entries = response.length < 1000
+    ? response
+    : await listDirectoryFromGitTree(gh, repository, ledgerDir);
+  const matches = entries
     .filter((entry) => isRecord(entry) && typeof entry.name === "string" && entry.name.endsWith(suffix) && entry.type === "file")
     .map((entry) => entry.name)
     .sort()
@@ -972,6 +975,38 @@ export async function readLatestRunLedger(gh, dataRepo, kind, targetRepoName) {
   } catch {
     return null;
   }
+}
+
+async function listDirectoryFromGitTree(gh, repository, directory) {
+  const ref = await gh.request("GET", `/repos/${repoName(repository)}/git/ref/heads/main`);
+  const commitSha = ref?.object?.sha;
+  if (typeof commitSha !== "string" || !commitSha) {
+    throw new Error(`DarkFactory ledger tree traversal could not resolve ${repoName(repository)}@main`);
+  }
+  const commit = await gh.request("GET", `/repos/${repoName(repository)}/git/commits/${commitSha}`);
+  let treeSha = commit?.tree?.sha;
+  if (typeof treeSha !== "string" || !treeSha) {
+    throw new Error(`DarkFactory ledger tree traversal could not resolve the main tree for ${repoName(repository)}`);
+  }
+
+  for (const segment of directory.split("/").filter(Boolean)) {
+    const tree = await gh.request("GET", `/repos/${repoName(repository)}/git/trees/${treeSha}`);
+    if (tree?.truncated === true || !Array.isArray(tree?.tree)) {
+      throw new Error(`DarkFactory ledger tree evidence is truncated or malformed at ${segment}`);
+    }
+    const child = tree.tree.find((entry) => entry?.type === "tree" && entry?.path === segment);
+    if (!child) return [];
+    if (typeof child.sha !== "string" || !child.sha) {
+      throw new Error(`DarkFactory ledger tree entry ${segment} has no exact identity`);
+    }
+    treeSha = child.sha;
+  }
+
+  const tree = await gh.request("GET", `/repos/${repoName(repository)}/git/trees/${treeSha}`);
+  if (tree?.truncated === true || !Array.isArray(tree?.tree)) {
+    throw new Error(`DarkFactory ledger directory evidence is truncated or malformed for ${directory}`);
+  }
+  return tree.tree.map((entry) => ({ name: entry?.path, type: entry?.type === "blob" ? "file" : entry?.type }));
 }
 
 export function parseWorkerClaim(ledger) {
