@@ -16,6 +16,7 @@ import {
   PROBE_TIMEOUT_MS,
   ROUTE_PROBE_PROMPT,
   TIER_ROUTES,
+  admittedRouteProviderVersion,
   formatRouteProbeReport,
   resolveRouteModel,
   runOrderedRouteProbe,
@@ -190,6 +191,23 @@ describe("route resolution matrix", () => {
       expect(JSON.stringify(report)).toContain(model);
       expect(formatRouteProbeReport(report)).toContain(`model=${model}`);
     });
+  });
+
+  test("provider-version admission accepts exact SemVer including build metadata", () => {
+    expect(admittedRouteProviderVersion("1.2.3")).toBe("1.2.3");
+    expect(admittedRouteProviderVersion("1.2.3+build")).toBe("1.2.3+build");
+    expect(admittedRouteProviderVersion("1.2.3-alpha.1+build.7")).toBe("1.2.3-alpha.1+build.7");
+  });
+
+  test("provider-version admission extracts exact SemVer from provider-owned text", () => {
+    expect(admittedRouteProviderVersion("codex-cli 0.144.1+windows.1")).toBe("0.144.1+windows.1");
+    expect(admittedRouteProviderVersion("2.1.203 (Claude Code)")).toBe("2.1.203");
+  });
+
+  test("provider-version admission rejects safe-looking non-SemVer and malformed near-misses", () => {
+    for (const value of ["unknown", "not-a-version", "1.2", "1.2.3.4", "01.2.3", "1.2.3-01"]) {
+      expect(admittedRouteProviderVersion(value)).toBeNull();
+    }
   });
 
   test("ordered readiness skips unresolved provider versions exactly as execution does", async () => {

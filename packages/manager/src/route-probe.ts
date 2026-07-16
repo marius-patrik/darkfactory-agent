@@ -279,14 +279,25 @@ const EFFORT_TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
  * remain bounded to 1..64 ASCII characters with safe, non-traversal segments.
  */
 const MODEL_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
-const SAFE_PROVIDER_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,127}$/;
+const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9][0-9]*)`;
+const SEMVER_PRERELEASE_IDENTIFIER = String.raw`(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`;
+const SEMVER_PATTERN_SOURCE = String.raw`${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\.${SEMVER_PRERELEASE_IDENTIFIER})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?`;
+const SAFE_PROVIDER_VERSION_PATTERN = new RegExp(`^${SEMVER_PATTERN_SOURCE}$`);
+const EMBEDDED_PROVIDER_VERSION_PATTERN = new RegExp(
+  `(?:^|[^0-9A-Za-z._+])(${SEMVER_PATTERN_SOURCE})(?=$|[^0-9A-Za-z._+-])`,
+);
+const MAX_PROVIDER_VERSION_LENGTH = 128;
 
 /** Normalize provider-doctor version evidence through the shared route admission contract. */
 export function admittedRouteProviderVersion(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
-  if (SAFE_PROVIDER_VERSION_PATTERN.test(trimmed)) return trimmed;
-  const semver = trimmed.match(/\b\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?\b/)?.[0];
-  return semver && SAFE_PROVIDER_VERSION_PATTERN.test(semver) ? semver : null;
+  if (trimmed.length <= MAX_PROVIDER_VERSION_LENGTH && SAFE_PROVIDER_VERSION_PATTERN.test(trimmed)) {
+    return trimmed;
+  }
+  const semver = EMBEDDED_PROVIDER_VERSION_PATTERN.exec(trimmed)?.[1] ?? null;
+  return semver && semver.length <= MAX_PROVIDER_VERSION_LENGTH && SAFE_PROVIDER_VERSION_PATTERN.test(semver)
+    ? semver
+    : null;
 }
 
 export type RouteExecutionPolicy = "read-only" | "workspace-write";
