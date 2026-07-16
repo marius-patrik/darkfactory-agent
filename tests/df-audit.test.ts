@@ -112,6 +112,44 @@ test("report mode writes ledger-only skipped evidence for canonical parked and a
   }
 });
 
+test("report mode refuses unmanaged and removed targets before target inspection or mutation", async () => {
+  for (const [target, registry, expectedLifecycle] of [
+    [
+      { owner: "marius-patrik", repo: "UnmanagedProduct" },
+      { schemaVersion: 1, repositories: {} },
+      "removed"
+    ],
+    [
+      { owner: "marius-patrik", repo: "RemovedProduct" },
+      { schemaVersion: 1, repositories: { "marius-patrik/RemovedProduct": { state: "removed" } } },
+      "removed"
+    ]
+  ] as const) {
+    const { gh: targetGh, calls: targetCalls } = mockGh((_method, requestPath) => {
+      throw new Error(`ineligible report target must not be inspected or mutated: ${requestPath}`);
+    });
+    const { gh: ledgerGh, calls: ledgerCalls } = mockGh((method) => {
+      if (method === "GET") throw notFound();
+      if (method === "PUT") return {};
+      throw new Error(`unexpected ledger method ${method}`);
+    });
+
+    const reports = await doctor.runRepositoryDoctor(targetGh, {
+      mode: "report",
+      trigger: "test",
+      controlRepo: repo,
+      target,
+      ledgerGithub: ledgerGh,
+      registry
+    });
+
+    assert.equal(reports[0].skipped, true);
+    assert.match(reports[0].reason, new RegExp(`lifecycle is ${expectedLifecycle}`));
+    assert.equal(targetCalls.length, 0);
+    assert.equal(ledgerCalls.filter((call) => call.method === "PUT").length, 1);
+  }
+});
+
 test("stable findings deduplicate evidence and sort by id", () => {
   const findings = doctor.dedupeFindings([
     doctor.doctorFinding("z-last", "test", "last"),

@@ -140,6 +140,21 @@ export async function runRepositoryDoctor(github, options = {}) {
       continue;
     }
 
+    if (
+      mode === "report"
+      && normalizedName(repository) !== normalizedName(controlRepo)
+      && lifecycle !== "active"
+    ) {
+      const report = skippedReport(
+        repository,
+        mode,
+        `Repository lifecycle is ${lifecycle}; report mode is restricted to the control repository and active managed repositories. No target-repository write was attempted.`
+      );
+      await publishSkippedDoctorReport(options.ledgerGithub, repository, report);
+      reports.push(report);
+      continue;
+    }
+
     const metadata = await getRepository(github, repository);
     if (metadata.archived === true || metadata.disabled === true || lifecycle === "archived") {
       const report = skippedReport(
