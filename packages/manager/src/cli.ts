@@ -74,7 +74,8 @@ import {
   type OrchestratorHeartbeatController,
 } from "./orchestrator";
 
-const root = process.cwd();
+const invocationRoot = process.cwd();
+const root = invocationRoot;
 const gitmodulesPath = path.join(root, ".gitmodules");
 
 function systemPromptForMode(mode: SessionMode): string | undefined {
@@ -796,7 +797,9 @@ async function runCommand(args: string[], flags: Record<string, string | boolean
     const request = await modelExecutionRequestFromCli({
       values: args,
       flags,
-      workdir: root,
+      // AGENTS_ROOT identifies the distribution. Logical-tier authority stays
+      // bound to the directory from which the user invoked this process.
+      workdir: invocationRoot,
       stdin: process.stdin,
     });
     const state = runtimeState();

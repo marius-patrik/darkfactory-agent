@@ -1,4 +1,6 @@
 import type { Readable } from "node:stream";
+import { lstat, realpath } from "node:fs/promises";
+import path from "node:path";
 import type { SessionMode } from "../../harness/session";
 import {
   readPromptFile,
@@ -33,6 +35,18 @@ export interface ModelExecutionCliInput {
   flags: Record<string, string | boolean>;
   workdir: string;
   stdin?: Readable;
+}
+
+async function physicalExecutionWorkdir(candidate: string): Promise<string> {
+  if (!path.isAbsolute(candidate) || candidate.includes("\0")) {
+    throw new Error("execution workdir must be an absolute physical directory");
+  }
+  const canonical = await realpath(candidate).catch(() => null);
+  const info = canonical ? await lstat(canonical).catch(() => null) : null;
+  if (!canonical || !info?.isDirectory() || info.isSymbolicLink()) {
+    throw new Error("execution workdir must be an absolute physical directory");
+  }
+  return canonical;
 }
 
 function requiredStringFlag(flags: Record<string, string | boolean>, name: string): string {
@@ -86,6 +100,10 @@ export async function modelExecutionRequestFromCli(input: ModelExecutionCliInput
   if (sourceCount !== 1) {
     throw new Error("run requires exactly one prompt source: positional text, --prompt-file, or --prompt-stdin");
   }
+  // The invocation directory, not AGENTS_ROOT, owns provider and receipt
+  // authority. Resolve it before opening a prompt source so sessions cannot be
+  // rebound to the manager distribution through a lexical path alias.
+  const workdir = await physicalExecutionWorkdir(input.workdir);
   let prompt: string;
   let promptSource: ModelExecutionRequest["promptSource"];
   if (promptFile) {
@@ -107,7 +125,7 @@ export async function modelExecutionRequestFromCli(input: ModelExecutionCliInput
     effort,
     executionPolicy,
     receiptPath,
-    workdir: input.workdir,
+    workdir,
     mode: modeValue as SessionMode,
     prompt,
     promptSource,

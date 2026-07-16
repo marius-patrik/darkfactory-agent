@@ -270,6 +270,11 @@ concrete model and pinned provider executable come only from canonical Agent OS
 state. A caller cannot override the provider, model, agent preset, executable,
 registry, fallback, or TUI.
 
+The caller's invocation directory is physically resolved before prompt
+admission and remains the provider cwd and receipt boundary. `AGENTS_ROOT`
+identifies the Agent OS distribution only; pointing it at a separate checkout
+cannot rebind logical-tier execution away from the caller worktree.
+
 Claude's max route currently admits `read-only` only. Its pinned native CLI has
 no completed-turn or manager-owned physical-worktree containment proof for
 Edit/Write, so `max` plus `workspace-write` fails before provider spawn instead

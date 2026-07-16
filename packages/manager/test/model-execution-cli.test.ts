@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Readable } from "node:stream";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { modelExecutionRequestFromCli, selectsModelExecution } from "../src/model-execution-cli";
@@ -37,6 +37,28 @@ async function executionFixture(): Promise<{
     providerModels: { codex: ["gpt-5.6-sol"] },
   });
   return { root, state, receiptDir };
+}
+
+async function splitExecutionFixture(): Promise<{
+  distributionRoot: string;
+  workdir: string;
+  state: SharedState;
+  receiptDir: string;
+}> {
+  const container = await rootFixture();
+  const distributionRoot = path.join(container, "agent os distribution");
+  const workdir = path.join(container, "caller worktree");
+  const userHome = path.join(container, "user home");
+  const state = sharedStateAt(distributionRoot, path.join(userHome, ".agents"), userHome);
+  const receiptDir = path.join(workdir, ".darkfactory");
+  await mkdir(distributionRoot, { recursive: true });
+  await mkdir(receiptDir, { recursive: true });
+  await ensureSharedState(state);
+  await writeSessionConfig(state, {
+    schemaVersion: 1,
+    providerModels: { codex: ["gpt-5.6-sol"] },
+  });
+  return { distributionRoot, workdir, state, receiptDir };
 }
 
 function executionEnv(state: SharedState): Record<string, string | undefined> {
@@ -209,6 +231,22 @@ describe("model execution CLI prompt boundary", () => {
     }
   });
 
+  test("physical workdir admission canonicalizes an invocation path alias", async () => {
+    const container = await rootFixture();
+    const physical = path.join(container, "physical worktree");
+    const alias = path.join(container, "worktree alias");
+    await mkdir(physical, { recursive: true });
+    await symlink(physical, alias, process.platform === "win32" ? "junction" : "dir");
+    const request = await modelExecutionRequestFromCli({
+      values: ["review this"],
+      flags: flags(physical),
+      workdir: alias,
+    });
+
+    expect(request.workdir).toBe(await realpath(physical));
+    expect(request.workdir).not.toBe(alias);
+  });
+
   test("logical tier selection rejects unknown executable, registry, and fallback controls", async () => {
     const root = await rootFixture();
     for (const name of ["executable", "registry", "fallback"]) {
@@ -297,6 +335,66 @@ describe("model execution CLI prompt boundary", () => {
     expect(policyOnly.code).toBe(1);
     expect(policyOnly.stdout).toBe("");
     expect(policyOnly.stderr.trim()).toBe("agents: run requires --model-tier");
+  });
+
+  test("agents run keeps receipt authority in the caller worktree when AGENTS_ROOT differs", async () => {
+    const { distributionRoot, workdir, state, receiptDir } = await splitExecutionFixture();
+    const receiptPath = path.join(receiptDir, "caller receipt.json");
+    const result = await runProcess(
+      [
+        process.execPath,
+        cliPath,
+        "run",
+        "--model-tier",
+        "high",
+        "--effort",
+        "low",
+        "--execution-policy",
+        "read-only",
+        "--receipt",
+        receiptPath,
+        "caller-root sentinel",
+      ],
+      workdir,
+      executionEnv(state),
+    );
+    const receipt = await readBlockedReceipt(receiptPath);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr.trim()).toBe(`execution blocked: ${receipt.blockReason}`);
+    expect(receipt.outcome).toBe("blocked");
+    expect(receiptPath.startsWith(`${workdir}${path.sep}`)).toBe(true);
+    expect(receiptPath.startsWith(`${distributionRoot}${path.sep}`)).toBe(false);
+  });
+
+  test("agents run rejects a receipt under AGENTS_ROOT when the caller worktree differs", async () => {
+    const { distributionRoot, workdir, state } = await splitExecutionFixture();
+    const receiptDir = path.join(distributionRoot, ".darkfactory");
+    const receiptPath = path.join(receiptDir, "distribution receipt.json");
+    await mkdir(receiptDir, { recursive: true });
+    const result = await runProcess(
+      [
+        process.execPath,
+        cliPath,
+        "run",
+        "--model-tier",
+        "high",
+        "--effort",
+        "low",
+        "--execution-policy",
+        "read-only",
+        "--receipt",
+        receiptPath,
+        "outside-root sentinel",
+      ],
+      workdir,
+      executionEnv(state),
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim()).toBe("agents: execution receipt path must be inside the execution workdir");
+    await expect(readFile(receiptPath, "utf8")).rejects.toThrow();
   });
 
   test("installed Windows PowerShell launcher preserves the full contract through @args", async () => {
