@@ -528,7 +528,6 @@ export async function auditBranchAndReleaseState(github, repository, metadata, c
       repair: ["Restore observable private repository metadata or surface an explicit owner visibility decision; never infer private state."]
     }));
   }
-
   if (metadata.default_branch !== "main") {
     findings.push(doctorFinding(
       "default-branch-not-main",
