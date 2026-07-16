@@ -13,8 +13,8 @@ The manual workflow it absorbs is a human-driven orchestrator fanning out worker
 
 ## Identity and current state
 
-- GitHub App **mp-agents** (App ID 3827239), installed account-wide (`repository_selection: all`). Product workflows retain their required contents/actions/issues/PR write grants; repository doctor additionally requires read-only administration, checks, secrets, and commit-status visibility and downscopes each minted token. Secrets `DARK_FACTORY_APP_ID` / `DARK_FACTORY_PRIVATE_KEY` configured; `CODEX_AUTH_JSON` available for worker auth.
-- Existing assets: webhook server (`src/bot.ts`, `src/server.ts`), managed-file sync (`src/managed-sync.ts`, `src/managed-files.ts`), isolated CI Codex reviewer, repository doctor, and repository-setup enforcement. Managed sync resolves the sole canonical Andromeda-data authority at `$AGENTS_HOME`; unrelated data registrations may coexist without claiming that repository or path.
+- GitHub App **mp-agents** (App ID 3827239), installed account-wide (`repository_selection: all`). Product workflows retain their required contents/actions/issues/PR write grants; repository doctor additionally requires read-only administration, checks, secrets, and commit-status visibility and downscopes each minted token. Secrets `DARK_FACTORY_APP_ID` / `DARK_FACTORY_PRIVATE_KEY` are configured; provider credentials remain under canonical Agent OS authority.
+- Existing assets: webhook server (`src/bot.ts`, `src/server.ts`), managed-file sync (`src/managed-sync.ts`, `src/managed-files.ts`), provider-agnostic DarkFactory Autoreview, repository doctor, and repository-setup enforcement. Managed sync resolves the sole canonical Andromeda-data authority at `$AGENTS_HOME`; unrelated data registrations may coexist without claiming that repository or path.
 - Runtime strategy: GitHub Actions owns deterministic schedule, dispatch, and control-repository events. Managed repository `df:ready` labels and `/df run` comments are picked up by the orchestrator or webhook path without exposing control-repository secrets. Model-backed workers run only on trusted `df-local` self-hosted runners through the canonical `agents` launcher and Agent OS state.
 
 ## Product boundary and integration principle
@@ -87,7 +87,7 @@ DarkFactory **automates** the orchestration work style; it does not replicate it
 - Run `df help <command>` for the same engines from a human terminal. `df issue
   ready` reports the evaluator verdict and never labels an issue directly;
   `df lane resume` requests re-evaluation and never force-applies readiness.
-- `workflow_dispatch` for manual wave starts; until the webhook server is deployed, `/df run` in managed repositories is represented by `df:ready` and picked up on the next scheduled orchestrator tick, while the control-repository orchestrator dispatches L3 workers across managed repositories via `workflow_dispatch` so app/Codex secrets stay out of managed-repo workflows.
+- `workflow_dispatch` for manual wave starts; until the webhook server is deployed, `/df run` in managed repositories is represented by `df:ready` and picked up on the next scheduled orchestrator tick, while the control-repository orchestrator dispatches L3 workers across managed repositories via `workflow_dispatch` so app and provider credentials stay out of managed-repo workflows.
 - Merge/close/comment exactly as on any repo — the bot treats human actions as authoritative.
 
 ## Milestones

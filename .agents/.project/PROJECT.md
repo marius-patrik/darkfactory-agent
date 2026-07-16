@@ -12,5 +12,5 @@ from the `managed-repository` child of canonical Andromeda-data, and drives
 deterministic planning, repository diagnosis, orchestration, enforcement, and
 follow-through. Shared Agent OS state lives only under `$AGENTS_HOME`.
 DarkFactory operational ledgers live separately in
-`marius-patrik/darkfactory-data`. The remaining managed-sync adapter migration
-to this canonical contract is tracked by #255.
+`marius-patrik/darkfactory-data`. Managed sync enforces the exact canonical
+repository and checkout root before reading the `managed-repository` child.

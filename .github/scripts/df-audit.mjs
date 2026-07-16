@@ -1300,7 +1300,7 @@ export function auditIssueLane(repository, issues, options = {}) {
       findings.push(doctorFinding(`issue-${issue.number}-contentless-contract`, "issue lane", `Issue #${issue.number} contains contentless implementation boilerplate instead of an executable contract.`, {
         severity: "error",
         evidence: issue.html_url ? [{ label: `Issue #${issue.number}`, url: issue.html_url }] : [],
-        repair: ["Replace the boilerplate with observable scope and verification criteria; pre-#36 this remains a precise issue finding."]
+        repair: ["Replace the boilerplate with observable scope and verification criteria before the issue can enter a dispatchable lane."]
       }));
     }
     if (ageIn(now, issue.updated_at, 24 * 60 * 60 * 1000) >= STALE_ISSUE_DAYS && !hasActiveWorkState(issue)) stale.push(issue);
@@ -1740,8 +1740,13 @@ export async function auditRetiredAuthorityNames(github, repository, ref) {
     ".darkfactory/installer-policy.json",
     ".darkfactory/managed-repository.json",
     ".github/workflows/sync-managed-repos.yml",
+    ".agents/.project/AGENTS.md",
     ".agents/.project/PROJECT.md",
+    ".agents/.project/COMMANDS.md",
     ".agents/.project/STATUS.md",
+    ".agents/.project/HANDOFF.md",
+    ".agents/.project/DECISIONS.md",
+    ".agents/.project/STRUCTURE.md",
     "src/managed-files.ts"
   ];
   const documents = [];

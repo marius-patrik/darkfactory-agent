@@ -18,6 +18,7 @@ for local execution and shared personal state.
 - Keep only repository-local context in `.agents/.project/`.
 - Route local model work through `agents`; do not add provider homes, model
   registries, fallback executors, or copied shared memory to this repository.
-- The isolated Codex PR-review job is CI infrastructure, not local provider or
-  model authority, and must not pin a repository model.
+- DarkFactory Autoreview delegates every model-backed review and fix turn to
+  the canonical `agents` launcher; workflow policy selects logical tiers, not a
+  repository provider or model.
 - Add tests under `tests/` for every changed runtime or policy branch.

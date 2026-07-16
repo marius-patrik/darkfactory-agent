@@ -233,10 +233,11 @@ repository settings are re-read after mutation before a receipt can claim
 success. `--watch` re-observes the exact evidence-bound plan, but stops after
 two unchanged re-observations instead of repeating writes or polling forever.
 The canonical Agent OS state doctor itself must be clean; a successful checkout
-probe cannot mask other state-integrity failures. Machine runner lifecycle,
-provider-route probing, and canonical data-registry
-mutation remain explicit blocked residue until their Agent OS owners (#245,
-#260, and #255) expose trusted executors. Setup never improvises those stages.
+probe cannot mask other state-integrity failures. Machine runner lifecycle
+remains explicit blocked residue until its Agent OS owner (#245) exposes a
+trusted executor. Provider-route probing is available through canonical Agent
+OS; canonical data-registry mutation remains externally owned. Setup never
+improvises an unavailable stage.
 
 Readiness is derived from one current managed snapshot: doctor has no findings,
 gates are healthy, dependencies and categorical brakes are clear, the issue

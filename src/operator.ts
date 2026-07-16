@@ -123,7 +123,7 @@ function setupOperation(finding: DoctorFinding): Pick<SetupAction, "stage" | "op
     return { stage: "repository-bootstrap", operation: "open-managed-setup-pr", supported: true, reason: "Protected repository content changes only through the managed setup PR lane." };
   }
   if (id.includes("registry") || category === "configuration prerequisites") {
-    return { stage: "registration", operation: "converge-registration", supported: false, reason: "Canonical Andromeda-data registration is externally owned until #255 exposes a trusted mutation API." };
+    return { stage: "registration", operation: "converge-registration", supported: false, reason: "Canonical Andromeda-data registration is externally owned; no trusted mutation API is available." };
   }
   if (["health", "submodule metadata", "submodule pointer"].includes(category)) {
     return { stage: "verification", operation: "verify-only", supported: false, reason: "The owning release or submodule lane must land before setup can verify convergence; setup has no authority to simulate that work." };

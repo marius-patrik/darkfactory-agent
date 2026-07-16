@@ -126,6 +126,34 @@ test("stable findings deduplicate evidence and sort by id", () => {
   assert.equal(findings[0].evidence.length, 1);
 });
 
+test("retired authority audit covers every project authority document", async () => {
+  const retiredByPath = new Map([
+    [".agents/.project/COMMANDS.md", "marius-patrik/agents-data"],
+    [".agents/.project/HANDOFF.md", "$AGENTS_ROOT/data/agent-os"],
+    [".agents/.project/STRUCTURE.md", "marius-patrik/agents-manager"]
+  ]);
+  const { gh, calls } = mockGh((_method, requestPath) => {
+    const match = requestPath.match(/\/contents\/(.+)\?ref=main$/);
+    const filePath = match ? decodeURIComponent(match[1]) : null;
+    if (filePath && retiredByPath.has(filePath)) return content(retiredByPath.get(filePath) as string);
+    throw notFound();
+  });
+
+  const findings = await doctor.auditRetiredAuthorityNames(gh, repo, "main");
+  const byId = new Map(findings.map((finding) => [finding.id, finding]));
+  assert.match(byId.get("retired-agents-data-repository-name").message, /\.agents\/\.project\/COMMANDS\.md/);
+  assert.match(byId.get("retired-agent-os-data-path").message, /\.agents\/\.project\/HANDOFF\.md/);
+  assert.match(byId.get("retired-agents-manager-owner-name").message, /\.agents\/\.project\/STRUCTURE\.md/);
+
+  const inspected = new Set(calls.map((call) => decodeURIComponent(call.path)));
+  for (const filePath of ["AGENTS.md", "PROJECT.md", "COMMANDS.md", "STATUS.md", "HANDOFF.md", "DECISIONS.md", "STRUCTURE.md"]) {
+    assert.ok(
+      [...inspected].some((requestPath) => requestPath.includes(`/contents/.agents/.project/${filePath}?ref=main`)),
+      `expected retired authority audit to inspect ${filePath}`
+    );
+  }
+});
+
 test("doctor findings classify deterministic repair authority", () => {
   assert.equal(doctor.DOCTOR_SCHEMA_VERSION, 2);
   assert.deepEqual(doctor.DOCTOR_REPAIR_CLASSES, ["auto", "pr", "owner", "blocked"]);

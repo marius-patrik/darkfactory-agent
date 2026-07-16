@@ -2,8 +2,8 @@
 
 - `src/` — GitHub App, server, configuration, managed sync, setup checks, and status
 - `.github/scripts/` — deterministic DarkFactory planning and orchestration logic
-- `.github/workflows/` — CI, synchronization, orchestration, and isolated
-  Codex review jobs
+- `.github/workflows/` — CI, synchronization, orchestration, and
+  provider-agnostic DarkFactory Autoreview jobs
 - `.darkfactory/` — repository policy, managed-repository registry, and scheduler
   configuration
 - `templates/` — repository templates that carry only project-local agent context
