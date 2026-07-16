@@ -71,7 +71,7 @@ export async function main(options = {}) {
         } : null,
         actions: result.actions,
         token_usage: {
-          codex_calls: 0,
+          model_calls: 0,
           input_tokens: 0,
           output_tokens: 0,
           note: "Worker claim verification is deterministic and uses no model calls"

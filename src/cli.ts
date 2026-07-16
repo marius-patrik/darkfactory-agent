@@ -41,7 +41,9 @@ import {
 } from "./human-cli.js";
 import { ensureManagedRepositorySetup, orderManagedRepositoriesForSync } from "./managed-sync.js";
 import { readManagedFiles } from "./managed-files.js";
-import { applyCleanPlan, collectCleanEvidence, type OperatorGitHubRequester } from "./clean-evidence.js";
+import { applyCleanPlan, collectCleanEvidence, deleteRemoteBranchWithLease, type OperatorGitHubRequester } from "./clean-evidence.js";
+import { convergeMachineRuntime } from "./machine-setup.js";
+import { convergeManagedRegistration } from "./registration.js";
 import {
   buildCleanPlan,
   persistCleanPlan,
@@ -49,7 +51,7 @@ import {
   readCleanPlan,
   type DoctorReport
 } from "./operator.js";
-import { convergeRepositorySettings, SetupOwnerActionRequired, type LabelDefinition, type SetupReceipt } from "./setup.js";
+import { armManagedSetupBootstrap, convergeRepositoryFoundation, convergeRepositorySettings, SetupOwnerActionRequired, type LabelDefinition, type SetupReceipt } from "./setup.js";
 import {
   CONTROL_OWNER,
   CONTROL_REPO,
@@ -302,6 +304,40 @@ async function collectDoctorReports(app: App, options: DoctorCliOptions): Promis
     runRepositoryDoctor: (github: unknown, options: Record<string, unknown>) => Promise<DoctorReport[]>;
     formatDoctorReports: (reports: DoctorReport[]) => string;
   };
+  if (!options.all) {
+    const [targetOwner, targetRepo] = splitRepository(options.target);
+    try {
+      await octokit.request("GET /repos/{owner}/{repo}", { owner: targetOwner, repo: targetRepo });
+    } catch (error) {
+      if (!isRecord(error) || error.status !== 404) throw error;
+      const message = `The configured DarkFactory GitHub App cannot observe ${options.target}. Run df install-url and grant that exact repository to the App installation, or verify that the repository exists; setup cannot degrade to user credentials.`;
+      return {
+        doctor,
+        reports: [{
+          schema_version: 2,
+          mode: "diagnose",
+          trigger: "cli",
+          target_repository: options.target,
+          lifecycle: "removed",
+          read_only: true,
+          source_refs: {},
+          findings: [{
+            id: "github-app-installation-required",
+            category: "registration",
+            message,
+            severity: "critical",
+            repair_class: "owner",
+            evidence: [],
+            repair: ["Run df install-url and grant this exact repository to the configured DarkFactory GitHub App installation."]
+          }],
+          accepted_residue: [],
+          observations: ["Target inspection stopped before any repository read or write because App installation authority was absent."],
+          actions: [],
+          token_usage: { model_calls: 0, input_tokens: 0, output_tokens: 0 }
+        } as unknown as DoctorReport]
+      };
+    }
+  }
   const packageRoot = fileURLToPath(new URL("..", import.meta.url));
   const reports = await doctor.runRepositoryDoctor(github, {
     root: packageRoot,
@@ -337,7 +373,9 @@ async function runSetup(args: string[], commandId = "setup"): Promise<void> {
   const receipts: SetupReceipt[] = [];
   const dispatchedIssueLanePlans = new Set<string>();
   const dispatchedReadinessPlans = new Set<string>();
-  const maxPasses = options.watch ? boundedInteger(process.env.DF_SETUP_WATCH_PASSES, 40, 1, 240) : 1;
+  const dispatchedRegistrationSyncs = new Set<string>();
+  const dispatchedReleasePlans = new Set<string>();
+  const maxPasses = options.watch ? boundedInteger(process.env.DF_SETUP_WATCH_PASSES, 120, 1, 240) : 1;
   let finalPlan = planSetupConvergence([]);
   let previousEvidenceHash = "";
   let stableEvidencePasses = 0;
@@ -358,7 +396,16 @@ async function runSetup(args: string[], commandId = "setup"): Promise<void> {
       planned_actions: plan.actions,
       residue: plan.residue
     });
-    const passReceipts = await executeSetupPlan(app, reports, plan, dispatchedIssueLanePlans, dispatchedReadinessPlans);
+    const passReceipts = await executeSetupPlan(
+      app,
+      reports,
+      plan,
+      dispatchedIssueLanePlans,
+      dispatchedReadinessPlans,
+      dispatchedRegistrationSyncs,
+      dispatchedReleasePlans,
+      { agentsHome: options.agentsHome, packageRoot: fileURLToPath(new URL("..", import.meta.url)) }
+    );
     receipts.push(...passReceipts);
     await ledger.writeRunLedger(dataGithub, "marius-patrik/darkfactory-data", "setup-completion", options.all ? "fleet" : options.target, {
       plan_id: plan.planId,
@@ -380,7 +427,15 @@ async function runSetup(args: string[], commandId = "setup"): Promise<void> {
     // An unchanged evidence-bound plan means setup has no proof of progress.
     // Two consecutive unchanged re-observations allow asynchronous workflow
     // dispatches time to land while bounding repeated writes and polling.
-    if (stableEvidencePasses >= 2) {
+    const asynchronous = plan.actions.some((action) => action.supported && [
+      "converge-registration",
+      "open-managed-setup-pr",
+      "reconcile-issue-lane",
+      "evaluate-readiness",
+      "reconcile-branches",
+      "converge-release"
+    ].includes(action.operation));
+    if (stableEvidencePasses >= 2 && !asynchronous) {
       stopReason = "stable-evidence";
       break;
     }
@@ -405,15 +460,20 @@ async function executeSetupPlan(
   reports: DoctorReport[],
   plan: ReturnType<typeof planSetupConvergence>,
   dispatchedIssueLanePlans: Set<string>,
-  dispatchedReadinessPlans: Set<string>
+  dispatchedReadinessPlans: Set<string>,
+  dispatchedRegistrationSyncs: Set<string>,
+  dispatchedReleasePlans: Set<string>,
+  machine: { agentsHome: string; packageRoot: string }
 ): Promise<SetupReceipt[]> {
   const receipts: SetupReceipt[] = [];
   for (const report of reports) {
-    if (report.lifecycle !== "active") {
+    const repositoryActions = plan.actions.filter((action) => action.repository === report.target_repository && action.supported);
+    const registrationAdmission = report.lifecycle === "removed"
+      && repositoryActions.some((action) => action.stage === "registration" && action.operation === "converge-registration");
+    if (report.lifecycle !== "active" && !registrationAdmission) {
       receipts.push({ action: "lifecycle", target: report.target_repository, status: "owner-required", detail: `Repository lifecycle is ${report.lifecycle}; setup refuses it.` });
       continue;
     }
-    const repositoryActions = plan.actions.filter((action) => action.repository === report.target_repository && action.supported);
     if (repositoryActions.length === 0) continue;
     const [owner, repo] = splitRepository(report.target_repository);
     const octokit = await getInstallationOctokit(app, owner);
@@ -425,6 +485,53 @@ async function executeSetupPlan(
     const operations = new Set(repositoryActions
       .filter((action) => action.stage === activeStage)
       .map((action) => action.operation));
+
+    if (operations.has("converge-machine-runtime")) {
+      receipts.push(...await convergeMachineRuntime({
+        agentsHome: machine.agentsHome,
+        packageRoot: machine.packageRoot,
+        findingIds: repositoryActions
+          .filter((action) => action.stage === activeStage)
+          .map((action) => action.findingId)
+      }));
+    }
+
+    if (operations.has("converge-registration")) {
+      const registryOctokit = await getScopedInstallationOctokit(
+        app,
+        CONTROL_OWNER,
+        { contents: "write", pull_requests: "write" },
+        ["Andromeda-data"]
+      );
+      const registration = await convergeManagedRegistration(createOperatorRequester(registryOctokit), report.target_repository);
+      receipts.push(registration.receipt);
+      const syncKey = `${plan.planId}:${report.target_repository}`;
+      if (registration.sourceActive && !dispatchedRegistrationSyncs.has(syncKey)) {
+        const control = await getScopedInstallationOctokit(app, CONTROL_OWNER, { actions: "write", contents: "read" }, [CONTROL_REPO]);
+        await control.request("POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", {
+          owner: CONTROL_OWNER,
+          repo: CONTROL_REPO,
+          workflow_id: "sync-managed-repos.yml",
+          ref: "main"
+        });
+        dispatchedRegistrationSyncs.add(syncKey);
+        receipts.push({
+          action: "managed-registration-sync",
+          target: report.target_repository,
+          status: "applied",
+          detail: "Dispatched trusted managed baseline sync after re-observing the active canonical source entry."
+        });
+      }
+    }
+
+    if (operations.has("initialize-repository")) {
+      try {
+        receipts.push(...await convergeRepositoryFoundation(github, { owner, repo }, { createDev: false }));
+      } catch (error) {
+        if (!(error instanceof SetupOwnerActionRequired)) throw error;
+        receipts.push({ action: error.action, target: report.target_repository, status: "owner-required", detail: error.message });
+      }
+    }
 
     const sourcePolicyContradiction = report.findings.some((finding) => finding.category.toLowerCase() === "source policy" || finding.id.includes("source-policy-contradiction"));
     if (operations.has("open-managed-setup-pr") && sourcePolicyContradiction) {
@@ -449,6 +556,9 @@ async function executeSetupPlan(
         status: result.status === "current" ? "current" : result.status === "skipped" ? "owner-required" : "applied",
         detail: result.pullRequestUrl || result.reason || `${result.changedPaths.length} managed paths reconciled`
       });
+      if (result.pullRequestUrl) {
+        receipts.push(...await armManagedSetupBootstrap(github, { owner, repo }, result.pullRequestUrl));
+      }
     }
 
     if (operations.has("converge-settings")) {
@@ -472,7 +582,7 @@ async function executeSetupPlan(
           repo: CONTROL_REPO,
           workflow_id: "df-plan.yml",
           ref: "main",
-          inputs: { repo: report.target_repository, ref: report.source_refs.default_branch || "main" }
+          inputs: { repo: report.target_repository, ref: "dev" }
         });
         dispatchedIssueLanePlans.add(dispatchKey);
         receipts.push({ action: "issue-lane", target: report.target_repository, status: "applied", detail: "Dispatched trusted PRD reconciliation; workflow-run chaining will re-evaluate readiness." });
@@ -499,8 +609,30 @@ async function executeSetupPlan(
       }
     }
 
+    for (const [operation, mode] of [["reconcile-branches", "reconcile"], ["converge-release", "run"]] as const) {
+      if (!operations.has(operation)) continue;
+      // Reconciliation changes the release predicate. Never enqueue a release
+      // from the same stale observation; the next doctor pass may request it.
+      if (operation === "converge-release" && operations.has("reconcile-branches")) continue;
+      const dispatchKey = `${plan.planId}:${report.target_repository}:${mode}`;
+      if (!dispatchedReleasePlans.has(dispatchKey)) {
+        const control = await getScopedInstallationOctokit(app, CONTROL_OWNER, { actions: "write", contents: "read" }, [CONTROL_REPO]);
+        await control.request("POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", {
+          owner: CONTROL_OWNER,
+          repo: CONTROL_REPO,
+          workflow_id: "df-release.yml",
+          ref: "main",
+          inputs: { repo: report.target_repository, mode }
+        });
+        dispatchedReleasePlans.add(dispatchKey);
+        receipts.push({ action: "release-convergence", target: report.target_repository, status: "applied", detail: `Dispatched trusted release ${mode}; no direct main/dev write or bypass was used.` });
+      } else {
+        receipts.push({ action: "release-convergence", target: report.target_repository, status: "current", detail: `This exact evidence plan already dispatched trusted release ${mode}; waiting for protected convergence.` });
+      }
+    }
+
     for (const operation of operations) {
-      if (["open-managed-setup-pr", "converge-settings", "reconcile-issue-lane", "evaluate-readiness"].includes(operation)) continue;
+      if (["converge-machine-runtime", "converge-registration", "initialize-repository", "open-managed-setup-pr", "converge-settings", "reconcile-issue-lane", "evaluate-readiness", "reconcile-branches", "converge-release"].includes(operation)) continue;
       receipts.push({ action: operation, target: report.target_repository, status: "owner-required", detail: "The owning prerequisite has not yet exposed a trusted setup executor; setup refused to improvise." });
     }
   }
@@ -788,6 +920,13 @@ async function runClean(args: string[], commandId?: string): Promise<void> {
   }
 
   if (!saved) throw new Error("clean apply plan disappeared before admission");
+  const remoteDeletion = saved.entries.some((entry) => entry.kind === "remote-branch" && entry.action === "delete");
+  if (remoteDeletion && !options.localPath) {
+    throw new Error("clean apply requires --local for atomic remote branch deletion");
+  }
+  const remoteDeletionToken = remoteDeletion
+    ? await getScopedInstallationToken(app, owner, { contents: "write" }, [repo])
+    : "";
   await ledger.writeRunLedger(dataGithub, "marius-patrik/darkfactory-data", "clean-apply-admission", target, {
     plan_id: saved.planId,
     evidence_hash: saved.evidenceHash,
@@ -795,6 +934,17 @@ async function runClean(args: string[], commandId?: string): Promise<void> {
   });
   const receipt = await applyCleanPlan(github, { owner, repo }, saved, evidence, {
     localPath: options.localPath,
+    ...(remoteDeletion ? {
+      deleteRemoteBranchExact: async (branch: string, expectedHead: string) => {
+        await deleteRemoteBranchWithLease(
+          options.localPath,
+          `https://github.com/${owner}/${repo}.git`,
+          branch,
+          expectedHead,
+          remoteDeletionToken
+        );
+      }
+    } : {}),
     onAdmission: async (action) => {
       await ledger.writeRunLedger(dataGithub, "marius-patrik/darkfactory-data", "clean-action-admission", target, {
         plan_id: saved!.planId,

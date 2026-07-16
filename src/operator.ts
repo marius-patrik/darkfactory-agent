@@ -122,10 +122,19 @@ function setupOperation(repository: string, finding: DoctorFinding): Pick<SetupA
     };
   }
   if (category === "machine runtime" || category === "runner health" || id.startsWith("canonical-launcher") || id.includes("agents-home")) {
-    return { stage: "machine-wiring", operation: "converge-machine-runtime", supported: false, reason: "Canonical Agent OS must expose a trusted machine-runtime repair executor before setup may mutate launcher, route, state, or runner registration." };
+    return { stage: "machine-wiring", operation: "converge-machine-runtime", supported: true, reason: "Only explicit repairable machine findings are converged through the exact canonical Agent OS launcher; unsafe state, route, or authority findings remain blocked." };
   }
   if (category === "source policy" || id.includes("source-policy-contradiction")) {
     return { stage: "registration", operation: "resolve-source-policy-contradiction", supported: false, reason: "Contradictory source policy must be reconciled at its canonical authority; target deletion is forbidden." };
+  }
+  if (id === "default-branch-head-missing") {
+    return { stage: "repository-bootstrap", operation: "initialize-repository", supported: true, reason: "A fresh repository receives only an empty main commit, canonical main/dev refs, and observable automation settings before any reviewed managed-content PR or gate is installed." };
+  }
+  if (["dev-behind-main", "main-dev-diverged"].includes(id)) {
+    return { stage: "verification", operation: "reconcile-branches", supported: true, reason: "Branch reconciliation is delegated to the trusted release engine, which preserves both histories and escalates semantic conflicts." };
+  }
+  if (category === "release lane" || id.startsWith("release-pr-")) {
+    return { stage: "verification", operation: "converge-release", supported: true, reason: "The trusted release engine creates or updates a current-dev-derived release branch and lands only through green protected gates." };
   }
   if (category === "branch policy" || category === "branch protection" || category === "branch convergence" || id.includes("automerge") || id.includes("label") || id.includes("workflow")) {
     return { stage: "settings-enforcement", operation: "converge-settings", supported: true, reason: "Repository settings and taxonomy are reconciled from canonical policy." };
@@ -139,8 +148,8 @@ function setupOperation(repository: string, finding: DoctorFinding): Pick<SetupA
   if (["managed file drift", "repository layout", "product layout", "product naming", "runtime authority", "doc staleness", "authority naming"].includes(category)) {
     return { stage: "repository-bootstrap", operation: "open-managed-setup-pr", supported: true, reason: "Protected repository content changes only through the managed setup PR lane." };
   }
-  if (id.includes("registry") || category === "configuration prerequisites") {
-    return { stage: "registration", operation: "converge-registration", supported: false, reason: "Canonical Andromeda-data registration is externally owned; no trusted mutation API is available." };
+  if (id.includes("registry") || category === "registration") {
+    return { stage: "registration", operation: "converge-registration", supported: true, reason: "Registration changes only through one exact reviewed Andromeda-data source-policy PR, followed by trusted managed sync." };
   }
   if (["health", "submodule metadata", "submodule pointer"].includes(category)) {
     return { stage: "verification", operation: "verify-only", supported: false, reason: "The owning release or submodule lane must land before setup can verify convergence; setup has no authority to simulate that work." };

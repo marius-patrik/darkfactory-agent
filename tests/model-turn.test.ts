@@ -206,13 +206,24 @@ test("malformed model output keeps exact prompt and route receipts on the closed
           turnName: "implementation",
           cwd: root,
           executionPolicy: "workspace-write",
-          environment: { AGENTS_HOME: agentsHome, DARK_FACTORY_TOKEN: "never-forward" }
+          environment: {
+            AGENTS_HOME: agentsHome,
+            PATH: "trusted-path",
+            DARK_FACTORY_TOKEN: "never-forward",
+            OPENAI_API_KEY: "never-forward",
+            ANTHROPIC_API_KEY: "never-forward",
+            AWS_ACCESS_KEY_ID: "never-forward",
+            GITHUB_PASSWORD: "never-forward",
+            GOOGLE_APPLICATION_CREDENTIALS: "never-forward",
+            SAFE_BUT_UNDECLARED: "never-forward"
+          }
         },
         {
           agentRunArguments: modelPolicyModule.agentRunArguments,
           validateAgentExecutionReceipt: modelPolicyModule.validateAgentExecutionReceipt,
-          spawn: ((command: string, args: string[]) => {
+          spawn: ((command: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
             assert.equal(command, "pwsh");
+            assert.deepEqual(options.env, { AGENTS_HOME: agentsHome, PATH: "trusted-path" });
             const receiptPath = args[args.indexOf("--receipt") + 1];
             writeFileSync(receiptPath, `${JSON.stringify(successfulReceipt(request))}\n`);
             return { status: 0, stdout: "not-json", stderr: "", error: undefined };

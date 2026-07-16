@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { convergeBranchProtection, convergeRepositorySettings, SetupOwnerActionRequired } from "../src/setup.js";
+import { armManagedSetupBootstrap, convergeBranchProtection, convergeRepositoryFoundation, convergeRepositorySettings, SetupOwnerActionRequired } from "../src/setup.js";
 
 const repo = { owner: "marius-patrik", repo: "example" };
 const labels = [{ name: "df:ready", color: "0E8A16", description: "Machine-evaluated" }];
@@ -155,6 +155,31 @@ test("setup initializes an empty repository with an empty main commit before rev
   assert.equal(calls.some((call) => call.route === "PATCH /repos/{owner}/{repo}" && "default_branch" in call.parameters), false);
 });
 
+test("fresh-repository foundation creates refs without prematurely installing unavailable gates", async () => {
+  const calls: Array<{ route: string; parameters: Record<string, unknown> }> = [];
+  const notFound = Object.assign(new Error("not found"), { status: 404 });
+  const refs = new Map<string, string>();
+  const github = requester(calls, (route, parameters) => {
+    if (route === "GET /repos/{owner}/{repo}") return { default_branch: "main", allow_auto_merge: true, delete_branch_on_merge: true };
+    if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+      const sha = refs.get(String(parameters.ref));
+      if (!sha) throw notFound;
+      return { object: { sha } };
+    }
+    if (route === "POST /repos/{owner}/{repo}/git/trees") return { sha: "empty-tree" };
+    if (route === "POST /repos/{owner}/{repo}/git/commits") return { sha: "initial-commit" };
+    if (route === "POST /repos/{owner}/{repo}/git/refs") { refs.set(String(parameters.ref).replace(/^refs\//, ""), String(parameters.sha)); return {}; }
+    throw new Error(`unexpected ${route}`);
+  });
+
+  const receipts = await convergeRepositoryFoundation(github, repo, { createDev: false });
+  assert.ok(receipts.some((receipt) => receipt.action === "initialize-main"));
+  assert.equal(receipts.some((receipt) => receipt.action === "ensure-dev"), false);
+  assert.equal(calls.some((call) => call.route.includes("/protection")), false);
+  assert.equal(calls.some((call) => call.route.includes("/actions/workflows")), false);
+  assert.equal(calls.some((call) => call.route.endsWith("/labels")), false);
+});
+
 test("setup fails closed when branch-protection postconditions do not materialize", async () => {
   const unsafe = {
     required_status_checks: { strict: false, checks: [] },
@@ -212,6 +237,72 @@ test("setup replaces the retired Codex Review gate with exact DarkFactory Autore
     { context: "Repository policy", app_id: 42 },
     { context: "Validate", app_id: 15368 }
   ]);
+});
+
+test("initial managed setup arms auto-merge only behind an exact temporary bootstrap gate", async () => {
+  const notFound = Object.assign(new Error("not found"), { status: 404 });
+  const calls: Array<{ route: string; parameters: Record<string, unknown> }> = [];
+  let installed: Record<string, unknown> | null = null;
+  const graphql: Array<{ query: string; variables?: Record<string, unknown> }> = [];
+  const github = {
+    async request(route: string, parameters: Record<string, unknown>) {
+      calls.push({ route, parameters });
+      if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}") return { data: {
+        state: "open",
+        draft: false,
+        node_id: "PR_node",
+        auto_merge: null,
+        base: { ref: "main" },
+        head: { ref: "dark-factory/managed-repository-setup", repo: { full_name: "marius-patrik/example" } }
+      } };
+      if (route === "GET /repos/{owner}/{repo}/branches/{branch}/protection") {
+        if (!installed) throw notFound;
+        return { data: installed };
+      }
+      if (route === "PUT /repos/{owner}/{repo}/branches/{branch}/protection") {
+        installed = {
+          required_status_checks: parameters.required_status_checks,
+          enforce_admins: { enabled: parameters.enforce_admins },
+          allow_force_pushes: { enabled: parameters.allow_force_pushes },
+          allow_deletions: { enabled: parameters.allow_deletions }
+        };
+        return { data: {} };
+      }
+      throw new Error(`unexpected ${route}`);
+    },
+    async graphql(query: string, variables?: Record<string, unknown>) {
+      graphql.push({ query, variables });
+      return { enablePullRequestAutoMerge: { pullRequest: { id: "PR_node" } } };
+    }
+  };
+
+  const receipts = await armManagedSetupBootstrap(github, repo, "https://github.com/marius-patrik/example/pull/9");
+  const write = calls.find((call) => call.route === "PUT /repos/{owner}/{repo}/branches/{branch}/protection")!;
+  assert.deepEqual(write.parameters.required_status_checks, { strict: true, checks: [{ context: "Managed setup", app_id: 15368 }] });
+  assert.equal(write.parameters.enforce_admins, true);
+  assert.equal(write.parameters.allow_force_pushes, false);
+  assert.equal(write.parameters.allow_deletions, false);
+  assert.equal(graphql[0]?.variables?.pullRequestId, "PR_node");
+  assert.ok(receipts.some((entry) => entry.action === "managed-bootstrap-automerge" && entry.status === "applied"));
+});
+
+test("managed bootstrap rejects a fork or competing branch before protection mutation", async () => {
+  let mutated = false;
+  const github = {
+    async request(route: string) {
+      if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}") return { data: {
+        state: "open",
+        draft: false,
+        node_id: "PR_node",
+        base: { ref: "main" },
+        head: { ref: "attacker", repo: { full_name: "someone/fork" } }
+      } };
+      mutated = true;
+      return { data: {} };
+    }
+  };
+  await assert.rejects(armManagedSetupBootstrap(github, repo, "https://github.com/marius-patrik/example/pull/9"), /identity drifted/);
+  assert.equal(mutated, false);
 });
 
 function requester(

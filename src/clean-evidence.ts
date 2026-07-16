@@ -269,8 +269,41 @@ export interface CleanApplyReceipt {
 
 interface CleanApplyOptions {
   localPath?: string;
+  deleteRemoteBranchExact?: (branch: string, expectedHead: string) => Promise<void>;
   onAdmission?: (receipt: CleanApplyReceipt["actions"][number]) => Promise<void>;
   onCompletion?: (receipt: CleanApplyReceipt["actions"][number]) => Promise<void>;
+}
+
+export async function deleteRemoteBranchWithLease(
+  localPath: string,
+  remoteUrl: string,
+  branch: string,
+  expectedHead: string,
+  token = ""
+): Promise<void> {
+  if (!localPath.trim()) throw new Error("atomic remote branch deletion requires an exact local checkout");
+  if (!remoteUrl.trim()) throw new Error("atomic remote branch deletion requires an exact remote URL");
+  if (!/^[0-9a-f]{40}$/.test(expectedHead)) throw new Error("atomic remote branch deletion requires an exact 40-character head");
+  const ref = `refs/heads/${branch}`;
+  runGit(localPath, ["check-ref-format", ref]);
+  const env = gitTransportEnvironment(token);
+  const push = spawnSync(
+    "git",
+    ["push", "--porcelain", `--force-with-lease=${ref}:${expectedHead}`, remoteUrl, `:${ref}`],
+    { cwd: localPath, encoding: "utf8", env, windowsHide: true }
+  );
+  if (push.status !== 0) {
+    throw new Error(`atomic remote branch deletion refused for ${branch}: ${cleanProcessError(push)}`);
+  }
+  const confirmation = spawnSync(
+    "git",
+    ["ls-remote", "--exit-code", "--heads", remoteUrl, ref],
+    { cwd: localPath, encoding: "utf8", env, windowsHide: true }
+  );
+  if (confirmation.status === 0) throw new Error(`remote branch ${branch} still exists after atomic deletion`);
+  if (confirmation.status !== 2) {
+    throw new Error(`remote branch ${branch} deletion could not be confirmed: ${cleanProcessError(confirmation)}`);
+  }
 }
 
 export async function applyCleanPlan(
@@ -282,6 +315,9 @@ export async function applyCleanPlan(
 ): Promise<CleanApplyReceipt> {
   const fresh = buildCleanPlan(freshEvidence, new Date(saved.createdAt));
   verifyCleanPlanAdmission(saved, fresh);
+  if (saved.entries.some((entry) => entry.kind === "remote-branch" && entry.action === "delete") && !options.deleteRemoteBranchExact) {
+    throw new Error("clean remote branch deletion requires an atomic exact-head Git transport");
+  }
   const local = options.localPath
     ? collectLocalEvidence(
       options.localPath,
@@ -332,8 +368,8 @@ export async function applyCleanPlan(
     })).data, `remote branch ${entry.target}`);
     const admittedObject = asRecord(admitted.object, `remote branch ${entry.target} object`);
     if (admittedObject.sha !== entry.head) throw new Error(`remote branch ${entry.target} drifted after admission; apply aborted`);
-    await github.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", { ...repository, ref: `heads/${entry.target}` });
-    await recordCompleted(actions, { kind: entry.kind, target: entry.target, head: entry.head, status: "applied", reason: "exact head independently preserved and re-fetched" }, options.onCompletion);
+    await options.deleteRemoteBranchExact!(entry.target, entry.head);
+    await recordCompleted(actions, { kind: entry.kind, target: entry.target, head: entry.head, status: "applied", reason: "exact head independently preserved and deleted through an atomic force-with-lease Git transport" }, options.onCompletion);
   }
 
   for (const entry of saved.entries.filter((candidate) => candidate.action === "autoreview")) {
@@ -348,6 +384,24 @@ export async function applyCleanPlan(
     await recordCompleted(actions, actionReceipt(entry, "skipped", entry.reasons.join(" ")), options.onCompletion);
   }
   return { planId: saved.planId, repository: saved.repository, actions };
+}
+
+function gitTransportEnvironment(token: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  if (!token) return env;
+  const authorization = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+  env.GIT_CONFIG_COUNT = "2";
+  env.GIT_CONFIG_KEY_0 = "credential.helper";
+  env.GIT_CONFIG_VALUE_0 = "";
+  env.GIT_CONFIG_KEY_1 = "http.https://github.com/.extraheader";
+  env.GIT_CONFIG_VALUE_1 = `AUTHORIZATION: basic ${authorization}`;
+  return env;
+}
+
+function cleanProcessError(result: ReturnType<typeof spawnSync>): string {
+  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
+  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+  return stderr || stdout || result.error?.message || `git exited with status ${String(result.status)}`;
 }
 
 async function recordAdmission(

@@ -1,6 +1,8 @@
 import "./bot.test.js";
 import "./cli.test.js";
 import "./clean-evidence.test.js";
+import "./machine-setup.test.js";
+import "./registration.test.js";
 import "./config.test.js";
 import "./df-audit.test.js";
 import "./df-autoreview.test.js";

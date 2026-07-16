@@ -182,7 +182,7 @@ async function main() {
     max_rounds: maxRounds,
     actions: [],
     token_usage: {
-      codex_calls: 0,
+      model_calls: 0,
       input_tokens: 0,
       output_tokens: 0,
       note: "Fix-forward is deterministic and uses no model calls"

@@ -38,6 +38,33 @@ const DATA_REPOSITORIES = new Set([
 const DEFAULT_VERIFIED_MAX_AGE_MS = 10 * 60 * 1000;
 const MAX_VERIFIED_FUTURE_SKEW_MS = 5 * 1000;
 const SAFE_TURN_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const AGENT_PROCESS_ENVIRONMENT_ALLOWLIST = new Set([
+  "AGENTS_HOME",
+  "AGENTS_ROOT",
+  "AGENTS_SYSTEM_DATA_ROOT",
+  "AGENTS_USER_HOME",
+  "CI",
+  "COMSPEC",
+  "GITHUB_ACTIONS",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "PATH",
+  "PATHEXT",
+  "RUNNER_ARCH",
+  "RUNNER_OS",
+  "SHELL",
+  "SYSTEMROOT",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "USERPROFILE",
+  "WINDIR"
+]);
 
 type RepositoryOverlay = (typeof REPOSITORY_OVERLAYS)[number];
 
@@ -511,10 +538,10 @@ function canonicalLauncher(environment: NodeJS.ProcessEnv): string {
   return launcher;
 }
 
-function agentEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function agentProcessEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const admitted: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(environment)) {
-    if (/TOKEN|SECRET|AUTH_JSON|PRIVATE_KEY/i.test(name)) continue;
+    if (!AGENT_PROCESS_ENVIRONMENT_ALLOWLIST.has(name.toUpperCase())) continue;
     admitted[name] = value;
   }
   return admitted;
@@ -574,7 +601,7 @@ export async function executeModelTurn(
       {
         cwd: options.cwd,
         encoding: "utf8",
-        env: agentEnvironment(environment),
+      env: agentProcessEnvironment(environment),
         maxBuffer: 20 * 1024 * 1024,
         windowsHide: true
       }

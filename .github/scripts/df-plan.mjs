@@ -102,7 +102,7 @@ async function reconcileTargetRepository(repo, controlRepo) {
     prd_files: [],
     actions: [],
     token_usage: {
-      codex_calls: 0,
+      model_calls: 0,
       input_tokens: 0,
       output_tokens: 0,
       note: "L4 planning used deterministic PRD parsing only"

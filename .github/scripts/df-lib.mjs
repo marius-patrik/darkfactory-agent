@@ -15,6 +15,8 @@ export const PARKED_REPOS = new Set([
 ]);
 export const MANAGED_REPOS_PATH = ".darkfactory/managed-repos.json";
 export const MANAGED_REPO_STATES = new Set(["active", "parked", "archived", "completed", "removed"]);
+export const TRUSTED_GATE_APP_ID = 15368;
+export const MANAGED_REQUIRED_CHECKS = Object.freeze(["Validate", "DarkFactory Autoreview"]);
 
 export const WORK_LABELS = [
   { name: "df:ready", color: "0E8A16", description: "Machine-evaluated issue eligible for DarkFactory dispatch" },
@@ -76,6 +78,26 @@ export function repoName(repository) {
 
 export function normalizedRepoName(repository) {
   return repoName(repository).toLowerCase();
+}
+
+export function classifyWorkerBranchRefs(refs, issueNumber) {
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !Array.isArray(refs)) {
+    return { type: "ambiguous", reason: "worker branch inventory is malformed", candidates: [] };
+  }
+  const prefix = `refs/heads/df/${issueNumber}-`;
+  const exactRef = new RegExp(`^refs/heads/df/${issueNumber}-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`);
+  const matching = refs.filter((item) => typeof item?.ref === "string" && item.ref.startsWith(prefix));
+  const candidates = matching
+    .filter((item) => exactRef.test(item.ref) && /^[0-9a-f]{40}$/i.test(item.object?.sha || ""))
+    .map((item) => ({ branch: item.ref.slice("refs/heads/".length), head: item.object.sha.toLowerCase() }));
+  if (matching.length !== candidates.length) {
+    return { type: "ambiguous", reason: "worker branch inventory contains malformed candidate evidence", candidates };
+  }
+  if (candidates.length === 0) return { type: "none" };
+  if (candidates.length !== 1) {
+    return { type: "ambiguous", reason: "multiple worker branches require an owner decision", candidates };
+  }
+  return { type: "branch", ...candidates[0] };
 }
 
 export function isParkedRepo(repository) {
@@ -461,22 +483,17 @@ export async function getBranchProtection(gh, repository, branch) {
 export async function preflightMergePolicy(gh, repository, baseBranch, repo) {
   const branchProtection = await getBranchProtection(gh, repository, baseBranch);
   const autoMergeSupported = repo.allow_auto_merge === true;
-  const requiredContexts = branchProtection.configured
-    ? await getRequiredStatusCheckContexts(gh, repository, baseBranch)
-    : [];
+  const policy = inspectManagedBranchProtection(branchProtection);
 
-  if (!branchProtection.configured || requiredContexts.length === 0) {
-    const summary = branchProtection.configured
-      ? `branch protection on \`${baseBranch}\` has no required status checks; green-PR sweep will squash-merge directly after checks`
-      : `no branch protection on \`${baseBranch}\`; green-PR sweep will squash-merge directly after checks`;
-
+  if (!policy.ok) {
     return {
-      blocked: false,
+      blocked: true,
+      reason: `Target repository ${repoName(repository)} does not expose the exact managed protection policy on \`${baseBranch}\`: ${policy.findings.join("; ")}. Run df setup and re-evaluate before dispatch or merge.`,
       useAutomerge: false,
       autoMergeSupported,
       branchProtection,
-      requiredChecks: requiredContexts,
-      summary
+      requiredChecks: policy.requiredChecks,
+      summary: `managed branch protection on \`${baseBranch}\` is missing, inaccessible, or incomplete; worker dispatch and merge are blocked`
     };
   }
 
@@ -486,7 +503,7 @@ export async function preflightMergePolicy(gh, repository, baseBranch, repo) {
       useAutomerge: true,
       autoMergeSupported,
       branchProtection,
-      requiredChecks: requiredContexts,
+      requiredChecks: policy.requiredChecks,
       summary: `auto-merge is available for \`${baseBranch}\`; GitHub automerge will be attempted`
     };
   }
@@ -501,8 +518,50 @@ export async function preflightMergePolicy(gh, repository, baseBranch, repo) {
     useAutomerge: false,
     autoMergeSupported,
     branchProtection,
-    requiredChecks: requiredContexts,
+    requiredChecks: policy.requiredChecks,
     summary: `branch protection with required status checks is configured on \`${baseBranch}\`, but target repository auto-merge is disabled; worker dispatch is blocked`
+  };
+}
+
+export function inspectManagedBranchProtection(branchProtection) {
+  if (!branchProtection?.configured) {
+    const status = branchProtection?.status ? `HTTP ${branchProtection.status}` : "unobservable status";
+    return { ok: false, requiredChecks: [], findings: [`branch protection is not observable (${status})`] };
+  }
+
+  const data = branchProtection.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return { ok: false, requiredChecks: [], findings: ["branch protection payload is malformed"] };
+  }
+
+  const findings = [];
+  const required = data.required_status_checks;
+  const rawChecks = Array.isArray(required?.checks) ? required.checks : [];
+  const checks = rawChecks
+    .filter((check) => check && typeof check === "object" && !Array.isArray(check) && typeof check.context === "string" && check.context.trim())
+    .map((check) => ({ context: check.context.trim(), appId: Number.isInteger(check.app_id) ? check.app_id : null }));
+
+  if (!required || typeof required !== "object" || Array.isArray(required)) findings.push("required status checks are missing");
+  else {
+    if (required.strict !== true) findings.push("strict required-status updates are disabled or unobservable");
+    if (!Array.isArray(required.checks) || checks.length !== required.checks.length) {
+      findings.push("required checks are malformed or not bound through exact check records");
+    }
+  }
+
+  for (const context of MANAGED_REQUIRED_CHECKS) {
+    const matches = checks.filter((check) => check.context === context);
+    if (matches.length !== 1) findings.push(`required check ${context} is missing or ambiguous`);
+    else if (matches[0].appId !== TRUSTED_GATE_APP_ID) findings.push(`required check ${context} is not bound to GitHub Actions app ${TRUSTED_GATE_APP_ID}`);
+  }
+  if (data.enforce_admins?.enabled !== true) findings.push("administrator enforcement is disabled or unobservable");
+  if (data.allow_force_pushes?.enabled !== false) findings.push("force-push denial is disabled or unobservable");
+  if (data.allow_deletions?.enabled !== false) findings.push("branch-deletion denial is disabled or unobservable");
+
+  return {
+    ok: findings.length === 0,
+    requiredChecks: [...new Set(checks.map((check) => check.context))],
+    findings
   };
 }
 

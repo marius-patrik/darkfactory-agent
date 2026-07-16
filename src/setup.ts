@@ -1,4 +1,5 @@
 import type { OperatorGitHubRequester, RepositoryRef } from "./clean-evidence.js";
+import { MANAGED_SETUP_BRANCH } from "./managed-sync.js";
 import { isMainOnlyDataRepository } from "./operator.js";
 
 export interface LabelDefinition {
@@ -29,6 +30,20 @@ export async function convergeRepositorySettings(
   repository: RepositoryRef,
   labels: LabelDefinition[],
   managedWorkflowPaths: string[]
+): Promise<SetupReceipt[]> {
+  const receipts = await convergeRepositoryFoundation(github, repository);
+  receipts.push(...await convergeLabels(github, repository, labels));
+  receipts.push(...await enableManagedWorkflows(github, repository, managedWorkflowPaths));
+  for (const branch of ["main", "dev"]) {
+    receipts.push(await convergeBranchProtection(github, repository, branch));
+  }
+  return receipts;
+}
+
+export async function convergeRepositoryFoundation(
+  github: OperatorGitHubRequester,
+  repository: RepositoryRef,
+  options: { createDev?: boolean } = {}
 ): Promise<SetupReceipt[]> {
   if (isMainOnlyDataRepository(`${repository.owner}/${repository.repo}`)) {
     throw new SetupOwnerActionRequired(
@@ -73,16 +88,18 @@ export async function convergeRepositorySettings(
     receipts.push(receipt("default-branch", "main", "current", "Main is already the default branch."));
   }
 
-  const devHead = await optionalRefHead(github, repository, "dev");
-  if (devHead) {
-    receipts.push(receipt("ensure-dev", "dev", "current", "Integration branch exists."));
-  } else {
-    await github.request("POST /repos/{owner}/{repo}/git/refs", {
-      ...repository,
-      ref: "refs/heads/dev",
-      sha: mainHead
-    }).catch((error) => { throw wrapOwnerBoundary("ensure-dev", error); });
-    receipts.push(receipt("ensure-dev", "dev", "applied", "Created dev from the exact observed main head."));
+  if (options.createDev !== false) {
+    const devHead = await optionalRefHead(github, repository, "dev");
+    if (devHead) {
+      receipts.push(receipt("ensure-dev", "dev", "current", "Integration branch exists."));
+    } else {
+      await github.request("POST /repos/{owner}/{repo}/git/refs", {
+        ...repository,
+        ref: "refs/heads/dev",
+        sha: mainHead
+      }).catch((error) => { throw wrapOwnerBoundary("ensure-dev", error); });
+      receipts.push(receipt("ensure-dev", "dev", "applied", "Created dev from the exact observed main head."));
+    }
   }
 
   const autoMerge = await observeAutoMerge(github, repository, metadata.allow_auto_merge);
@@ -106,11 +123,6 @@ export async function convergeRepositorySettings(
     receipts.push(receipt("repository-automation", `${repository.owner}/${repository.repo}`, "applied", "Enabled auto-merge and merged-branch deletion."));
   }
 
-  receipts.push(...await convergeLabels(github, repository, labels));
-  receipts.push(...await enableManagedWorkflows(github, repository, managedWorkflowPaths));
-  for (const branch of ["main", "dev"]) {
-    receipts.push(await convergeBranchProtection(github, repository, branch));
-  }
   return receipts;
 }
 
@@ -222,7 +234,7 @@ export async function convergeBranchProtection(
 
   const existingChecks = requiredChecks(protection?.required_status_checks);
   const desiredChecks = dedupeChecks([
-    ...existingChecks.filter((check) => !["Validate", "Codex Review", "DarkFactory Autoreview"].includes(check.context)),
+    ...existingChecks.filter((check) => !["Managed setup", "Validate", "Codex Review", "DarkFactory Autoreview"].includes(check.context)),
     { context: "Validate", app_id: 15368 },
     { context: "DarkFactory Autoreview", app_id: 15368 }
   ]);
@@ -267,6 +279,95 @@ export async function convergeBranchProtection(
     throw new SetupOwnerActionRequired(`protection:${branch}:verification`, "Branch-protection repair did not become fully observable with exact app-bound gates and non-bypass controls.");
   }
   return receipt("branch-protection", branch, "applied", "Converged required app-bound gates, strict updates, admin enforcement, and deletion/force-push denial while preserving observable review/restriction settings.");
+}
+
+export async function armManagedSetupBootstrap(
+  github: OperatorGitHubRequester,
+  repository: RepositoryRef,
+  pullRequestUrl: string
+): Promise<SetupReceipt[]> {
+  const escaped = `${repository.owner}/${repository.repo}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^https://github\\.com/${escaped}/pull/(\\d+)$`, "i").exec(pullRequestUrl);
+  if (!match) throw new SetupOwnerActionRequired("managed-bootstrap-pr", "Managed setup returned a pull request outside the exact target repository.");
+  const pullNumber = Number(match[1]);
+  const pull = record((await github.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+    ...repository,
+    pull_number: pullNumber
+  })).data, "managed setup pull request");
+  const base = record(pull.base, "managed setup pull request base");
+  const head = record(pull.head, "managed setup pull request head");
+  const headRepository = record(head.repo, "managed setup pull request head repository");
+  if (
+    pull.state !== "open"
+    || pull.draft === true
+    || base.ref !== "main"
+    || head.ref !== MANAGED_SETUP_BRANCH
+    || String(headRepository.full_name || "").toLowerCase() !== `${repository.owner}/${repository.repo}`.toLowerCase()
+  ) {
+    throw new SetupOwnerActionRequired("managed-bootstrap-pr", "Managed setup pull request identity drifted; bootstrap protection and auto-merge were not authorized.");
+  }
+
+  let protection: Record<string, unknown> | null = null;
+  try {
+    protection = record((await github.request("GET /repos/{owner}/{repo}/branches/{branch}/protection", {
+      ...repository,
+      branch: "main"
+    })).data, "managed bootstrap branch protection");
+  } catch (error) {
+    if (!status(error, 404)) throw wrapOwnerBoundary("managed-bootstrap-protection", error);
+  }
+  const receipts: SetupReceipt[] = [];
+  if (!protection) {
+    await github.request("PUT /repos/{owner}/{repo}/branches/{branch}/protection", {
+      ...repository,
+      branch: "main",
+      required_status_checks: { strict: true, checks: [{ context: "Managed setup", app_id: 15368 }] },
+      enforce_admins: true,
+      required_pull_request_reviews: null,
+      restrictions: null,
+      required_linear_history: false,
+      allow_force_pushes: false,
+      allow_deletions: false,
+      block_creations: false,
+      required_conversation_resolution: false,
+      lock_branch: false,
+      allow_fork_syncing: false
+    }).catch((error) => { throw wrapOwnerBoundary("managed-bootstrap-protection", error); });
+    protection = record((await github.request("GET /repos/{owner}/{repo}/branches/{branch}/protection", {
+      ...repository,
+      branch: "main"
+    })).data, "managed bootstrap branch protection after repair");
+    receipts.push(receipt("managed-bootstrap-protection", "main", "applied", "Installed a temporary exact Actions-app Managed setup gate with strict updates and no bypass, force-push, or deletion."));
+  }
+  const checks = requiredChecks(protection.required_status_checks);
+  const safe = recordOrNull(protection.enforce_admins)?.enabled === true
+    && recordOrNull(protection.allow_force_pushes)?.enabled === false
+    && recordOrNull(protection.allow_deletions)?.enabled === false
+    && recordOrNull(protection.required_status_checks)?.strict === true
+    && checks.some((check) => ["Managed setup", "Validate", "DarkFactory Autoreview"].includes(check.context) && check.app_id === 15368);
+  if (!safe) {
+    throw new SetupOwnerActionRequired("managed-bootstrap-protection", "Existing main protection cannot prove one exact Actions-app bootstrap or managed gate with strict non-bypass controls.");
+  }
+  if (!receipts.length) receipts.push(receipt("managed-bootstrap-protection", "main", "current", "Existing main protection already provides an exact trusted non-bypass gate."));
+
+  if (pull.auto_merge) {
+    receipts.push(receipt("managed-bootstrap-automerge", `#${pullNumber}`, "current", "Managed setup pull request already has auto-merge armed behind branch protection."));
+    return receipts;
+  }
+  if (typeof github.graphql !== "function") {
+    throw new SetupOwnerActionRequired("managed-bootstrap-automerge", "GitHub auto-merge authority is unavailable; setup refused a direct merge.");
+  }
+  const nodeId = text(pull.node_id, "managed setup pull request node ID");
+  await github.graphql(
+    `mutation EnableManagedSetupAutoMerge($pullRequestId: ID!) {
+      enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
+        pullRequest { id }
+      }
+    }`,
+    { pullRequestId: nodeId }
+  ).catch((error) => { throw wrapOwnerBoundary("managed-bootstrap-automerge", error); });
+  receipts.push(receipt("managed-bootstrap-automerge", `#${pullNumber}`, "applied", "Armed squash auto-merge; GitHub can land the bootstrap only after the exact protected gate is green."));
+  return receipts;
 }
 
 async function optionalRefHead(

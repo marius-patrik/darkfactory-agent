@@ -8,6 +8,7 @@ import {
   DARK_FACTORY_DATA_REPO,
   WORK_LABELS,
   assertAllowedRepo,
+  classifyWorkerBranchRefs,
   cleanupTempRoot,
   createGithubClient,
   darkFactoryWorkerIssueNumber,
@@ -34,6 +35,7 @@ import {
 } from "./df-model-policy.mjs";
 import {
   ModelTurnError,
+  agentProcessEnvironment,
   executeModelTurn,
   validationCommandsForRepository
 } from "../../src/model-turn.ts";
@@ -46,7 +48,8 @@ const TARGET_ISSUE_NUMBER = Number(requiredEnv("DF_TARGET_ISSUE_NUMBER"));
 const TARGET_BASE_REF = process.env.DF_TARGET_BASE_REF?.trim() || "";
 const RESUME_PR_NUMBER = process.env.DF_RESUME_PR?.trim() ? Number(process.env.DF_RESUME_PR.trim()) : 0;
 const RESUME_BRANCH = process.env.DF_RESUME_BRANCH?.trim() || "";
-const IS_RESUME = (Number.isInteger(RESUME_PR_NUMBER) && RESUME_PR_NUMBER > 0) || RESUME_BRANCH.length > 0;
+const RESUME_HEAD = process.env.DF_RESUME_HEAD?.trim().toLowerCase() || "";
+const IS_RESUME = (Number.isInteger(RESUME_PR_NUMBER) && RESUME_PR_NUMBER > 0) || RESUME_BRANCH.length > 0 || RESUME_HEAD.length > 0;
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
 const DATA_REPO = DARK_FACTORY_DATA_REPO;
 const GIT_BASIC_AUTH = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
@@ -186,11 +189,18 @@ async function main() {
 
     await cloneRepository(TARGET_REPO, worktree, workBaseBranch);
     if (resumeInfo) {
-      if (!(await remoteBranchExists(TARGET_REPO, branch))) {
-        throw new Error(`Resume branch \`${branch}\` does not exist on the remote.`);
+      if (resumeInfo.type === "branch") {
+        const remoteRef = `refs/remotes/origin/${branch}`;
+        runGit(["fetch", "origin", `refs/heads/${branch}:${remoteRef}`], worktree);
+        const fetchedHead = gitOutput(["rev-parse", remoteRef], worktree).toLowerCase();
+        if (fetchedHead !== resumeInfo.head) {
+          throw new Error("Resume branch changed after exact admission; recovery stopped before checkout or push.");
+        }
+        runGit(["checkout", "-B", branch, remoteRef], worktree);
+      } else {
+        runGit(["fetch", "origin", branch], worktree);
+        runGit(["checkout", branch], worktree);
       }
-      runGit(["fetch", "origin", branch], worktree);
-      runGit(["checkout", branch], worktree);
     } else {
       if (await remoteBranchExists(TARGET_REPO, branch)) {
         const staleBranchResult = await blockStaleWorkerBranch(branch);
@@ -281,9 +291,7 @@ async function main() {
 
     let automerge;
     try {
-      automerge = mergePolicy.useAutomerge
-        ? await enableAutoMerge(pullRequest.node_id)
-        : { enabled: false, reason: "Direct green-PR sweep will merge after checks because branch protection is not configured." };
+      automerge = await enableAutoMerge(pullRequest.node_id);
     } catch (automergeError) {
       automerge = {
         enabled: false,
@@ -445,6 +453,7 @@ async function ensureBranchExists(repository, branch) {
 
 async function buildResumeInfo(repository, issueNumber) {
   if (RESUME_PR_NUMBER > 0) {
+    if (RESUME_BRANCH || RESUME_HEAD) throw new Error("Resume PR cannot be combined with resume branch evidence");
     const pr = await fetchResumePullRequest(repository, RESUME_PR_NUMBER);
     if (darkFactoryWorkerIssueNumber(pr) !== issueNumber) {
       throw new Error(`Resume PR #${RESUME_PR_NUMBER} is not a worker PR for issue #${issueNumber}`);
@@ -464,8 +473,15 @@ async function buildResumeInfo(repository, issueNumber) {
     };
   }
 
-  if (RESUME_BRANCH) {
-    return { type: "branch", branch: RESUME_BRANCH, baseRef: "" };
+  if (RESUME_BRANCH || RESUME_HEAD) {
+    if (!RESUME_BRANCH || !RESUME_HEAD) throw new Error("Resume branch and exact resume head are required together");
+    const prefix = `df/${issueNumber}-`;
+    const refs = await gh.request("GET", `/repos/${repoName(repository)}/git/matching-refs/heads/${encodeURIComponent(prefix)}`);
+    const candidate = classifyWorkerBranchRefs(refs, issueNumber);
+    if (candidate.type !== "branch" || candidate.branch !== RESUME_BRANCH || candidate.head !== RESUME_HEAD) {
+      throw new Error("Resume branch evidence is missing, ambiguous, malformed, or changed");
+    }
+    return { type: "branch", branch: candidate.branch, head: candidate.head, baseRef: "" };
   }
 
   return null;
@@ -878,12 +894,7 @@ function workerSummary(output) {
 }
 
 function agentOsEnvironment() {
-  const env = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (/TOKEN|SECRET|AUTH_JSON|PRIVATE_KEY/i.test(name)) continue;
-    env[name] = value;
-  }
-  return env;
+  return agentProcessEnvironment(process.env);
 }
 
 function runAgentCommand(args, cwd) {

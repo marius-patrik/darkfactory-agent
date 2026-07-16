@@ -23,6 +23,10 @@ on:
         description: Optional pushed branch to resume when no PR exists yet.
         required: false
         type: string
+      resume_head:
+        description: Exact pushed branch head admitted by the orchestrator.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -118,6 +122,7 @@ jobs:
           DF_TARGET_BASE_REF: ${{ inputs.base_ref }}
           DF_RESUME_PR: ${{ inputs.resume_pr }}
           DF_RESUME_BRANCH: ${{ inputs.resume_branch }}
+          DF_RESUME_HEAD: ${{ inputs.resume_head }}
           DF_TRIGGER: ${{ github.event_name }}
         run: node --experimental-strip-types darkfactory-control/.github/scripts/df-work.mjs
 

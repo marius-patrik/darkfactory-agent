@@ -5,6 +5,7 @@ import {
   PLANNING_LABELS,
   WORK_LABELS,
   assertAllowedRepo,
+  classifyWorkerBranchRefs,
   createGithubClient,
   ensureLabels,
   findOpenWorkerPullRequestForIssue,
@@ -195,7 +196,7 @@ export async function orchestrate(options) {
     evaluation_only: Boolean(eventRequest?.evaluationOnly),
     escalated,
     token_usage: {
-      codex_calls: 0,
+      model_calls: 0,
       input_tokens: 0,
       output_tokens: 0,
       note: "Orchestrator dispatch is deterministic and uses no model calls"
@@ -530,13 +531,12 @@ export async function classifyResumeTarget(gh, repository, issue) {
   }
 
   const branch = await findPushedWorkerBranch(gh, repository, issue.number);
-  if (branch) {
+  if (branch.type === "branch") {
     const repo = await getRepository(gh, repository);
     const baseRef = await resolveWorkBaseBranch(gh, repository, repo.default_branch);
-    return { type: "branch", branch, baseRef };
+    return { ...branch, baseRef };
   }
-
-  return { type: "none" };
+  return branch;
 }
 
 async function findPushedWorkerBranch(gh, repository, issueNumber) {
@@ -545,9 +545,7 @@ async function findPushedWorkerBranch(gh, repository, issueNumber) {
     "GET",
     `/repos/${repoName(repository)}/git/matching-refs/heads/${encodeURIComponent(prefix)}`
   );
-  if (!Array.isArray(refs)) return null;
-  const match = refs.find((ref) => typeof ref.ref === "string" && ref.ref.startsWith(`refs/heads/${prefix}`));
-  return match ? match.ref.slice("refs/heads/".length) : null;
+  return classifyWorkerBranchRefs(refs, issueNumber);
 }
 
 export async function resumeInterruptedWorker(gh, controlRepo, repository, issue, classification, options = {}) {
@@ -574,11 +572,19 @@ export async function resumeInterruptedWorker(gh, controlRepo, repository, issue
     } else if (classification.type === "branch") {
       await dispatchWorkerResume(gh, controlRepo, repository, issue.number, {
         base_ref: classification.baseRef,
-        resume_branch: classification.branch
+        resume_branch: classification.branch,
+        resume_head: classification.head
       });
       await createIssueComment(gh, repository, issue.number, resumeComment(target, classification));
       recovery.action = "resume-branch";
       recovery.branch = classification.branch;
+      recovery.head = classification.head;
+    } else if (classification.type === "ambiguous") {
+      await replaceIssueLabels(gh, repository, issue.number, ["df:ask-owner", "df:blocked"], ["df:ready", "df:running", "df:done"]);
+      await createIssueComment(gh, repository, issue.number, ambiguousResumeComment(target, issue.number, classification));
+      recovery.action = "ask-owner";
+      recovery.reason = "ambiguous-worker-branches";
+      recovery.branches = (classification.candidates || []).map((candidate) => candidate.branch);
     } else {
       await replaceIssueLabels(gh, repository, issue.number, [], ["df:running", "df:blocked", "df:done"]);
       setIssueLabelNames(issue, [...issueLabelNames(issue)].filter((label) => !["df:ready", "df:running", "df:blocked", "df:done"].includes(label)));
@@ -630,6 +636,16 @@ function requeueComment(target, issueNumber) {
     `DarkFactory detected an interrupted worker run for \`${target}\` but found no usable branch or PR to resume from.`,
     "",
     "The stale running claim was cleared. Machine readiness evaluation—not a direct label write—decides whether a fresh worker run can start on the next orchestrator tick."
+  ].join("\n");
+}
+
+function ambiguousResumeComment(target, issueNumber, classification) {
+  return [
+    `<!-- ${RESUME_MARKER} issue=${issueNumber} type=ambiguous -->`,
+    `DarkFactory detected an interrupted worker run for \`${target}\` with ambiguous pushed-branch evidence.`,
+    "",
+    `Reason: ${classification.reason || "multiple or malformed candidate branches"}.`,
+    "No branch was checked out, pushed, deleted, or dispatched. An owner must identify the preserved successor before recovery continues."
   ].join("\n");
 }
 
@@ -1766,7 +1782,8 @@ async function dispatchWorkerResume(gh, controlRepo, repository, issueNumber, in
       issue_number: String(issueNumber),
       base_ref: inputs.base_ref || "",
       resume_pr: inputs.resume_pr || "",
-      resume_branch: inputs.resume_branch || ""
+      resume_branch: inputs.resume_branch || "",
+      resume_head: inputs.resume_head || ""
     }
   });
 }

@@ -1299,7 +1299,15 @@ test("machine runtime evidence is healthy only when every canonical prerequisite
   assert.ok(absentIds.has("df-local-runner-missing"));
   assert.ok(absentIds.has("provider-route-probe-unavailable"));
   assert.ok(absentIds.has("darkfactory-ledger-write-unproven"));
-  assert.equal(absent.findings.every((finding) => finding.repair_class === "blocked"), true);
+  for (const id of [
+    "darkfactory-package-unregistered",
+    "darkfactory-command-unrunnable",
+    "df-local-runner-missing",
+    "df-local-runner-persistence-unproven"
+  ]) {
+    assert.equal(absent.findings.find((finding) => finding.id === id)?.repair_class, "auto");
+  }
+  assert.equal(absent.findings.find((finding) => finding.id === "provider-route-probe-unavailable")?.repair_class, "blocked");
   assert.deepEqual(
     doctor.auditMachineRuntimeEvidence(null).findings.map((finding) => finding.id),
     absent.findings.map((finding) => finding.id)

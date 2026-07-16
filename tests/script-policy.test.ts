@@ -15,6 +15,7 @@ const {
   assertAllowedRepo,
   auditIssueBody,
   checksAreGreen,
+  classifyWorkerBranchRefs,
   cleanupTempRoot,
   AUTOREVIEW_REQUIRED_CONTEXT,
   extractClosingIssueNumbers,
@@ -59,6 +60,37 @@ const {
   considerPullRequest: considerSweepPullRequest,
   verifyDevMergeRequest
 } = dfSweep;
+
+function managedProtection(overrides: Record<string, unknown> = {}) {
+  return {
+    required_status_checks: {
+      strict: true,
+      checks: [
+        { context: "Validate", app_id: 15368 },
+        { context: "DarkFactory Autoreview", app_id: 15368 }
+      ]
+    },
+    enforce_admins: { enabled: true },
+    allow_force_pushes: { enabled: false },
+    allow_deletions: { enabled: false },
+    ...overrides
+  };
+}
+
+test("worker branch recovery classifies zero, one, and multiple exact candidates deterministically", () => {
+  assert.deepEqual(classifyWorkerBranchRefs([], 9), { type: "none" });
+  assert.deepEqual(
+    classifyWorkerBranchRefs([{ ref: "refs/heads/df/9-only", object: { sha: "a".repeat(40) } }], 9),
+    { type: "branch", branch: "df/9-only", head: "a".repeat(40) }
+  );
+  const ambiguous = classifyWorkerBranchRefs([
+    { ref: "refs/heads/df/9-one", object: { sha: "1".repeat(40) } },
+    { ref: "refs/heads/df/9-two", object: { sha: "2".repeat(40) } }
+  ], 9);
+  assert.equal(ambiguous.type, "ambiguous");
+  assert.equal(ambiguous.candidates.length, 2);
+});
+
 test("parsePrdItems creates stable df-prd markers from PRD milestones and loops", () => {
   const items = parsePrdItems([
     "## Core loops",
@@ -565,7 +597,7 @@ test("df-sweep recognizes worker PRs only from the canonical App actor", () => {
 test("df-sweep marks blocked worker issues when follow-through cannot merge", async () => {
   const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /markWorkerIssueBlocked\(repository, pull, "no-checks-not-allowed"/);
+  assert.match(source, /markWorkerIssueBlocked\(repository, pull, "merge-policy-blocked"/);
   assert.match(source, /markWorkerIssueBlocked\(repository, pull, reason/);
   assert.doesNotMatch(source, /checksSummary\(pull\.statusCheckRollup\)\.join/);
   assert.match(source, /replaceIssueLabels\(repository, issueNumber, \["df:blocked"\], \["df:ready", "df:running", "df:done"\]\)/);
@@ -822,6 +854,7 @@ test("df-plan drift detection maps M2 PRD commitments to code artifacts", async 
 
 test("df-plan workflow reacts safely to PRD edits on the trusted default branch", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-plan.yml", import.meta.url), "utf8");
+  const parsed = loadYaml(workflow);
   const gate = workflow.indexOf("Validate trusted control ref");
   const pushCheckout = workflow.indexOf("Checkout target repository scripts");
   const checkout = workflow.indexOf("Checkout DarkFactory control scripts");
@@ -867,6 +900,11 @@ test("df-plan workflow reacts safely to PRD edits on the trusted default branch"
   assert.doesNotMatch(workflow, /steps\.control-ref\.outputs\.sha|Resolve canonical control ref/);
   assert.match(workflow, /Validate manual planning target ref/);
   assert.match(workflow, /Validate manual planning target repository/);
+  assert.match(workflow, /DF_INPUT_REF:\s*\$\{\{ inputs\.ref \}\}/);
+  assert.match(workflow, /DF_INPUT_REPO:\s*\$\{\{ inputs\.repo \}\}/);
+  for (const step of parsed.jobs["df-plan"].steps.filter((item: any) => typeof item.run === "string")) {
+    assert.doesNotMatch(step.run, /\$\{\{\s*inputs\./, step.name);
+  }
   assert.match(workflow, /marius-patrik\/fabrica/);
   assert.match(workflow, /must be a marius-patrik repository/);
   assert.match(workflow, /permission-issues:\s+write/);
@@ -973,13 +1011,37 @@ test("repository doctor workflow schedules trusted diagnosis with explicit repor
 
 test("managed repository sync binds the canonical Andromeda-data checkout to AGENTS_HOME", async () => {
   const workflow = await readFile(new URL("../.github/workflows/sync-managed-repos.yml", import.meta.url), "utf8");
+  const gate = workflow.indexOf("Validate trusted control ref");
+  const checkout = workflow.indexOf("Check out trusted DarkFactory control");
+  const token = workflow.indexOf("Create scoped Andromeda-data read token");
 
+  assert.notEqual(gate, -1);
+  assert.notEqual(checkout, -1);
+  assert.notEqual(token, -1);
+  assert.ok(gate < checkout && checkout < token);
+  assert.match(workflow, /github\.repository == 'marius-patrik\/DarkFactory'/);
+  assert.match(workflow, /GITHUB_REPOSITORY/);
+  assert.match(workflow, /GITHUB_REF.*refs\/heads\/main/);
+  assert.match(workflow, /GITHUB_REF_NAME.*main/);
+  assert.match(workflow, /repository:\s+marius-patrik\/DarkFactory/);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow, /persist-credentials:\s+false/);
+  assert.match(workflow, /repositories:\s+Andromeda-data/);
+  assert.match(workflow, /permission-contents:\s+read/);
   assert.match(workflow, /repository:\s+marius-patrik\/Andromeda-data\b/);
   assert.match(workflow, /AGENTS_HOME:\s+\$\{\{ github\.workspace \}\}\/\.andromeda-data/);
   assert.match(workflow, /repo:'marius-patrik\/Andromeda-data'/);
   assert.match(workflow, /path:process\.env\.AGENTS_HOME/);
   assert.doesNotMatch(workflow, /repository:\s+marius-patrik\/agents-data\b/);
   assert.doesNotMatch(workflow, /process\.env\.AGENTS_ROOT\s*\+\s*['"]\/data\/agent-os/);
+});
+
+test("active deterministic ledgers use provider-agnostic model call accounting", async () => {
+  for (const script of ["df-orchestrate.mjs", "df-plan.mjs", "df-fix.mjs", "df-sweep.mjs", "df-verify.mjs"]) {
+    const source = await readFile(new URL(`../.github/scripts/${script}`, import.meta.url), "utf8");
+    assert.match(source, /token_usage:\s*\{[\s\S]*?model_calls:\s*0/, script);
+    assert.doesNotMatch(source, /\bcodex_calls\b/, script);
+  }
 });
 
 test("df-follow-through workflow validates trusted refs before privileged tokens", async () => {
@@ -1103,7 +1165,7 @@ test("df-fix script is deterministic and only redispatches red worker PRs", asyn
   assert.doesNotMatch(source, /\bcodex\s+exec\b|CODEX_AUTH_JSON|DF_WORKER_IMAGE|codex-home|runCodex|writeCodexAuth|docker\s+run/);
 });
 
-test("df-work merge-policy preflight uses direct sweep when branch protection is absent or unreadable", async () => {
+test("df-work merge-policy preflight blocks absent or unreadable protection", async () => {
   const repository = { owner: "marius-patrik", repo: "example" };
   const unreadablePolicy = await preflightMergePolicy(
     {
@@ -1118,16 +1180,16 @@ test("df-work merge-policy preflight uses direct sweep when branch protection is
     { allow_auto_merge: true }
   );
 
-  assert.equal(unreadablePolicy.blocked, false);
+  assert.equal(unreadablePolicy.blocked, true);
   assert.equal(unreadablePolicy.useAutomerge, false);
   assert.equal(unreadablePolicy.autoMergeSupported, true);
   assert.equal(unreadablePolicy.branchProtection.configured, false);
-  assert.match(unreadablePolicy.summary, /no branch protection on `dev`/);
-  assert.match(unreadablePolicy.summary, /green-PR sweep will squash-merge directly after checks/);
+  assert.match(unreadablePolicy.summary, /missing, inaccessible, or incomplete/);
+  assert.match(unreadablePolicy.reason, /HTTP 403/);
 
   const protectedPolicy = await preflightMergePolicy(
     {
-      request: async () => ({ required_status_checks: { contexts: ["validate"] } })
+      request: async () => managedProtection()
     },
     repository,
     "dev",
@@ -1143,7 +1205,7 @@ test("df-work merge-policy preflight blocks protected branches when target auto-
   const repository = { owner: "marius-patrik", repo: "example" };
   const policy = await preflightMergePolicy(
     {
-      request: async () => ({ required_status_checks: { contexts: ["validate"] } })
+      request: async () => managedProtection()
     },
     repository,
     "dev",
@@ -1157,7 +1219,7 @@ test("df-work merge-policy preflight blocks protected branches when target auto-
   assert.match(policy.reason, /requires GitHub auto-merge before dispatching a worker/);
 });
 
-test("df-work merge-policy preflight uses direct sweep when branch protection has no required checks", async () => {
+test("df-work merge-policy preflight blocks protection without exact app-bound gates", async () => {
   const repository = { owner: "marius-patrik", repo: "example" };
   const policy = await preflightMergePolicy(
     {
@@ -1173,12 +1235,12 @@ test("df-work merge-policy preflight uses direct sweep when branch protection ha
     { allow_auto_merge: false }
   );
 
-  assert.equal(policy.blocked, false);
+  assert.equal(policy.blocked, true);
   assert.equal(policy.useAutomerge, false);
   assert.equal(policy.autoMergeSupported, false);
   assert.deepEqual(policy.requiredChecks, []);
-  assert.match(policy.summary, /no required status checks/);
-  assert.match(policy.summary, /green-PR sweep will squash-merge directly after checks/);
+  assert.match(policy.summary, /missing, inaccessible, or incomplete/);
+  assert.match(policy.reason, /required status checks are missing/);
 });
 
 test("df-work blocks target auto-merge setup failures before clone or Agent OS worker", async () => {
@@ -1212,7 +1274,8 @@ test("df-work delegates local model execution exclusively to canonical Agent OS 
   assert.match(modelPolicySource, /"--effort"/);
   assert.doesNotMatch(`${source}\n${modelTurnSource}\n${modelPolicySource}`, /["']--provider["']|["']--model["']|runWithFailover|loadProviderRegistry/);
   assert.match(source, /validateAgentExecutionReceipt/);
-  assert.match(modelTurnSource, /TOKEN\|SECRET\|AUTH_JSON\|PRIVATE_KEY/);
+  assert.match(modelTurnSource, /AGENT_PROCESS_ENVIRONMENT_ALLOWLIST/);
+  assert.match(source, /agentProcessEnvironment\(process\.env\)/);
   assert.doesNotMatch(source, /df-task-brief|df-worker-summary|writeTaskBrief/);
 });
 
@@ -1372,7 +1435,7 @@ test("df-fix selects only red worker PRs from active repositories", async () => 
   ];
 
   const fixable = candidates
-    .map(({ repository, pull }) => ({ repository, result: classifyFixCandidate(pull, repository, ["ci"], { maxRounds: 3 }) }))
+    .map(({ repository, pull }) => ({ repository, result: classifyFixCandidate(pull, repository, ["Validate"], { maxRounds: 3 }) }))
     .filter(({ result }) => result.action === "fix")
     .map(({ repository, result }) => `${repoName(repository)}:${result.pr}`);
 
@@ -1436,7 +1499,7 @@ test("df-fix posts a trusted revision request, closes the red PR, deletes the br
     repository,
     pull,
     { action: "fix", reason: "checks-failing", round: 1, maxRounds: 3 },
-    ["ci"],
+    ["Validate"],
     { maxRounds: 3, token: "token" }
   );
 
@@ -1481,7 +1544,7 @@ test("df-fix does not close, delete, or redispatch when the fresh PR head trust 
     repository,
     pull,
     { action: "fix", reason: "checks-failing", round: 1, maxRounds: 3 },
-    ["ci"],
+    ["Validate"],
     { maxRounds: 3, token: "token" }
   );
 
@@ -1498,13 +1561,13 @@ test("df-fix round cap escalates instead of looping forever", () => {
   const roundTwo = classifyFixCandidate(
     workerPull({ number: 20, checkConclusion: "FAILURE", labels: [{ name: "df:fix-round:2" }] }),
     repository,
-    ["ci"],
+    ["Validate"],
     { maxRounds: 3 }
   );
   const roundThree = classifyFixCandidate(
     workerPull({ number: 21, checkConclusion: "FAILURE", labels: [{ name: "df:fix-round:3" }] }),
     repository,
-    ["ci"],
+    ["Validate"],
     { maxRounds: 3 }
   );
 
@@ -1540,7 +1603,7 @@ test("df-fix round cap adds df:ask-owner and does not redispatch", async () => {
     repository,
     pull,
     { action: "fix", reason: "checks-failing", round: 1, maxRounds: 3 },
-    ["ci"],
+    ["Validate"],
     { maxRounds: 3, token: "token" }
   );
 
@@ -1552,12 +1615,12 @@ test("df-fix round cap adds df:ask-owner and does not redispatch", async () => {
 
 test("df-fix skips all-green PRs and fixes red PRs", () => {
   const repository = { owner: "marius-patrik", repo: "active" };
-  const green = classifyFixCandidate(workerPull({ number: 30, checkConclusion: "SUCCESS" }), repository, ["ci"]);
-  const red = classifyFixCandidate(workerPull({ number: 31, checkConclusion: "FAILURE" }), repository, ["ci"]);
+  const green = classifyFixCandidate(workerPull({ number: 30, checkConclusion: "SUCCESS" }), repository, ["Validate"]);
+  const red = classifyFixCandidate(workerPull({ number: 31, checkConclusion: "FAILURE" }), repository, ["Validate"]);
   const pending = classifyFixCandidate(
     workerPull({ number: 32, checkStatus: "IN_PROGRESS", checkConclusion: null }),
     repository,
-    ["ci"]
+    ["Validate"]
   );
 
   assert.equal(green.action, "skip");
@@ -1578,8 +1641,8 @@ test("df-sweep waits before treating empty check rollups as no-checks-configured
 test("df-sweep verifies branch protection before merging empty check rollups", async () => {
   const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /getRequiredStatusCheckContexts/);
-  assert.match(source, /withAutoreviewRequiredContext/);
+  assert.match(source, /getBranchProtection/);
+  assert.match(source, /inspectManagedBranchProtection/);
   assert.match(source, /required_checks/);
   assert.match(source, /required-checks-missing/);
   assert.match(source, /checksAreGreen\(pull\.statusCheckRollup, requiredContexts\)/);
@@ -1597,7 +1660,7 @@ test("df-sweep re-fetches checks immediately before direct merge and blocks red 
   assert.match(source, /statusCheckRollup/);
   assert.match(source, /merge-checks-not-green/);
   assert.match(source, /hasMergeGateChecks/);
-  assert.match(source, /NO_CHECK_ALLOWLIST/);
+  assert.doesNotMatch(source, /NO_CHECK_ALLOWLIST|DF_ALLOW_NO_CHECK_REPOS/);
   assert.match(source, /Fresh merge gate check failed immediately before merge/);
   assert.match(source, /checksAreGreen\(mergeGate\.statusCheckRollup, requiredContexts\)/);
   assert.doesNotMatch(source, /--admin/);
@@ -1666,12 +1729,11 @@ test("DarkFactory Autoreview supports explicit issue review and only auditable o
   assert.doesNotMatch(runner, /"PATCH", `\/repos\/\$\{repoName\(repository\)\}\/issues\/\$\{number\}`/);
 });
 
-test("df-sweep requires explicit allowlist before merging PRs with no checks", async () => {
+test("df-sweep has no no-check direct-merge escape", async () => {
   const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /DF_ALLOW_NO_CHECK_REPOS/);
-  assert.match(source, /NO_CHECK_ALLOWLIST/);
-  assert.match(source, /no-checks-not-allowed/);
+  assert.doesNotMatch(source, /DF_ALLOW_NO_CHECK_REPOS|NO_CHECK_ALLOWLIST|no-checks-not-allowed/);
+  assert.match(source, /merge-policy-blocked/);
 });
 
 test("df-sweep filters explicit sweep repositories through lifecycle and GitHub writability", async () => {
@@ -1732,6 +1794,18 @@ test("df-work blocks stale remote branches without open worker PRs", async () =>
   assert.doesNotMatch(source, /action: "remote-branch-exists"/);
 });
 
+test("df-work independently revalidates one exact resume branch and head", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
+  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+
+  assert.match(workflow, /resume_head:/);
+  assert.match(workflow, /DF_RESUME_HEAD:\s*\$\{\{ inputs\.resume_head \}\}/);
+  assert.match(source, /classifyWorkerBranchRefs\(refs, issueNumber\)/);
+  assert.match(source, /candidate\.branch !== RESUME_BRANCH \|\| candidate\.head !== RESUME_HEAD/);
+  assert.match(source, /refs\/heads\/\$\{branch\}:\$\{remoteRef\}/);
+  assert.match(source, /fetchedHead !== resumeInfo\.head/);
+});
+
 test("df-sweep does not skip green worker PRs solely because the issue is blocked", async () => {
   const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
 
@@ -1739,7 +1813,7 @@ test("df-sweep does not skip green worker PRs solely because the issue is blocke
   assert.doesNotMatch(source, /worker-issue-blocked/);
 });
 
-test("df-sweep merges green app-authored dev worker PRs and blocks red ones", async () => {
+test("df-sweep arms automerge for green protected worker PRs and blocks red ones", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
   const green = workerPull({ number: 40, checkConclusion: "SUCCESS", author: "darkfactory-agent" });
   const red = workerPull({ number: 41, checkConclusion: "FAILURE", author: "darkfactory-agent" });
@@ -1766,9 +1840,7 @@ test("df-sweep merges green app-authored dev worker PRs and blocks red ones", as
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
         if (method === "GET" && pathName.endsWith("/protection")) {
-          const error: Error & { status?: number } = new Error("Branch not protected");
-          error.status = 404;
-          throw error;
+          return managedProtection();
         }
         if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/40") {
           return { labels: [{ name: "df:done" }] };
@@ -1795,11 +1867,10 @@ test("df-sweep merges green app-authored dev worker PRs and blocks red ones", as
   const greenResult = await considerSweepPullRequest(repository, green, { rules: [] });
   const redResult = await considerSweepPullRequest(repository, red, { rules: [] });
 
-  assert.equal(greenResult.action, "merge");
-  assert.equal(greenResult.base, "dev");
+  assert.equal(greenResult.action, "enable-automerge");
   assert.equal(redResult.action, "skip");
   assert.equal(redResult.reason, "checks-not-green");
-  assert.ok(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/40/merge"));
+  assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/40/merge"), false);
   assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/41/merge"), false);
 });
 
@@ -1820,9 +1891,7 @@ test("df-sweep holds worker PRs when the DarkFactory Autoreview context is prese
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
         if (method === "GET" && pathName.endsWith("/protection")) {
-          const error: Error & { status?: number } = new Error("Branch not protected");
-          error.status = 404;
-          throw error;
+          return managedProtection();
         }
         if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/42/labels") return {};
         if (method === "DELETE" && pathName.startsWith("/repos/marius-patrik/active/issues/42/labels/")) return {};
@@ -1837,12 +1906,12 @@ test("df-sweep holds worker PRs when the DarkFactory Autoreview context is prese
 
   assert.equal(result.action, "skip");
   assert.equal(result.reason, "checks-not-green");
-  assert.deepEqual(result.required_checks, ["DarkFactory Autoreview"]);
+  assert.deepEqual(result.required_checks, ["Validate", "DarkFactory Autoreview"]);
   assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/42/merge"), false);
   assert.equal(calls.some((call) => call.pathName.includes("managed-repository.json")), false);
 });
 
-test("df-sweep falls back to branch-protection checks when DarkFactory Autoreview is not provisioned", async () => {
+test("df-sweep blocks when exact managed branch protection is not provisioned", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
   const pull = workerPull({
     number: 43,
@@ -1889,6 +1958,8 @@ test("df-sweep falls back to branch-protection checks when DarkFactory Autorevie
             return { sha: "merged-without-autoreview-sha" };
           }
           if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/43/comments?per_page=100") return [];
+          if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/43/labels") return {};
+          if (method === "DELETE" && pathName.startsWith("/repos/marius-patrik/active/issues/43/labels/")) return {};
           if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/43/comments") return {};
           if (method === "PATCH" && pathName === "/repos/marius-patrik/active/issues/43") return {};
           throw new Error(`unexpected mocked request: ${method} ${pathName}`);
@@ -1898,11 +1969,10 @@ test("df-sweep falls back to branch-protection checks when DarkFactory Autorevie
 
     const result = await considerSweepPullRequest(repository, pull);
 
-    assert.equal(result.action, "merge");
-    assert.equal(result.sha, "merged-without-autoreview-sha");
-    assert.equal(result.autoreview_gap.warning, "darkfactory-autoreview-not-provisioned");
-    assert.ok(warnings.some((warning) => warning.includes("falling back to branch-protection checks only")));
-    assert.ok(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/43/merge"));
+    assert.equal(result.action, "skip");
+    assert.equal(result.reason, "merge-policy-blocked");
+    assert.equal(warnings.length, 0);
+    assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/43/merge"), false);
   } finally {
     console.warn = originalWarn;
   }
@@ -1929,9 +1999,7 @@ test("df-sweep holds worker PRs when managed config declares DarkFactory Autorev
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
         if (method === "GET" && pathName.endsWith("/protection")) {
-          const error: Error & { status?: number } = new Error("Branch not protected");
-          error.status = 404;
-          throw error;
+          return managedProtection();
         }
         if (method === "GET" && pathName.includes("/contents/.darkfactory/managed-repository.json")) {
           return {
@@ -1953,11 +2021,11 @@ test("df-sweep holds worker PRs when managed config declares DarkFactory Autorev
 
   assert.equal(result.action, "skip");
   assert.equal(result.reason, "checks-not-green");
-  assert.deepEqual(result.required_checks, ["DarkFactory Autoreview"]);
+  assert.deepEqual(result.required_checks, ["Validate", "DarkFactory Autoreview"]);
   assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/44/merge"), false);
 });
 
-test("df-sweep merges green app-authored dev worker PRs even when the worker issue is done", async () => {
+test("df-sweep arms automerge for a green worker PR even when the worker issue is done", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
   const pull = workerPull({ number: 1349, checkConclusion: "SUCCESS", author: "darkfactory-agent" });
   const calls: Array<{ method: string; pathName: string; body?: any }> = [];
@@ -1983,9 +2051,7 @@ test("df-sweep merges green app-authored dev worker PRs even when the worker iss
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
         if (method === "GET" && pathName.endsWith("/protection")) {
-          const error: Error & { status?: number } = new Error("Branch not protected");
-          error.status = 404;
-          throw error;
+          return managedProtection();
         }
         if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/1349") {
           return { labels: [{ name: "df:done" }] };
@@ -2005,10 +2071,8 @@ test("df-sweep merges green app-authored dev worker PRs even when the worker iss
 
   const result = await considerSweepPullRequest(repository, pull);
 
-  assert.equal(result.action, "merge");
-  assert.equal(result.base, "dev");
-  assert.equal(result.sha, "merged-done-issue-sha");
-  assert.ok(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/1349/merge"));
+  assert.equal(result.action, "enable-automerge");
+  assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/1349/merge"), false);
   assert.equal(calls.some((call) => call.method === "POST" && call.pathName === "/repos/marius-patrik/active/issues/1349/labels"), false);
 });
 
@@ -2038,9 +2102,7 @@ test("df-sweep skips green worker PRs when the worker issue is not verified", as
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
         if (method === "GET" && pathName.endsWith("/protection")) {
-          const error: Error & { status?: number } = new Error("Branch not protected");
-          error.status = 404;
-          throw error;
+          return managedProtection();
         }
         if (method === "GET" && pathName === "/repos/marius-patrik/active/issues/8") {
           return { labels: [{ name: "df:blocked" }] };
@@ -2189,7 +2251,7 @@ test("latest ledger fails closed when capped directory tree evidence is truncate
   );
 });
 
-test("df-sweep direct-merges protected branch with no required checks instead of arming automerge", async () => {
+test("df-sweep blocks protected branches that have no required checks", async () => {
   const repository = { owner: "marius-patrik", repo: "active" };
   const pull = workerPull({
     number: 50,
@@ -2241,6 +2303,8 @@ test("df-sweep direct-merges protected branch with no required checks instead of
           return { sha: "direct-merged-protected-no-checks-sha" };
         }
         if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/50/comments") return {};
+        if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/50/labels") return {};
+        if (method === "DELETE" && pathName.includes("/repos/marius-patrik/active/issues/50/labels/")) return {};
         if (method === "PATCH" && pathName === "/repos/marius-patrik/active/issues/50") return {};
         throw new Error(`unexpected mocked request: ${method} ${pathName}`);
       }
@@ -2249,10 +2313,9 @@ test("df-sweep direct-merges protected branch with no required checks instead of
 
   const result = await considerSweepPullRequest(repository, pull);
 
-  assert.equal(result.action, "merge");
-  assert.equal(result.base, "dev");
-  assert.equal(result.sha, "direct-merged-protected-no-checks-sha");
-  assert.ok(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/50/merge"));
+  assert.equal(result.action, "skip");
+  assert.equal(result.reason, "merge-policy-blocked");
+  assert.equal(calls.some((call) => call.method === "PUT" && call.pathName === "/repos/marius-patrik/active/pulls/50/merge"), false);
   assert.equal(graphqlCalls.some((query) => query.includes("enablePullRequestAutoMerge")), false);
 });
 
@@ -2430,9 +2493,7 @@ test("df-sweep evaluates enforcement rules before merge", async () => {
       request: async (method: string, pathName: string, body?: any) => {
         calls.push({ method, pathName, body });
         if (method === "GET" && pathName.endsWith("/protection")) {
-          const error: Error & { status?: number } = new Error("Branch not protected");
-          error.status = 404;
-          throw error;
+          return managedProtection();
         }
         if (method === "POST" && pathName === "/repos/marius-patrik/active/issues/200/labels") return {};
         if (method === "DELETE" && pathName.startsWith("/repos/marius-patrik/active/issues/200/labels/")) return {};
@@ -2478,7 +2539,7 @@ function workerPull(options: {
   const statusCheckRollup = [
     {
       __typename: "CheckRun",
-      name: "ci",
+      name: "Validate",
       status: options.checkStatus || "COMPLETED",
       conclusion: options.checkConclusion
     }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import {
   applyCleanPlan,
   collectCleanEvidence,
+  deleteRemoteBranchWithLease,
   type OperatorGitHubRequester
 } from "../src/clean-evidence.js";
 import {
@@ -71,20 +72,17 @@ test("clean apply records an admission before each mutation and a completion onl
         events.push("refetch");
         return { data: { object: { sha: "feature-sha" } } };
       }
-      if (route === "DELETE /repos/{owner}/{repo}/git/refs/{ref}") {
-        events.push("delete");
-        return { data: {} };
-      }
       throw new Error(`unexpected route ${route}`);
     }
   };
 
   await applyCleanPlan(github, { owner: "marius-patrik", repo: "example" }, plan, evidence, {
+    deleteRemoteBranchExact: async () => { events.push("atomic-delete"); },
     onAdmission: async () => { events.push("admission"); },
     onCompletion: async () => { events.push("completion"); }
   });
 
-  assert.deepEqual(events, ["refetch", "admission", "refetch", "delete", "completion"]);
+  assert.deepEqual(events, ["refetch", "admission", "refetch", "atomic-delete", "completion"]);
 });
 
 test("clean apply aborts before mutation when durable admission cannot be written", async () => {
@@ -94,16 +92,13 @@ test("clean apply aborts before mutation when durable admission cannot be writte
   const github: OperatorGitHubRequester = {
     async request(route) {
       if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") return { data: { object: { sha: "feature-sha" } } };
-      if (route === "DELETE /repos/{owner}/{repo}/git/refs/{ref}") {
-        deleted = true;
-        return { data: {} };
-      }
       throw new Error(`unexpected route ${route}`);
     }
   };
 
   await assert.rejects(
     applyCleanPlan(github, { owner: "marius-patrik", repo: "example" }, plan, evidence, {
+      deleteRemoteBranchExact: async () => { deleted = true; },
       onAdmission: async () => { throw new Error("ledger unavailable"); }
     }),
     /ledger unavailable/
@@ -119,21 +114,86 @@ test("clean remote deletion re-fetches after admission and blocks an exact-head 
   const github: OperatorGitHubRequester = {
     async request(route) {
       if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") return { data: { object: { sha: head } } };
-      if (route === "DELETE /repos/{owner}/{repo}/git/refs/{ref}") {
-        deleted = true;
-        return { data: {} };
-      }
       throw new Error(`unexpected route ${route}`);
     }
   };
 
   await assert.rejects(
     applyCleanPlan(github, REPOSITORY, plan, evidence, {
+      deleteRemoteBranchExact: async () => { deleted = true; },
       onAdmission: async () => { head = "concurrent-head"; }
     }),
     /drifted after admission/
   );
   assert.equal(deleted, false);
+});
+
+test("clean remote deletion fails closed without an atomic Git transport", async () => {
+  const evidence = remoteDeletionEvidence();
+  const plan = buildCleanPlan(evidence, new Date("2026-07-15T00:00:00Z"));
+  let requested = false;
+  const github: OperatorGitHubRequester = {
+    async request() {
+      requested = true;
+      throw new Error("GitHub must not be reached");
+    }
+  };
+
+  await assert.rejects(applyCleanPlan(github, REPOSITORY, plan, evidence), /atomic exact-head Git transport/);
+  assert.equal(requested, false);
+});
+
+test("atomic remote deletion removes only the exact leased branch head", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "df-clean-remote-lease-"));
+  const remote = join(parent, "remote.git");
+  const checkout = join(parent, "checkout");
+  try {
+    git(parent, ["init", "--bare", remote]);
+    git(parent, ["clone", remote, checkout]);
+    git(checkout, ["config", "user.name", "DarkFactory Test"]);
+    git(checkout, ["config", "user.email", "darkfactory@example.invalid"]);
+    await writeFile(join(checkout, "README.md"), "# fixture\n");
+    git(checkout, ["add", "README.md"]);
+    git(checkout, ["commit", "-m", "fixture"]);
+    git(checkout, ["branch", "cleanup"]);
+    git(checkout, ["push", "origin", "cleanup"]);
+    const expected = git(checkout, ["rev-parse", "cleanup"]).trim();
+
+    await deleteRemoteBranchWithLease(checkout, remote, "cleanup", expected);
+
+    assert.equal(gitStatus(checkout, ["ls-remote", "--exit-code", "--heads", remote, "refs/heads/cleanup"]), 2);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("atomic remote deletion rejects a stale lease and preserves the advanced branch", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "df-clean-remote-race-"));
+  const remote = join(parent, "remote.git");
+  const checkout = join(parent, "checkout");
+  try {
+    git(parent, ["init", "--bare", remote]);
+    git(parent, ["clone", remote, checkout]);
+    git(checkout, ["config", "user.name", "DarkFactory Test"]);
+    git(checkout, ["config", "user.email", "darkfactory@example.invalid"]);
+    await writeFile(join(checkout, "README.md"), "# first\n");
+    git(checkout, ["add", "README.md"]);
+    git(checkout, ["commit", "-m", "first"]);
+    git(checkout, ["branch", "cleanup"]);
+    git(checkout, ["push", "origin", "cleanup"]);
+    const stale = git(checkout, ["rev-parse", "cleanup"]).trim();
+    git(checkout, ["switch", "cleanup"]);
+    await writeFile(join(checkout, "README.md"), "# advanced\n");
+    git(checkout, ["commit", "-am", "advanced"]);
+    git(checkout, ["push", "origin", "cleanup"]);
+    const advanced = git(checkout, ["rev-parse", "cleanup"]).trim();
+
+    await assert.rejects(deleteRemoteBranchWithLease(checkout, remote, "cleanup", stale), /atomic remote branch deletion refused/);
+
+    assert.match(git(checkout, ["ls-remote", "--heads", remote, "refs/heads/cleanup"]), new RegExp(`^${advanced}`));
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
 });
 
 test("clean issue evidence uses the canonical effective content and current exact Autoreview result", async () => {
@@ -765,4 +825,8 @@ function remoteDeletionEvidence(): CleanEvidence {
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true });
+}
+
+function gitStatus(cwd: string, args: string[]): number | null {
+  return spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true }).status;
 }

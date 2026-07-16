@@ -143,7 +143,6 @@ jobs:
           DF_DEV_MERGE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.merge_sha || '' }}
           DF_SWEEP_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.repos || '' }}
           DF_SWEEP_EXCLUDE_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.exclude_repos || '' }}
-          DF_ALLOW_NO_CHECK_REPOS: ${{ vars.DF_ALLOW_NO_CHECK_REPOS }}
           DF_TRIGGER: ${{ github.event_name }}
         shell: bash
         run: |

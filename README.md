@@ -232,14 +232,27 @@ manual `write_issues` input is selected.
 stage, and executes only repairs with a narrow trusted implementation. Protected
 content stays in reviewed managed-setup or PRD reconciliation workflows;
 repository settings are re-read after mutation before a receipt can claim
-success. `--watch` re-observes the exact evidence-bound plan, but stops after
-two unchanged re-observations instead of repeating writes or polling forever.
+success. `--watch` re-observes the exact evidence-bound plan and suppresses
+duplicate dispatches while asynchronous reviewed setup, planning, and release
+lanes settle; unchanged synchronous evidence stops boundedly, while admitted
+asynchronous work remains observable through the configured pass limit.
 The canonical Agent OS state doctor itself must be clean; a successful checkout
-probe cannot mask other state-integrity failures. Machine runner lifecycle
-remains explicit blocked residue until its Agent OS owner (#245) exposes a
-trusted executor. Provider-route probing is available through canonical Agent
-OS; canonical data-registry mutation remains externally owned. Setup never
-improvises an unavailable stage.
+probe cannot mask other state-integrity failures. Repairable package binding and
+runner lifecycle findings execute only through the exact `$AGENTS_HOME`
+launcher, then re-prove the installed command, registration, online state,
+persistence, and launcher binding. Unsafe state-root, launcher, route, or data
+authority findings remain blocked. An observable unregistered repository is
+added only through one reviewed Andromeda-data source-policy PR; parked or
+archived entries are immutable brakes, and an absent App installation becomes
+an explicit owner finding with the exact `df install-url` action.
+
+For a fresh repository, setup first creates only an empty `main` foundation.
+The managed baseline then lands through a same-repository setup PR protected by
+the temporary exact Actions-app `Managed setup` gate and GitHub auto-merge.
+Only after that reviewed bootstrap lands does setup create `dev`, replace the
+temporary gate with exact `Validate` plus `DarkFactory Autoreview`, scaffold the
+PRD on `dev`, cut the issue lane, and delegate dev-to-main convergence to the
+trusted release engine. No direct protected-branch write or bypass is used.
 
 Readiness is derived from one current managed snapshot: doctor has no findings,
 gates are healthy, dependencies and categorical brakes are clear, the issue
@@ -264,6 +277,10 @@ refs, policy branches, active PR heads, dirty/untracked worktrees, unpublished
 commits, and ambiguous work are preserved. `apply` re-collects the full evidence
 and aborts on drift; each mutation requires a durable admission before it runs
 and a completion receipt afterward. There is no force, bypass, or prune mode.
+Remote branch deletion additionally requires `--local` and uses an atomic Git
+transport lease bound to the exact admitted head, followed by absence
+confirmation. A concurrent branch advance rejects the lease and preserves the
+branch; the GitHub check-then-delete REST race is never used.
 
 `df release` is status-only by default. `plan` classifies exact `main`/`dev`
 ancestry and declared release policy without writing. `reconcile` creates one

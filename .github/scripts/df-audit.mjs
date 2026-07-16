@@ -398,6 +398,19 @@ async function auditTargetRepository(github, repository, metadata, options) {
   const findings = [];
   const observations = [];
 
+  if (options.lifecycle === "removed") {
+    findings.push(doctorFinding(
+      "managed-registry-entry-missing",
+      "registration",
+      `Repository ${repoName(repository)} is observable but absent from the canonical managed repository registry.`,
+      {
+        severity: "critical",
+        repairClass: "pr",
+        repair: ["Open one reviewed Andromeda-data source-policy PR that adds this exact repository as active; never override a parked or archived entry."]
+      }
+    ));
+  }
+
   if (!defaultRevision) {
     findings.push(doctorFinding("default-branch-head-missing", "branch policy", `The declared default branch \`${defaultBranch || "missing"}\` was not present in the complete branch snapshot, so target content cannot be audited immutably.`, {
       severity: "critical"
@@ -1234,16 +1247,21 @@ export function auditMachineRuntimeEvidence(evidence) {
     repairClass: "blocked",
     repair: [repair]
   }));
+  const automatic = (id, message, repair) => findings.push(doctorFinding(id, "machine runtime", message, {
+    severity: "critical",
+    repairClass: "auto",
+    repair: [repair]
+  }));
   if (!observed.agentsHomeExists) blocked("agents-home-checkout-missing", "Canonical AGENTS_HOME checkout is missing or inaccessible.", "Restore the canonical Andromeda-data checkout before machine convergence.");
   if (!observed.stateDoctorOk) blocked("agents-state-doctor-failed", "Canonical Agent OS state doctor did not complete cleanly.", "Repair every canonical Agent OS state-doctor finding before DarkFactory may treat machine wiring as healthy.");
   if (!observed.stateRepositoryOk) blocked("agents-home-checkout-invalid", "AGENTS_HOME is not proven as the clean canonical Andromeda-data main checkout.", "Repair canonical state repository identity and tracked cleanliness through Agent OS.");
   if (!observed.launcherBound) blocked("canonical-launcher-binding-invalid", "Canonical Agent OS launcher binding is missing, unrunnable, or not bound to the observed state root.", "Repair the canonical launcher through Agent OS; never fall back to PATH selection.");
   if (!observed.versionObserved) blocked("canonical-launcher-version-unobservable", "Canonical launcher/source version is unobservable.", "Expose a stable Agent OS version/source-install receipt.");
-  if (!observed.packageRegistered) blocked("darkfactory-package-unregistered", "DarkFactory is not registered in the canonical Agent OS package registry.", "Register the landed DarkFactory package through the canonical package manager.");
-  if (!observed.dfRunnable) blocked("darkfactory-command-unrunnable", "The registered DarkFactory package cannot run its df command and materialized CLI help.", "Build/materialize DarkFactory and repair its canonical package command binding.");
-  if (!observed.runnerRegistered) blocked("df-local-runner-missing", "The df-local runner is not registered through the canonical lifecycle controller.", "Land/use Andromeda #245 runner registration before setup may claim convergence.");
-  else if (!observed.runnerOnline) blocked("df-local-runner-offline", "The canonical df-local runner is not online.", "Start and verify the lifecycle-managed runner.");
-  if (!observed.runnerPersistent) blocked("df-local-runner-persistence-unproven", "Runner reboot persistence and listener health are unproven.", "Use the bounded Andromeda #245 lifecycle status probe and prove reboot persistence.");
+  if (!observed.packageRegistered) automatic("darkfactory-package-unregistered", "DarkFactory is not registered in the canonical Agent OS package registry.", "Build the trusted landed package and register it through the exact canonical Agent OS launcher.");
+  if (!observed.dfRunnable) automatic("darkfactory-command-unrunnable", "The registered DarkFactory package cannot run its df command and materialized CLI help.", "Build/materialize DarkFactory, register it through Agent OS, and prove the package-owned help command runs.");
+  if (!observed.runnerRegistered) automatic("df-local-runner-missing", "The df-local runner is not registered through the canonical lifecycle controller.", "Converge the runner with the bounded Agent OS install/repair lifecycle and re-prove exact registration.");
+  else if (!observed.runnerOnline) automatic("df-local-runner-offline", "The canonical df-local runner is not online.", "Repair and start the lifecycle-managed runner, then re-prove the online registration.");
+  if (!observed.runnerPersistent) automatic("df-local-runner-persistence-unproven", "Runner reboot persistence and listener health are unproven.", "Repair the canonical runner lifecycle and re-prove its persistent controller definition.");
   if (!observed.routeProbeOk) blocked("provider-route-probe-unavailable", "Canonical Agent OS resolved-route reachability is unproven.", "Land/use the Andromeda #260 resolved-route probe; do not invoke raw provider CLIs.");
   if (!observed.ledgerReachable) blocked("darkfactory-ledger-unreachable", "Canonical darkfactory-data ledger checkout/registration is unreachable.", "Repair the canonical darkfactory-data registration and checkout.");
   if (!observed.ledgerWritable) blocked("darkfactory-ledger-write-unproven", "Canonical darkfactory-data local write access is unproven.", "Repair local data-checkout permissions, then let setup prove remote write authority with its admission/completion receipts.");

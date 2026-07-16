@@ -65,11 +65,13 @@ jobs:
 
       - name: Validate manual planning target ref
         if: github.event_name == 'workflow_dispatch' && inputs.ref
+        env:
+          DF_INPUT_REF: ${{ inputs.ref }}
         shell: bash
         run: |
           # Manual planning can only target protected/default branch refs so a
           # non-canonical tag or PRD snapshot cannot drive issue creation/closure.
-          ref="${{ inputs.ref }}"
+          ref="${DF_INPUT_REF}"
           if [[ "${ref}" != "main" && "${ref}" != "dev" ]]; then
             echo "::error::DarkFactory manual planning can only target refs/heads/main or refs/heads/dev."
             exit 1
@@ -77,9 +79,11 @@ jobs:
 
       - name: Validate manual planning target repository
         if: github.event_name == 'workflow_dispatch' && inputs.repo
+        env:
+          DF_INPUT_REPO: ${{ inputs.repo }}
         shell: bash
         run: |
-          repo="${{ inputs.repo }}"
+          repo="${DF_INPUT_REPO}"
           case "${repo}" in
             marius-patrik/fabrica|marius-patrik/skyblock-agent|marius-patrik/singularity|marius-patrik/life-support)
               echo "::error::DarkFactory manual planning target is parked: ${repo}."

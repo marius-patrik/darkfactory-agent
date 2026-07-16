@@ -14,6 +14,21 @@ function healthyReadiness() {
   ]);
 }
 
+function healthyManagedProtection() {
+  return {
+    required_status_checks: {
+      strict: true,
+      checks: [
+        { context: "Validate", app_id: 15368 },
+        { context: "DarkFactory Autoreview", app_id: 15368 }
+      ]
+    },
+    enforce_admins: { enabled: true },
+    allow_force_pushes: { enabled: false },
+    allow_deletions: { enabled: false }
+  };
+}
+
 const HEALTHY_EVALUATION = {
   repositoryState: { observable: true, doctorPerfect: true, gatesHealthy: true },
   capacityAvailable: true
@@ -100,7 +115,7 @@ test("orchestrator dispatches open df:ready issues in active managed repos", asy
         throw notFound;
       }
       if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") {
-        throw notFound;
+        return healthyManagedProtection();
       }
       if (method === "POST" && path === "/repos/marius-patrik/example/issues/42/labels") {
         return {};
@@ -772,7 +787,7 @@ test("orchestrator updates the L6 dashboard issue after dispatch", async () => {
       if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
       if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
       if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") throw notFound;
-      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") throw notFound;
+      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") return healthyManagedProtection();
       if (method === "POST" && path === "/repos/marius-patrik/example/issues/7/labels") return {};
       if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/7/labels/df%3Aready") return {};
       if (method === "POST" && path === "/repos/marius-patrik/DarkFactory/actions/workflows/df-work.yml/dispatches") return {};
@@ -1011,7 +1026,7 @@ test("orchestrator dispatches owner-reset issues instead of re-escalating stale 
       if (method === "GET" && path === "/repos/marius-patrik/example/issues/30/timeline?per_page=100&page=2") return [];
       if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
       if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") throw notFound;
-      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") throw notFound;
+      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") return healthyManagedProtection();
       if (method === "POST" && path === "/repos/marius-patrik/example/issues/30/labels") return {};
       if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/30/labels/df%3Aready") return {};
       if (method === "POST" && path === "/repos/marius-patrik/DarkFactory/actions/workflows/df-work.yml/dispatches") return {};
@@ -1080,7 +1095,7 @@ test("orchestrator turns trusted /df run comments into df:ready before dispatch"
       if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
       if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
       if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") throw notFound;
-      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") throw notFound;
+      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") return healthyManagedProtection();
       if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/12/labels/df%3Aready") return {};
       if (method === "POST" && path === "/repos/marius-patrik/DarkFactory/actions/workflows/df-work.yml/dispatches") return {};
 
@@ -1368,7 +1383,7 @@ test("orchestrator turns scoped /df run dispatches into df:ready before dispatch
       if (method === "GET" && path === "/repos/marius-patrik/example/issues?state=open&per_page=100&page=2") return [];
       if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
       if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") throw notFound;
-      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") throw notFound;
+      if (method === "GET" && path === "/repos/marius-patrik/example/branches/main/protection") return healthyManagedProtection();
       if (method === "DELETE" && path === "/repos/marius-patrik/example/issues/12/labels/df%3Aready") return {};
       if (method === "POST" && path === "/repos/marius-patrik/DarkFactory/actions/workflows/df-work.yml/dispatches") return {};
 
@@ -1554,7 +1569,8 @@ test("orchestrator resumes interrupted run against existing open worker PR", asy
       issue_number: "8",
       base_ref: "main",
       resume_pr: "21",
-      resume_branch: ""
+      resume_branch: "",
+      resume_head: ""
     }
   });
   const comment = calls.find(
@@ -1568,6 +1584,7 @@ test("orchestrator resumes interrupted run from pushed branch when no PR exists"
   const { RESUME_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-branch-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
+  const resumeHead = "9".repeat(40);
 
   const gh = {
     async graphql() {
@@ -1591,7 +1608,7 @@ test("orchestrator resumes interrupted run from pushed branch when no PR exists"
       }
       if (method === "GET" && path === "/repos/marius-patrik/example/issues/9/comments?per_page=100&page=2") return [];
       if (method === "GET" && path === "/repos/marius-patrik/example/git/matching-refs/heads/df%2F9-") {
-        return [{ ref: "refs/heads/df/9-resume-test" }];
+        return [{ ref: "refs/heads/df/9-resume-test", object: { sha: resumeHead } }];
       }
       if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") throw notFound;
       if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
@@ -1621,18 +1638,53 @@ test("orchestrator resumes interrupted run from pushed branch when no PR exists"
   });
 
   assert.deepEqual(result.recoveries, [
-    { repo: "marius-patrik/example", issue: 9, type: "branch", action: "resume-branch", reason: "", branch: "df/9-resume-test" }
+    { repo: "marius-patrik/example", issue: 9, type: "branch", action: "resume-branch", reason: "", branch: "df/9-resume-test", head: resumeHead }
   ]);
   const dispatch = calls.find(
     (call) => call.method === "POST" && call.path === "/repos/marius-patrik/DarkFactory/actions/workflows/df-work.yml/dispatches"
   )?.body;
   assert.equal(dispatch.inputs.resume_branch, "df/9-resume-test");
+  assert.equal(dispatch.inputs.resume_head, resumeHead);
   assert.equal(dispatch.inputs.base_ref, "main");
   assert.equal(dispatch.inputs.resume_pr, "");
   const comment = calls.find(
     (call) => call.method === "POST" && call.path === "/repos/marius-patrik/example/issues/9/comments"
   )?.body;
   assert.ok(String(comment?.body).includes(RESUME_MARKER));
+});
+
+test("interrupted recovery escalates multiple pushed branches without dispatching either", async () => {
+  // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
+  const { classifyResumeTarget, resumeInterruptedWorker } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-ambiguous-test");
+  const calls: Array<{ method: string; path: string; body?: any }> = [];
+  const gh = {
+    async graphql() {
+      return { repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } };
+    },
+    async request(method: string, path: string, body?: any) {
+      calls.push({ method, path, body });
+      if (method === "GET" && path.endsWith("/git/matching-refs/heads/df%2F77-")) {
+        return [
+          { ref: "refs/heads/df/77-first", object: { sha: "1".repeat(40) } },
+          { ref: "refs/heads/df/77-second", object: { sha: "2".repeat(40) } }
+        ];
+      }
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/77/labels") return {};
+      if (method === "DELETE" && path.startsWith("/repos/marius-patrik/example/issues/77/labels/")) return {};
+      if (method === "POST" && path === "/repos/marius-patrik/example/issues/77/comments") return {};
+      throw new Error(`Unexpected GitHub request: ${method} ${path}`);
+    }
+  };
+  const repository = { owner: "marius-patrik", repo: "example" };
+  const issue = { number: 77 };
+  const classification = await classifyResumeTarget(gh, repository, issue);
+  assert.equal(classification.type, "ambiguous");
+  assert.deepEqual(classification.candidates.map((candidate: { branch: string }) => candidate.branch), ["df/77-first", "df/77-second"]);
+
+  const recovery = await resumeInterruptedWorker(gh, { owner: "marius-patrik", repo: "DarkFactory" }, repository, issue, classification);
+  assert.equal(recovery.action, "ask-owner");
+  assert.equal(recovery.reason, "ambiguous-worker-branches");
+  assert.equal(calls.some((call) => call.path.endsWith("/actions/workflows/df-work.yml/dispatches")), false);
 });
 
 test("orchestrator requeues interrupted run with no usable branch", async () => {
@@ -1788,7 +1840,7 @@ test("orchestrator surfaces recovery decisions in ledger and dashboard", async (
       }
       if (method === "GET" && path === "/repos/marius-patrik/example/issues/12/comments?per_page=100&page=2") return [];
       if (method === "GET" && path === "/repos/marius-patrik/example/git/matching-refs/heads/df%2F12-") {
-        return [{ ref: "refs/heads/df/12-resume-test" }];
+        return [{ ref: "refs/heads/df/12-resume-test", object: { sha: "1".repeat(40) } }];
       }
       if (method === "GET" && path === "/repos/marius-patrik/example/git/ref/heads/dev") throw notFound;
       if (method === "GET" && path === "/repos/marius-patrik/example") return { default_branch: "main", allow_auto_merge: true };
@@ -1823,7 +1875,7 @@ test("orchestrator surfaces recovery decisions in ledger and dashboard", async (
   });
 
   assert.deepEqual(result.ledger.recovery, [
-    { repo: "marius-patrik/example", issue: 12, type: "branch", action: "resume-branch", reason: "", branch: "df/12-resume-test" }
+    { repo: "marius-patrik/example", issue: 12, type: "branch", action: "resume-branch", reason: "", branch: "df/12-resume-test", head: "1".repeat(40) }
   ]);
   const dashboardUpdate = calls.find(
     (call) => call.method === "PATCH" && call.path === "/repos/marius-patrik/DarkFactory/issues/99"

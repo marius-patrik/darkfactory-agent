@@ -36,12 +36,11 @@ test("setup plan orders trusted convergence stages and preserves owner residue",
     "issue-lane-cut"
   ]);
   assert.deepEqual(plan.residue.map((item) => [item.findingId, item.repairClass]), [
-    ["required-secret-key-missing", "owner"],
-    ["runner-health", "blocked"]
+    ["required-secret-key-missing", "owner"]
   ]);
 });
 
-test("setup routes all machine-runtime deltas to the blocked machine-wiring boundary", () => {
+test("setup admits only auto-class machine-runtime deltas to the trusted machine-wiring executor", () => {
   const plan = planSetupConvergence([report([{
     id: "provider-route-probe-unavailable",
     category: "machine runtime",
@@ -54,8 +53,60 @@ test("setup routes all machine-runtime deltas to the blocked machine-wiring boun
     stage: action.stage,
     operation: action.operation,
     supported: action.supported
-  })), [{ stage: "machine-wiring", operation: "converge-machine-runtime", supported: false }]);
+  })), [{ stage: "machine-wiring", operation: "converge-machine-runtime", supported: true }]);
+  assert.deepEqual(plan.residue, []);
+});
+
+test("setup preserves blocked machine authority findings without creating a mutation action", () => {
+  const plan = planSetupConvergence([report([{
+    id: "provider-route-probe-unavailable",
+    category: "machine runtime",
+    message: "route probe missing",
+    severity: "critical",
+    repair_class: "blocked"
+  }])]);
+
+  assert.deepEqual(plan.actions, []);
   assert.deepEqual(plan.residue.map((item) => [item.findingId, item.repairClass]), [["provider-route-probe-unavailable", "blocked"]]);
+});
+
+test("setup routes an absent managed registry entry through the reviewed registration stage", () => {
+  const plan = planSetupConvergence([report([{
+    id: "managed-registry-entry-missing",
+    category: "registration",
+    message: "target is absent",
+    severity: "critical",
+    repair_class: "pr"
+  }])]);
+
+  assert.deepEqual(plan.actions.map((action) => ({
+    stage: action.stage,
+    operation: action.operation,
+    supported: action.supported
+  })), [{ stage: "registration", operation: "converge-registration", supported: true }]);
+  assert.deepEqual(plan.residue, []);
+});
+
+test("setup initializes an empty repository before managed content and enforcement", () => {
+  const plan = planSetupConvergence([report([{
+    id: "default-branch-head-missing",
+    category: "branch policy",
+    message: "empty repository",
+    severity: "critical",
+    repair_class: "auto"
+  }])]);
+  assert.deepEqual(plan.actions.map((action) => [action.stage, action.operation]), [["repository-bootstrap", "initialize-repository"]]);
+});
+
+test("setup delegates branch reconciliation and release residue to the trusted release engine", () => {
+  const plan = planSetupConvergence([report([
+    { id: "dev-behind-main", category: "branch convergence", message: "behind", severity: "error", repair_class: "pr" },
+    { id: "release-pr-missing", category: "release lane", message: "missing", severity: "error", repair_class: "pr" }
+  ])]);
+  assert.deepEqual(plan.actions.map((action) => [action.stage, action.operation]), [
+    ["verification", "reconcile-branches"],
+    ["verification", "converge-release"]
+  ]);
 });
 
 test("setup blocks code-repository convergence for the exact canonical main-only data repositories", () => {

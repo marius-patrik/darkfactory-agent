@@ -8,8 +8,9 @@ import {
   darkFactoryWorkerIssueNumber,
   extractClosingIssueNumbers,
   getRepository,
+  getBranchProtection,
   getOptionalFileContent,
-  getRequiredStatusCheckContexts,
+  inspectManagedBranchProtection,
   isDarkFactoryWorkerPullRequest as isWorkerPullRequest,
   isVerifiedWorkerIssue,
   isParkedRepo,
@@ -31,9 +32,6 @@ const MODE = process.env.DF_FOLLOW_THROUGH_MODE ?? "sweep";
 const TRIGGER = process.env.DF_TRIGGER ?? "unknown";
 const DEFAULT_EXCLUDED_REPOS = "";
 const WORK_BRANCH = process.env.DF_WORK_BRANCH || "";
-const NO_CHECK_ALLOWLIST = new Set(
-  repoList(process.env.DF_ALLOW_NO_CHECK_REPOS || "").map((repo) => repoName(repo).toLowerCase())
-);
 const EMPTY_CHECK_SETTLE_MS = 10 * 60 * 1000;
 let gh;
 let CONTROL_REPO;
@@ -73,7 +71,7 @@ async function main() {
     excluded_repos: [...excluded],
     actions: [],
     token_usage: {
-      codex_calls: 0,
+      model_calls: 0,
       input_tokens: 0,
       output_tokens: 0,
       note: "Green-PR sweep is deterministic and uses no model calls"
@@ -152,13 +150,23 @@ export async function considerPullRequest(repository, pull, enforcementRules = n
   if (pull.isDraft) return { repo: repoName(repository), pr: ref, action: "skip", reason: "draft" };
   if (!isWorkerPullRequest(pull, repository)) return { repo: repoName(repository), pr: ref, action: "skip", reason: "not-worker-pr" };
 
+  const protection = inspectManagedBranchProtection(await getBranchProtection(gh, repository, pull.baseRefName));
+  if (!protection.ok) {
+    const issueUpdate = await markWorkerIssueBlocked(repository, pull, "merge-policy-blocked", protection.findings);
+    return {
+      repo: repoName(repository),
+      pr: ref,
+      action: "skip",
+      reason: "merge-policy-blocked",
+      issue_update: issueUpdate,
+      findings: protection.findings
+    };
+  }
+
   const rules = enforcementRules ?? (await loadEnforcementRules());
   const registry = await readManagedRepoRegistry();
-  const branchProtectionContexts = await getRequiredStatusCheckContexts(gh, repository, pull.baseRefName);
-  const autoreview = await autoreviewProvisioning(repository, pull);
-  const requiredContexts = autoreview.required
-    ? withAutoreviewRequiredContext(branchProtectionContexts)
-    : branchProtectionContexts;
+  const requiredContexts = protection.requiredChecks;
+  const autoreview = { required: true, source: "branch-protection" };
 
   const enforcement = await evaluateEnforcementRules(rules, {
     gh,
@@ -187,21 +195,6 @@ export async function considerPullRequest(repository, pull, enforcementRules = n
 
   if (!emptyCheckRollupHasSettled(pull)) {
     return { repo: repoName(repository), pr: ref, action: "skip", reason: "checks-not-reported-yet" };
-  }
-
-  const hasReportedChecks = Array.isArray(pull.statusCheckRollup) && pull.statusCheckRollup.length > 0;
-  if (!hasReportedChecks && requiredContexts.length === 0 && !NO_CHECK_ALLOWLIST.has(repoName(repository).toLowerCase())) {
-    const issueUpdate = await markWorkerIssueBlocked(repository, pull, "no-checks-not-allowed", [
-      "No checks were reported and this repository is not in `DF_ALLOW_NO_CHECK_REPOS`."
-    ]);
-    return {
-      repo: repoName(repository),
-      pr: ref,
-      action: "skip",
-      reason: "no-checks-not-allowed",
-      issue_update: issueUpdate,
-      note: "Add the repository to DF_ALLOW_NO_CHECK_REPOS to permit direct merge with no checks."
-    };
   }
 
   if (!checksAreGreen(pull.statusCheckRollup, requiredContexts)) {
@@ -233,10 +226,7 @@ export async function considerPullRequest(repository, pull, enforcementRules = n
 
   const mergeGate = await getPullRequestMergeGate(repository, pull.number);
   const hasMergeGateChecks = Array.isArray(mergeGate.statusCheckRollup) && mergeGate.statusCheckRollup.length > 0;
-  if (
-    (!hasMergeGateChecks && !NO_CHECK_ALLOWLIST.has(repoName(repository).toLowerCase())) ||
-    !checksAreGreen(mergeGate.statusCheckRollup, requiredContexts)
-  ) {
+  if (!hasMergeGateChecks || !checksAreGreen(mergeGate.statusCheckRollup, requiredContexts)) {
     const issueUpdate = await markWorkerIssueBlocked(repository, pull, "merge-checks-not-green", [
       "Fresh merge gate check failed immediately before merge.",
       `Required checks: ${requiredContexts.join(", ")}`,
@@ -268,48 +258,32 @@ export async function considerPullRequest(repository, pull, enforcementRules = n
     }
   }
 
-  const protectedBranch = await branchIsProtected(repository, pull.baseRefName);
-  if (protectedBranch && requiredContexts.length > 0) {
-    const enabled = await enableAutoMerge(pull.id);
-    if (enabled.enabled) {
-      return {
-        repo: repoName(repository),
-        pr: ref,
-        url: pull.url,
-        action: "enable-automerge",
-        result: enabled,
-        checks: checksSummary(pull.statusCheckRollup),
-        ...autoreviewLedgerGap(autoreview)
-      };
-    }
-
-    if (!canDirectMergeAfterAutomergeFailure(enabled.reason)) {
-      const issueUpdate = await markWorkerIssueBlocked(repository, pull, "protected-branch-automerge-failed", [
-        `Auto-merge failed: ${enabled.reason || "unknown error"}`
-      ]);
-      return {
-        repo: repoName(repository),
-        pr: ref,
-        url: pull.url,
-        action: "skip",
-        reason: "protected-branch-automerge-failed",
-        automerge_error: enabled.reason,
-        issue_update: issueUpdate,
-        checks: checksSummary(pull.statusCheckRollup),
-        ...autoreviewLedgerGap(autoreview)
-      };
-    }
-
-    const merged = await mergePullRequest(repository, mergeGate);
+  const enabled = await enableAutoMerge(pull.id);
+  if (enabled.enabled) {
     return {
       repo: repoName(repository),
       pr: ref,
       url: pull.url,
-      action: "merge",
-      sha: merged.sha,
-      base: pull.baseRefName,
-      direct_merge_reason: enabled.reason,
-      checks: checksSummary(mergeGate.statusCheckRollup),
+      action: "enable-automerge",
+      result: enabled,
+      checks: checksSummary(pull.statusCheckRollup),
+      ...autoreviewLedgerGap(autoreview)
+    };
+  }
+
+  if (!canDirectMergeAfterAutomergeFailure(enabled.reason)) {
+    const issueUpdate = await markWorkerIssueBlocked(repository, pull, "protected-branch-automerge-failed", [
+      `Auto-merge failed: ${enabled.reason || "unknown error"}`
+    ]);
+    return {
+      repo: repoName(repository),
+      pr: ref,
+      url: pull.url,
+      action: "skip",
+      reason: "protected-branch-automerge-failed",
+      automerge_error: enabled.reason,
+      issue_update: issueUpdate,
+      checks: checksSummary(pull.statusCheckRollup),
       ...autoreviewLedgerGap(autoreview)
     };
   }
@@ -322,6 +296,7 @@ export async function considerPullRequest(repository, pull, enforcementRules = n
     action: "merge",
     sha: merged.sha,
     base: pull.baseRefName,
+    direct_merge_reason: enabled.reason,
     checks: checksSummary(mergeGate.statusCheckRollup),
     ...autoreviewLedgerGap(autoreview)
   };
@@ -492,7 +467,7 @@ export async function closeVerifiedDevMergeIssues(request) {
     },
     actions: [],
     token_usage: {
-      codex_calls: 0,
+      model_calls: 0,
       input_tokens: 0,
       output_tokens: 0,
       note: "Issue closure on dev merge is deterministic"
@@ -854,17 +829,6 @@ function normalizeRestPullRequest(pull) {
     mergeCommitSha: pull.merge_commit_sha || "",
     mergedAt
   };
-}
-
-async function branchIsProtected(repository, branch) {
-  try {
-    await gh.request("GET", `/repos/${repoName(repository)}/branches/${encodeURIComponent(branch)}/protection`);
-    return true;
-  } catch (error) {
-    if (error.status === 404) return false;
-    if (error.status === 403) return false;
-    throw error;
-  }
 }
 
 async function enableAutoMerge(pullRequestId) {
