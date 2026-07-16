@@ -64,7 +64,7 @@ function doctorResult(provider: ResolvedRoute["provider"], version = `${provider
 function successfulDependencies(
   capture: Array<{ route: ResolvedRoute; effort: ModelEffort; executionPolicy: ExecutionPolicy; prompt: string }> = [],
   options: {
-    resolvedExecutionPolicy?: ExecutionPolicy;
+    resolvedExecutionPolicy?: ExecutionPolicy | null;
     version?: string;
     usage?: { tokensIn?: number; tokensOut?: number; totalTokens?: number };
     error?: string;
@@ -83,7 +83,9 @@ function successfulDependencies(
       return {
         sessionId: "test-session",
         outcome: {
-          resolvedExecutionPolicy: options.resolvedExecutionPolicy ?? request.executionPolicy,
+          resolvedExecutionPolicy: Object.prototype.hasOwnProperty.call(options, "resolvedExecutionPolicy")
+            ? options.resolvedExecutionPolicy!
+            : request.executionPolicy,
           result: {
             content: options.content ?? "ok",
             role: "assistant",
@@ -213,6 +215,18 @@ describe("canonical model execution route and receipt", () => {
     expect(result.receipt.usage).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
   });
 
+  test("provider policy without native attestation blocks as unsupported", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const result = await executeModelRequest(
+      state,
+      request(root, receiptDir, "max", "high", "read-only"),
+      successfulDependencies([], { resolvedExecutionPolicy: null, content: "unattested success" }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.content).toBe("");
+    expect(result.receipt.blockReason).toBe("execution_policy_unsupported");
+  });
+
   test("reserves a blocked receipt before any provider turn starts", async () => {
     const { root, state, receiptDir } = await fixture();
     const input = request(root, receiptDir, "high", "high", "workspace-write");
@@ -240,6 +254,37 @@ describe("canonical model execution route and receipt", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.receipt.outcome).toBe("success");
+  });
+
+  test("reserves before provider doctor failure and publishes a stable blocked receipt", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const input = request(root, receiptDir, "high", "low");
+    const result = await executeModelRequest(state, input, {
+      doctor: async () => {
+        const pending = JSON.parse(await Bun.file(input.receiptPath).text());
+        expect(pending.blockReason).toBe("execution_pending");
+        throw new Error("provider diagnostic must not escape");
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.receipt.blockReason).toBe("provider_doctor_failed");
+    expect(await Bun.file(input.receiptPath).text()).not.toContain("provider diagnostic");
+  });
+
+  test("reserves before route-probe failure and publishes a stable blocked receipt", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const input = request(root, receiptDir, "high", "medium");
+    const result = await executeModelRequest(state, input, {
+      doctor: async (_state, provider) => doctorResult(provider),
+      routeProbe: async () => {
+        const pending = JSON.parse(await Bun.file(input.receiptPath).text());
+        expect(pending.blockReason).toBe("execution_pending");
+        throw new Error("route diagnostic must not escape");
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.receipt.blockReason).toBe("route_probe_failed");
+    expect(await Bun.file(input.receiptPath).text()).not.toContain("route diagnostic");
   });
 
   test("malformed usage and provider failures remain sanitized and fail closed", async () => {

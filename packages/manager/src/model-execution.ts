@@ -97,11 +97,12 @@ export interface ModelExecutionResult {
 export interface ManagedProviderOutcome {
   result: TurnResult;
   /** Provider-attested effective policy, never inferred by DarkFactory. */
-  resolvedExecutionPolicy: ExecutionPolicy;
+  resolvedExecutionPolicy: ExecutionPolicy | null;
 }
 
 export interface ModelExecutionDependencies {
   doctor?: (state: SharedState, provider: ProviderId) => Promise<AdapterDoctorResult>;
+  routeProbe?: typeof runRouteProbe;
   execute?: (
     state: SharedState,
     route: ResolvedRoute,
@@ -381,14 +382,11 @@ async function defaultExecute(
       agentPreset: route.agentPreset,
     });
     heartbeat?.assertHealthy();
-    if (!result.resolvedExecutionPolicy) {
-      throw new Error("provider did not attest the resolved execution policy");
-    }
     return {
       sessionId: descriptor.sessionId,
       outcome: {
         result,
-        resolvedExecutionPolicy: result.resolvedExecutionPolicy,
+        resolvedExecutionPolicy: result.resolvedExecutionPolicy ?? null,
       },
     };
   } finally {
@@ -418,21 +416,43 @@ export async function executeModelRequest(
   }
 
   const provider = TIER_ROUTES[tier].provider;
-  const doctor = await (dependencies.doctor ?? doctorAdapter)(state, provider);
-  const report = await runRouteProbe(state, {
-    tier,
-    effort,
-    providerDoctorEvidence: doctor.evidence,
-    probe: "none",
-  });
-  const providerVersion = doctor.evidence.providerVersion;
-  const route = report.route;
-  const pending = blockedReceipt(tier, effort, route, providerVersion, "execution_pending");
+  const pending = blockedReceipt(tier, effort, null, null, "execution_pending");
   const reservation = await ReceiptReservation.create(input.receiptPath, workdir, pending);
   let finalReceipt = pending;
   let sessionId: string | null = null;
   let content = "";
   try {
+    let doctor: AdapterDoctorResult;
+    try {
+      doctor = await (dependencies.doctor ?? doctorAdapter)(state, provider);
+    } catch {
+      finalReceipt = blockedReceipt(tier, effort, null, null, "provider_doctor_failed");
+      await reservation.commit(finalReceipt);
+      return { ok: false, content, sessionId, receipt: finalReceipt };
+    }
+
+    let report: Awaited<ReturnType<typeof runRouteProbe>>;
+    try {
+      report = await (dependencies.routeProbe ?? runRouteProbe)(state, {
+        tier,
+        effort,
+        providerDoctorEvidence: doctor.evidence,
+        probe: "none",
+      });
+    } catch {
+      finalReceipt = blockedReceipt(
+        tier,
+        effort,
+        null,
+        doctor.evidence.providerVersion,
+        "route_probe_failed",
+      );
+      await reservation.commit(finalReceipt);
+      return { ok: false, content, sessionId, receipt: finalReceipt };
+    }
+
+    const providerVersion = doctor.evidence.providerVersion;
+    const route = report.route;
     if (!report.ok || !route) {
       finalReceipt = blockedReceipt(
         tier,
@@ -484,10 +504,12 @@ export async function executeModelRequest(
     }
     sessionId = executed.sessionId;
     const providerContent = executed.outcome.result.content;
-    if (executed.outcome.resolvedExecutionPolicy !== executionPolicy) {
-      finalReceipt = blockedReceipt(tier, effort, route, safeVersion, "execution_policy_mismatch");
-    } else if (executed.outcome.result.error) {
+    if (executed.outcome.result.error) {
       finalReceipt = blockedReceipt(tier, effort, route, safeVersion, "provider_failed");
+    } else if (executed.outcome.resolvedExecutionPolicy === null) {
+      finalReceipt = blockedReceipt(tier, effort, route, safeVersion, "execution_policy_unsupported");
+    } else if (executed.outcome.resolvedExecutionPolicy !== executionPolicy) {
+      finalReceipt = blockedReceipt(tier, effort, route, safeVersion, "execution_policy_mismatch");
     } else {
       const usage = normalizedUsage(executed.outcome.result.usage);
       finalReceipt = usage

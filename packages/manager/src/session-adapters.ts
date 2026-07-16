@@ -183,9 +183,17 @@ export class CliProviderAdapter implements ProviderAdapter {
     const stderr = stderrRead.value;
     const code = processExit.value;
     const result = (this.options.parseResult ?? defaultParseResult)(stdout, stderr, code);
-    result.resolvedExecutionPolicy = this.options.resolveExecutionPolicy
-      ? await this.options.resolveExecutionPolicy(descriptor, request, result)
-      : preworkExecutionPolicy ?? request.executionPolicy ?? "read-only";
+    if (this.options.resolveExecutionPolicy) {
+      result.resolvedExecutionPolicy = await this.options.resolveExecutionPolicy(descriptor, request, result);
+    } else if (preworkExecutionPolicy) {
+      result.resolvedExecutionPolicy = preworkExecutionPolicy;
+    } else {
+      // The requested policy and the arguments assembled by Agent OS are not
+      // provider-native proof of the policy that actually governed the turn.
+      // Ordinary provider sessions may still return content, but logical-tier
+      // execution will block success until the provider can attest this field.
+      delete result.resolvedExecutionPolicy;
+    }
     if (preworkExecutionPolicy && result.resolvedExecutionPolicy !== preworkExecutionPolicy) {
       throw new Error("provider pre-work and completed-turn execution-policy receipts disagree");
     }
@@ -782,13 +790,13 @@ export function claudeSessionAdapter(binaryOverride?: string): ProviderAdapter {
     buildArgs: (request, transcript, descriptor) => buildProviderArgs("claude", descriptor.model, request, transcript),
     buildStdin: (request, transcript) => transcriptAsPrompt(request, transcript),
     parseResult: parseClaudeJsonResult,
-    receipt: (descriptor, request) => ({
+    receipt: (descriptor, request, result) => ({
       provider: "claude",
       model: descriptor.model,
       effort: request.effort ?? null,
       agentPreset: request.agentPreset ?? null,
       requestedExecutionPolicy: request.executionPolicy ?? "read-only",
-      resolvedExecutionPolicy: request.executionPolicy ?? "read-only",
+      resolvedExecutionPolicy: result.resolvedExecutionPolicy ?? null,
     }),
   });
 }

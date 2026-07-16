@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { unlinkSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderAdapter, SessionEvent, SessionTranscript, TurnRequest } from "../../harness/session";
@@ -10,6 +10,7 @@ import {
   attestCodexExecutionPolicy,
   buildProviderArgs,
   canonicalProviderEnv,
+  claudeSessionAdapter,
   CliProviderAdapter,
   codexSessionAdapter,
   kimiSessionAdapter,
@@ -934,6 +935,56 @@ async function seedCanonicalStartup(state: ReturnType<typeof sharedStateAt>, sta
   });
 }
 
+async function fakeClaudeJsonBinary(stateDir: string): Promise<string> {
+  const binDir = path.join(stateDir, "clis", "claude", "bin");
+  await mkdir(binDir, { recursive: true });
+  const payload = JSON.stringify({ result: "claude-ok", usage: { input_tokens: 3, output_tokens: 2 } });
+  if (process.platform === "win32") {
+    const binary = path.join(binDir, "claude.ps1");
+    await Bun.write(binary, `[Console]::Out.WriteLine('${payload.replaceAll("'", "''")}')\r\n`);
+    return binary;
+  }
+  const binary = path.join(binDir, "claude");
+  await Bun.write(binary, `#!/bin/sh\nprintf '%s\\n' '${payload}'\n`);
+  await chmod(binary, 0o700);
+  return binary;
+}
+
+describe("provider-native execution-policy evidence", () => {
+  test("successful Claude output does not echo the requested policy as resolved evidence", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-claude-policy-evidence-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedCanonicalStartup(state, stateDir);
+      const binary = await fakeClaudeJsonBinary(stateDir);
+      const descriptor = await createSession(state, {
+        provider: "claude",
+        model: "claude-test",
+        mode: "task",
+        workdir: root,
+      });
+      const result = await runSessionTurn(state, claudeSessionAdapter(binary), descriptor, {
+        prompt: "Return the fixture.",
+        executionPolicy: "read-only",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.content).toBe("claude-ok");
+      expect(result.resolvedExecutionPolicy).toBeUndefined();
+      expect(result.receipt).toMatchObject({
+        provider: "claude",
+        requestedExecutionPolicy: "read-only",
+        resolvedExecutionPolicy: null,
+      });
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 interface FakeKimiAcpCapture {
   argv: string[];
   agentsHome: string | null;
@@ -1329,6 +1380,47 @@ describe("managed Kimi native continuation (issue #254)", () => {
       expect(captured.responses.find((response) => response.id === 900)).toMatchObject({
         result: { outcome: { outcome: "cancelled" } },
       });
+    } finally {
+      restore();
+      await rm(outside, { force: true });
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("workspace policy edge: an in-worktree hard link to an outside inode is cancelled", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-hardlink-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const capturePath = path.join(root, "kimi-acp.json");
+    const outside = path.resolve(root, "..", `${path.basename(root)}-outside.txt`);
+    const target = path.join(root, "linked-inside.txt");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedKimiCanonicalStartup(state, stateDir);
+      await writeFile(outside, "outside-owner-data\n");
+      await link(outside, target);
+      const binary = await fakeKimiAcpBinary(stateDir, capturePath, {
+        permissionRequest: { kind: "edit", path: target },
+      });
+      const descriptor = await createSession(state, {
+        provider: "kimi",
+        model: "kimi-test",
+        mode: "task",
+        workdir: root,
+      });
+
+      await expect(
+        runSessionTurn(state, kimiSessionAdapter(binary), descriptor, {
+          prompt: "Attempt an edit through a hard link.",
+          executionPolicy: "workspace-write",
+        }),
+      ).rejects.toThrow("requested permission despite the confirmed execution policy");
+      const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
+      expect(captured.responses.find((response) => response.id === 900)).toMatchObject({
+        result: { outcome: { outcome: "cancelled" } },
+      });
+      expect(await readFile(outside, "utf8")).toBe("outside-owner-data\n");
     } finally {
       restore();
       await rm(outside, { force: true });
@@ -1913,8 +2005,12 @@ describe("managed Agy provider boundary (issue #252)", () => {
       const adapter = agySessionAdapter(binary);
       const descriptor = await createSession(state, { provider: "agy", model: "low", mode: "chat", workdir: root });
       const promptText = "Reply with the single word ok.";
-      const result = await runSessionTurn(state, adapter, descriptor, { prompt: promptText });
+      const result = await runSessionTurn(state, adapter, descriptor, {
+        prompt: promptText,
+        executionPolicy: "read-only",
+      });
       expect(result.error).toBeUndefined();
+      expect(result.resolvedExecutionPolicy).toBeUndefined();
 
       // The exact prompt and the concrete Low model reach the provider boundary.
       const captured = parseCapture(await readFile(capture, "utf8"));

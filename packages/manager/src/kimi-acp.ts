@@ -258,7 +258,13 @@ async function workspaceEditLocation(workdir: string, candidate: string): Promis
     });
     if (!info) break;
     if (info.isSymbolicLink()) return false;
-    if (cursor === lexicalTarget && !info.isFile()) return false;
+    if (cursor === lexicalTarget) {
+      if (!info.isFile()) return false;
+      // A path can be physically inside the worktree while sharing its inode
+      // with a name outside it. Editing such a hard link would mutate data
+      // outside the authorized boundary even though realpath remains inside.
+      if (info.nlink !== 1) return false;
+    }
     const physical = await realpath(cursor).catch(() => null);
     if (!physical || !containsPath(physicalRoot, physical)) return false;
   }
