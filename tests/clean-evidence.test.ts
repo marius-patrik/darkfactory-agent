@@ -288,6 +288,32 @@ test("clean issue evidence distinguishes exact pending and failed Autoreview obs
   assert.equal(buildCleanPlan(failedEvidence).entries.find((entry) => entry.kind === "issue")?.action, "autoreview");
 });
 
+test("clean issue evidence consumes trusted recovery current and owner-required markers", async () => {
+  const issue = issueFixture();
+  const version = issueVersion(issue);
+  const current = issueComment(
+    3,
+    `<!-- darkfactory:clean-autoreview schema=1 kind=issue number=7 version=${version} status=current -->\nCurrent.`,
+    new Date().toISOString()
+  );
+  const ownerRequired = issueComment(
+    4,
+    `<!-- darkfactory:clean-autoreview schema=1 kind=issue number=7 version=${version} status=owner-required -->\nOwner action required.`,
+    new Date().toISOString()
+  );
+  const [currentEvidence, ownerEvidence] = await Promise.all([
+    collectCleanEvidence(issueEvidenceGithub(issue, [current]), REPOSITORY, "", [reviewableIssueFinding()]),
+    collectCleanEvidence(issueEvidenceGithub(issue, [ownerRequired]), REPOSITORY, "", [reviewableIssueFinding()])
+  ]);
+
+  assert.equal(currentEvidence.issues[0]?.autoreview, "current");
+  assert.equal(buildCleanPlan(currentEvidence).entries.find((entry) => entry.kind === "issue")?.action, "preserve");
+  assert.equal(ownerEvidence.issues[0]?.autoreview, "owner-required");
+  const ownerEntry = buildCleanPlan(ownerEvidence).entries.find((entry) => entry.kind === "issue");
+  assert.equal(ownerEntry?.action, "preserve");
+  assert.match(ownerEntry?.reasons.join(" ") ?? "", /owner action/i);
+});
+
 test("clean issue evidence fails closed on a malformed trusted pending marker", async () => {
   const issue = issueFixture();
   const malformed = issueComment(1, "<!-- darkfactory:clean-autoreview schema=1 broken -->", new Date().toISOString());
@@ -371,6 +397,36 @@ test("clean Autoreview apply deduplicates an exact pending observation without a
   assert.equal(events.includes("dispatch"), false);
   assert.equal(events.some((event) => event.startsWith("comment:")), false);
   assert.equal(receipt.actions.find((action) => action.kind === "issue")?.status, "skipped");
+});
+
+test("clean Autoreview apply preserves a stale plan when trusted recovery becomes owner-required", async () => {
+  const issue = issueFixture();
+  const version = issueVersion(issue);
+  const ownerRequired = issueComment(
+    10,
+    `<!-- darkfactory:clean-autoreview schema=1 kind=issue number=7 version=${version} status=owner-required -->\nOwner action required.`,
+    new Date().toISOString()
+  );
+  const evidence = issueActionEvidence(version, "missing");
+  const plan = buildCleanPlan(evidence, new Date("2026-07-16T11:00:00Z"));
+  const events: string[] = [];
+  const receipt = await applyCleanPlan(
+    issueAutoreviewApplyGithub(issue, [ownerRequired], events),
+    REPOSITORY,
+    plan,
+    evidence,
+    {
+      onAdmission: async () => { events.push("admission"); },
+      onCompletion: async (action) => { events.push(`completion:${action.kind}:${action.status}`); }
+    }
+  );
+
+  assert.equal(events.includes("admission"), false);
+  assert.equal(events.includes("dispatch"), false);
+  assert.equal(events.some((event) => event.startsWith("comment:")), false);
+  const action = receipt.actions.find((entry) => entry.kind === "issue");
+  assert.equal(action?.status, "skipped");
+  assert.match(action?.reason ?? "", /owner-required/);
 });
 
 test("clean Autoreview apply re-fetches after admission and blocks a concurrent issue edit before mutation", async () => {

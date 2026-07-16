@@ -433,10 +433,12 @@ async function applyAutoreviewAction(
   validateAutoreviewVersion(entry.kind, entry.version);
   const number = cleanTargetNumber(entry);
   const before = await readExactAutoreviewTarget(github, repository, entry, number);
-  if (before.autoreview === "current" || before.autoreview === "pending") {
+  if (before.autoreview === "current" || before.autoreview === "pending" || before.autoreview === "owner-required") {
     await recordCompleted(
       actions,
-      actionReceipt(entry, "skipped", `Exact ${entry.version} Autoreview is already ${before.autoreview}; duplicate dispatch suppressed.`),
+      actionReceipt(entry, "skipped", before.autoreview === "owner-required"
+        ? `Exact ${entry.version} recovery is owner-required; automated dispatch remains blocked.`
+        : `Exact ${entry.version} Autoreview is already ${before.autoreview}; duplicate dispatch suppressed.`),
       options.onCompletion
     );
     return;
@@ -448,10 +450,12 @@ async function applyAutoreviewAction(
     options.onAdmission
   );
   const admitted = await readExactAutoreviewTarget(github, repository, entry, number);
-  if (admitted.autoreview === "current" || admitted.autoreview === "pending") {
+  if (admitted.autoreview === "current" || admitted.autoreview === "pending" || admitted.autoreview === "owner-required") {
     await recordCompleted(
       actions,
-      actionReceipt(entry, "skipped", `Exact ${entry.version} became ${admitted.autoreview} after admission; duplicate dispatch suppressed.`),
+      actionReceipt(entry, "skipped", admitted.autoreview === "owner-required"
+        ? `Exact ${entry.version} recovery became owner-required after admission; automated dispatch remains blocked.`
+        : `Exact ${entry.version} became ${admitted.autoreview} after admission; duplicate dispatch suppressed.`),
       options.onCompletion
     );
     return;
@@ -470,6 +474,14 @@ async function applyAutoreviewAction(
     await recordCompleted(
       actions,
       actionReceipt(entry, "applied", `Pending evidence comment #${pendingCommentId} was published, but exact Autoreview completed concurrently; dispatch suppressed.`),
+      options.onCompletion
+    );
+    return;
+  }
+  if (marked.autoreview === "owner-required") {
+    await recordCompleted(
+      actions,
+      actionReceipt(entry, "applied", `Pending evidence comment #${pendingCommentId} was published, but exact recovery became owner-required; dispatch suppressed.`),
       options.onCompletion
     );
     return;
@@ -788,7 +800,7 @@ function runGit(cwd: string, args: string[]): string {
 type NormalizedPull = ReturnType<typeof normalizePull>;
 
 type AutoreviewObservation = Readonly<{
-  state: "current" | "pending" | "failed" | "stale";
+  state: "current" | "pending" | "owner-required" | "failed" | "stale";
   version: string | null;
   timestamp: number;
   id: number;
@@ -899,11 +911,11 @@ function commentAutoreviewObservations(comments: readonly Record<string, unknown
     const cleanMarker = parseCleanAutoreviewMarker(body);
     if (cleanMarker) {
       observations.push({
-        state: cleanMarker.status === "pending" && time > 0 && Date.now() - time <= AUTOREVIEW_PENDING_MAX_AGE_MS
-          ? "pending"
-          : cleanMarker.status === "failed"
-            ? "failed"
-            : "stale",
+        state: cleanMarker.status === "pending"
+          ? time > 0 && Date.now() - time <= AUTOREVIEW_PENDING_MAX_AGE_MS
+            ? "pending"
+            : "stale"
+          : cleanMarker.status,
         version: cleanMarker.version,
         timestamp: time,
         id
@@ -928,7 +940,7 @@ function commentAutoreviewObservations(comments: readonly Record<string, unknown
 function resolveAutoreviewState(
   observations: readonly AutoreviewObservation[],
   version: string
-): "current" | "pending" | "missing" | "failed" | "stale" {
+): "current" | "pending" | "owner-required" | "missing" | "failed" | "stale" {
   const exact = observations
     .filter((observation) => observation.version === version)
     .sort((left, right) => right.timestamp - left.timestamp || right.id - left.id);
@@ -946,15 +958,20 @@ function parseCleanAutoreviewMarker(body: string): {
   kind: "issue" | "pull-request";
   number: number;
   version: string;
-  status: "pending" | "failed";
+  status: "pending" | "failed" | "current" | "owner-required";
 } | null {
   if (!body.startsWith(CLEAN_AUTOREVIEW_MARKER)) return null;
   const firstLine = body.split(/\r?\n/, 1)[0] ?? "";
-  const match = /^<!-- darkfactory:clean-autoreview schema=1 kind=(issue|pull-request) number=(\d+) version=([0-9a-f]{64}|[0-9a-f]{40}:[0-9a-f]{40}) status=(pending|failed) -->$/.exec(firstLine);
+  const match = /^<!-- darkfactory:clean-autoreview schema=1 kind=(issue|pull-request) number=(\d+) version=([0-9a-f]{64}|[0-9a-f]{40}:[0-9a-f]{40}) status=(pending|failed|current|owner-required) -->$/.exec(firstLine);
   if (!match) throw new Error("Trusted clean Autoreview marker is malformed");
   const number = Number(match[2]);
   if (!Number.isSafeInteger(number) || number < 1) return null;
-  return { kind: match[1] as "issue" | "pull-request", number, version: match[3], status: match[4] as "pending" | "failed" };
+  return {
+    kind: match[1] as "issue" | "pull-request",
+    number,
+    version: match[3],
+    status: match[4] as "pending" | "failed" | "current" | "owner-required"
+  };
 }
 
 function renderCleanAutoreviewComment(
@@ -1019,7 +1036,7 @@ async function readExactAutoreviewTarget(
   repository: RepositoryRef,
   entry: CleanPlanEntry,
   number: number
-): Promise<{ autoreview: "current" | "pending" | "missing" | "failed" | "stale"; comments: Record<string, unknown>[] }> {
+): Promise<{ autoreview: "current" | "pending" | "owner-required" | "missing" | "failed" | "stale"; comments: Record<string, unknown>[] }> {
   if (!entry.version) throw new Error(`clean target ${entry.target} lacks an exact version`);
   if (entry.kind === "issue") {
     const first = asRecord((await github.request("GET /repos/{owner}/{repo}/issues/{issue_number}", {

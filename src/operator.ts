@@ -174,7 +174,7 @@ export type BranchClassification =
 export type PullRequestClassification = "active" | "stale" | "red" | "superseded" | "abandoned";
 export type IssueClassification = "current" | "finding";
 export type CleanClassification = BranchClassification | PullRequestClassification | IssueClassification | "review-finding";
-export type AutoreviewState = "current" | "pending" | "missing" | "failed" | "stale";
+export type AutoreviewState = "current" | "pending" | "owner-required" | "missing" | "failed" | "stale";
 
 export interface CleanWorktreeEvidence {
   pathId: string;
@@ -391,7 +391,8 @@ export function buildCleanPlan(evidence: CleanEvidence, now = new Date()): Clean
     const shouldReview = !canClose
       && pull.classification !== "abandoned"
       && pull.autoreview !== "current"
-      && pull.autoreview !== "pending";
+      && pull.autoreview !== "pending"
+      && pull.autoreview !== "owner-required";
     entries.push({
       kind: "pull-request",
       target: `#${pull.number}`,
@@ -411,6 +412,8 @@ export function buildCleanPlan(evidence: CleanEvidence, now = new Date()): Clean
         ? ["A successor was claimed but exact independent preservation was not proved; the PR remains preserved.", ...pull.findingIds]
         : pull.autoreview === "pending"
         ? ["The exact PR version already has an in-progress Autoreview; duplicate dispatch is suppressed."]
+        : pull.autoreview === "owner-required"
+        ? ["Trusted recovery could not bind the exact PR gate safely; the PR remains preserved for owner action.", ...pull.findingIds]
         : ["The exact PR version already has clean Autoreview evidence and remains in its normal merge lane."]
     });
   }
@@ -418,7 +421,8 @@ export function buildCleanPlan(evidence: CleanEvidence, now = new Date()): Clean
     const shouldReview = issue.classification === "finding"
       && issue.reviewable
       && issue.autoreview !== "current"
-      && issue.autoreview !== "pending";
+      && issue.autoreview !== "pending"
+      && issue.autoreview !== "owner-required";
     entries.push({
       kind: "issue",
       target: `#${issue.number}`,
@@ -432,6 +436,8 @@ export function buildCleanPlan(evidence: CleanEvidence, now = new Date()): Clean
         ? ["The exact issue version already has an in-progress Autoreview; duplicate dispatch is suppressed.", ...issue.findingIds]
         : issue.autoreview === "current"
         ? ["The exact issue version already has clean Autoreview evidence; any remaining deterministic finding stays visible without duplicate model work.", ...issue.findingIds]
+        : issue.autoreview === "owner-required"
+        ? ["Trusted recovery could not safely dispatch this exact issue version; preserve it for owner action.", ...issue.findingIds]
         : issue.findingIds.length
         ? ["The finding is blocked or owner-owned; issue text and scope remain immutable.", ...issue.findingIds]
         : ["Issue contract is current under deterministic lane review."]
