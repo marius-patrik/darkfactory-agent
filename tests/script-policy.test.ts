@@ -28,6 +28,7 @@ const {
   isParkedRepo,
   isVerifiedWorkerIssue,
   listActiveManagedRepos,
+  listInstallationRepositories,
   listPackagePaths,
   normalizeWorkerPullRequestActor,
   parsePrdItems,
@@ -406,6 +407,63 @@ test("listActiveManagedRepos excludes archived, disabled, and non-active lifecyc
   assert.ok(warnings.some((warning) => warning.includes("disabled=true")));
   assert.ok(warnings.some((warning) => warning.includes("managed lifecycle state is 'parked'")));
   assert.ok(warnings.some((warning) => warning.includes("managed lifecycle state is 'removed'")));
+});
+
+test("installation repository enumeration is total-bound, strict, and fail-closed", async () => {
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({
+    full_name: `marius-patrik/repo-${index}`,
+    archived: false,
+    disabled: false
+  }));
+  const secondPage = [{ full_name: "marius-patrik/repo-100", archived: false, disabled: false }];
+  const calls: string[] = [];
+  const repositories = await listInstallationRepositories({
+    async request(_method: string, requestPath: string) {
+      calls.push(requestPath);
+      return requestPath.endsWith("page=1")
+        ? { total_count: 101, repositories: firstPage }
+        : { total_count: 101, repositories: secondPage };
+    }
+  });
+  assert.equal(repositories.length, 101);
+  assert.equal(calls.length, 2);
+
+  await assert.rejects(
+    () => listInstallationRepositories({ request: async () => ({ repositories: [] }) }),
+    /malformed installation repository enumeration evidence/
+  );
+  await assert.rejects(
+    () => listInstallationRepositories({
+      request: async (_method: string, requestPath: string) => requestPath.endsWith("page=1")
+        ? { total_count: 101, repositories: firstPage }
+        : { total_count: 101, repositories: [] }
+    }),
+    /incomplete installation repository enumeration/
+  );
+  let cappedPage = 0;
+  await assert.rejects(
+    () => listInstallationRepositories({
+      async request() {
+        cappedPage += 1;
+        return {
+          total_count: 2001,
+          repositories: Array.from({ length: 100 }, (_, index) => ({
+            full_name: `marius-patrik/capped-${cappedPage}-${index}`
+          }))
+        };
+      }
+    }),
+    /cannot prove complete installation repository enumeration/
+  );
+  assert.equal(cappedPage, 20);
+  await assert.rejects(
+    () => listActiveManagedRepos(
+      { request: async () => ({ total_count: 0, repositories: [] }) },
+      { owner: "marius-patrik", repo: "DarkFactory" },
+      { repositories: [{ full_name: "marius-patrik/valid" }, { unexpected: true }], registry: { repositories: {} } }
+    ),
+    /malformed installation repository entry/
+  );
 });
 
 test("canonical Andromeda installation names resolve through the live managed registry", async () => {

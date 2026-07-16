@@ -33,6 +33,7 @@ export const PENDING_CHECK_HOURS = 2;
 export const WORKER_SESSION_LOOKBACK_DAYS = 14;
 const COMMIT_EVIDENCE_PAGE_SIZE = 100;
 const MAX_COMMIT_EVIDENCE_PAGES = 20;
+const EXACT_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
 // Managed Validate and review workflows are GitHub Actions check suites. GitHub's
 // public Actions App ID is stable across repositories and prevents a same-name
 // status/check from an arbitrary App from satisfying repository-doctor policy.
@@ -93,6 +94,7 @@ async function main() {
   const target = process.env.DF_TARGET_REPO?.trim() || "";
   const reports = await runRepositoryDoctor(createGithubClient(token, "darkfactory-repository-doctor"), {
     controlRepo,
+    controlRevision: requiredEnv("DF_CONTROL_REVISION"),
     all: process.env.DF_DOCTOR_ALL === "true",
     target: target || repoName(controlRepo),
     trigger: process.env.DF_TRIGGER || "unknown",
@@ -125,6 +127,10 @@ export async function runRepositoryDoctor(github, options = {}) {
   const mode = parseDoctorMode(options.mode || "diagnose");
   assertDoctorReportAuthorities(mode, github, options.ledgerGithub);
   const controlRepo = options.controlRepo || CONTROL_REPO;
+  const controlRevision = await resolvePinnedRevision(github, controlRepo, options.controlRevision, "main", "trusted control");
+  let agentOsDataRevision = options.agentOsDataRevision
+    ? assertExactCommit(options.agentOsDataRevision, "canonical Andromeda-data")
+    : null;
   const registry = options.registry || await readManagedRepoRegistry(options.root || process.cwd());
   const targets = await resolveDoctorTargets(github, controlRepo, registry, options);
   if (options.localPath && targets.length !== 1) {
@@ -135,7 +141,11 @@ export async function runRepositoryDoctor(github, options = {}) {
   for (const repository of targets) {
     const lifecycle = doctorLifecycleState(repository, controlRepo, registry);
     if (isParkedRepo(repository) || lifecycle === "parked") {
-      const report = skippedReport(repository, mode, "Repository is parked; doctor performed no target-repository writes or repair work.");
+      const report = skippedReport(repository, mode, "Repository is parked; doctor performed no target-repository writes or repair work.", {
+        trigger: options.trigger,
+        controlRepo,
+        controlRevision
+      });
       if (mode === "report") await publishSkippedDoctorReport(options.ledgerGithub, repository, report);
       reports.push(report);
       continue;
@@ -149,7 +159,8 @@ export async function runRepositoryDoctor(github, options = {}) {
       const report = skippedReport(
         repository,
         mode,
-        `Repository lifecycle is ${lifecycle}; report mode is restricted to the control repository and active managed repositories. No target-repository write was attempted.`
+        `Repository lifecycle is ${lifecycle}; report mode is restricted to the control repository and active managed repositories. No target-repository write was attempted.`,
+        { trigger: options.trigger, controlRepo, controlRevision }
       );
       await publishSkippedDoctorReport(options.ledgerGithub, repository, report);
       reports.push(report);
@@ -161,16 +172,29 @@ export async function runRepositoryDoctor(github, options = {}) {
       const report = skippedReport(
         repository,
         mode,
-        `Repository is read-only (archived=${metadata.archived === true}, disabled=${metadata.disabled === true}, lifecycle=${lifecycle}).`
+        `Repository is read-only (archived=${metadata.archived === true}, disabled=${metadata.disabled === true}, lifecycle=${lifecycle}).`,
+        { trigger: options.trigger, controlRepo, controlRevision }
       );
       if (mode === "report") await publishSkippedDoctorReport(options.ledgerGithub, repository, report);
       reports.push(report);
       continue;
     }
 
+    if (!isMainOnlyDataRepository(repository) && !agentOsDataRevision) {
+      agentOsDataRevision = await resolvePinnedRevision(
+        github,
+        parseRepo(AGENT_OS_DATA_REPO),
+        null,
+        "main",
+        "canonical Andromeda-data"
+      );
+    }
+
     const report = await auditTargetRepository(github, repository, metadata, {
       ...options,
       controlRepo,
+      controlRevision,
+      agentOsDataRevision,
       lifecycle,
       mode
     });
@@ -272,6 +296,23 @@ async function resolveDoctorTargets(github, controlRepo, registry, options) {
   return [typeof options.target === "string" ? parseRepo(options.target) : (options.target || controlRepo)];
 }
 
+export function assertExactCommit(value, authority) {
+  const revision = typeof value === "string" ? value.trim() : "";
+  if (!EXACT_COMMIT_PATTERN.test(revision)) {
+    throw new Error(`Repository doctor requires an exact 40-character ${authority} commit revision.`);
+  }
+  return revision.toLowerCase();
+}
+
+async function resolvePinnedRevision(github, repository, provided, branch, authority) {
+  if (provided) return assertExactCommit(provided, authority);
+  const commit = await github.request(
+    "GET",
+    `/repos/${repoName(repository)}/commits/${encodeURIComponent(branch)}`
+  );
+  return assertExactCommit(commit?.sha, authority);
+}
+
 async function auditTargetRepository(github, repository, metadata, options) {
   const observedAt = new Date(options.now || Date.now()).toISOString();
   const isData = isMainOnlyDataRepository(repository);
@@ -298,10 +339,13 @@ async function auditTargetRepository(github, repository, metadata, options) {
   if (isData) {
     observations.push("Canonical data repository was inspected only under the main-only protection, administration, force-push, deletion, and branch-hygiene policy; managed-code, workflow, PRD, and submodule requirements do not apply.");
   } else {
-    findings.push(...await auditManagedFileDrift(github, repository, defaultBranch, options.controlRepo));
+    findings.push(...await auditManagedFileDrift(github, repository, defaultBranch, options.controlRepo, {
+      controlRevision: options.controlRevision,
+      agentOsDataRevision: options.agentOsDataRevision
+    }));
     findings.push(...await auditRepositoryTree(repository, tree, { isData: false }));
     findings.push(...await auditRootLayout(github, repository, defaultBranch, tree));
-    findings.push(...await auditRuntimeAuthority(github, repository, defaultBranch, options.controlRepo));
+    findings.push(...await auditRuntimeAuthority(github, repository, defaultBranch, options.controlRepo, options.controlRevision));
     findings.push(...await auditPrerequisites(github, repository, defaultBranch, options));
     findings.push(...auditIssueLane(repository, issues, { now: options.now }));
     findings.push(...await auditPrdDrift(github, repository, defaultBranch, openIssues));
@@ -341,7 +385,10 @@ async function auditTargetRepository(github, repository, metadata, options) {
       default_branch: defaultBranch,
       main: branchNames.has("main") ? branchSha(branches, "main") : null,
       dev: branchNames.has("dev") ? branchSha(branches, "dev") : null,
-      control: `${repoName(options.controlRepo)}@main`
+      control: `${repoName(options.controlRepo)}@${options.controlRevision}`,
+      agent_os_data: options.agentOsDataRevision
+        ? `${AGENT_OS_DATA_REPO}@${options.agentOsDataRevision}`
+        : null
     },
     read_only: options.mode === "diagnose",
     findings: dedupeFindings(findings),
@@ -689,10 +736,12 @@ async function auditReleaseLane(github, repository, comparison, pulls) {
   return findings;
 }
 
-export async function auditManagedFileDrift(github, repository, targetRef, controlRepo = CONTROL_REPO) {
+export async function auditManagedFileDrift(github, repository, targetRef, controlRepo = CONTROL_REPO, sourceRevisions = {}) {
   if (!targetRef) return [doctorFinding("managed-target-ref-missing", "managed file drift", "Cannot inspect managed files without a target ref.", { severity: "critical" })];
+  const controlRevision = assertExactCommit(sourceRevisions.controlRevision, "trusted control");
+  const agentOsDataRevision = assertExactCommit(sourceRevisions.agentOsDataRevision, "canonical Andromeda-data");
   const findings = [];
-  const manifestText = await getOptionalFileContent(github, controlRepo, ".darkfactory/managed-repository.json", "main");
+  const manifestText = await getOptionalFileContent(github, controlRepo, ".darkfactory/managed-repository.json", controlRevision);
   const manifest = parseManagedManifest(manifestText);
   if (!manifest.ok) {
     return [doctorFinding("managed-baseline-invalid", "managed file drift", manifest.error, {
@@ -704,7 +753,8 @@ export async function auditManagedFileDrift(github, repository, targetRef, contr
     const packageOwned = manifest.value.packageFiles.includes(filePath);
     const sourceRepo = packageOwned ? controlRepo : parseRepo(AGENT_OS_DATA_REPO);
     const sourcePath = packageOwned ? filePath : `managed-repository/${filePath}`;
-    const expected = await getOptionalFileContent(github, sourceRepo, sourcePath, "main");
+    const sourceRevision = packageOwned ? controlRevision : agentOsDataRevision;
+    const expected = await getOptionalFileContent(github, sourceRepo, sourcePath, sourceRevision);
     if (expected === null) {
       findings.push(doctorFinding(`managed-source-missing-${slug(filePath)}`, "managed file drift", `Authoritative source \`${repoName(sourceRepo)}:${sourcePath}\` is missing.`, {
         severity: "critical", repair: ["Restore the baseline source; do not infer or copy from the target repository."]
@@ -732,7 +782,7 @@ export async function auditManagedFileDrift(github, repository, targetRef, contr
     }
   }
 
-  findings.push(...await auditProjectOverlay(github, repository, targetRef));
+  findings.push(...await auditProjectOverlay(github, repository, targetRef, agentOsDataRevision));
   return findings;
 }
 
@@ -754,15 +804,15 @@ function parseManagedManifest(text) {
   }
 }
 
-async function auditProjectOverlay(github, repository, targetRef) {
+async function auditProjectOverlay(github, repository, targetRef, agentOsDataRevision) {
   const findings = [];
   const dataRepo = parseRepo(AGENT_OS_DATA_REPO);
   const prefix = `managed-repository/repositories/${repository.owner}/${repository.repo}/.agents/.project`;
-  const files = await listRemoteDirectoryFiles(github, dataRepo, prefix, "main");
+  const files = await listRemoteDirectoryFiles(github, dataRepo, prefix, agentOsDataRevision);
   for (const source of files) {
     const relative = source.path.slice(prefix.length + 1);
     const targetPath = `.agents/.project/${relative}`;
-    const expected = await getOptionalFileContent(github, dataRepo, source.path, "main");
+    const expected = await readListedRemoteFile(github, dataRepo, source, agentOsDataRevision);
     const actual = await getOptionalFileContent(github, repository, targetPath, targetRef);
     if (actual === null || normalizeText(actual) !== normalizeText(expected)) {
       findings.push(doctorFinding(`managed-project-overlay-${slug(targetPath)}`, "managed file drift", `Project overlay \`${targetPath}\` is ${actual === null ? "missing" : "drifted"}.`, {
@@ -853,7 +903,21 @@ export async function auditRootLayout(github, repository, ref, tree) {
         findings.push(doctorFinding(`andromeda-submodule-${slug(expected.path)}-mode`, "product layout", `Path \`${expected.path}\` is not a gitlink (tree type commit).`, { severity: "critical" }));
       }
     }
-    for (const actual of entries) {
+    for (const [index, actual] of entries.entries()) {
+      if (
+        !isSafeSubmoduleName(actual.name) ||
+        !isSafeSubmodulePath(actual.path) ||
+        !actual.url ||
+        !isSafeSubmoduleBranch(actual.branch)
+      ) {
+        findings.push(doctorFinding(
+          `andromeda-submodule-declaration-${index + 1}-invalid`,
+          "product layout",
+          `Andromeda submodule declaration #${index + 1} has an invalid or missing name, repository-relative path, URL, or branch.`,
+          { severity: "critical" }
+        ));
+        continue;
+      }
       if (!ANDROMEDA_LAYOUT.some((expected) => expected.path === actual.path)) {
         findings.push(doctorFinding(`andromeda-submodule-unexpected-${slug(actual.path)}`, "product layout", `Unexpected Andromeda submodule declaration \`${actual.name}\` at \`${actual.path}\`.`, { severity: "error" }));
       }
@@ -881,10 +945,11 @@ export async function auditRootLayout(github, repository, ref, tree) {
   return findings;
 }
 
-export async function auditRuntimeAuthority(github, repository, ref, controlRepo = CONTROL_REPO) {
+export async function auditRuntimeAuthority(github, repository, ref, controlRepo = CONTROL_REPO, controlRevision) {
   if (!ref) return [];
+  const exactControlRevision = assertExactCommit(controlRevision, "trusted control");
   const findings = [];
-  const work = await getOptionalFileContent(github, controlRepo, ".github/workflows/df-work.yml", "main");
+  const work = await getOptionalFileContent(github, controlRepo, ".github/workflows/df-work.yml", exactControlRevision);
   if (!work) {
     return [doctorFinding("canonical-worker-workflow-missing", "runtime authority", "Trusted control df-work workflow is missing.", { severity: "critical" })];
   }
@@ -1227,13 +1292,34 @@ export async function auditRetiredAuthorityNames(github, repository, ref) {
 export async function auditSubmoduleState(github, repository, branch) {
   const findings = [];
   const gitmodules = await getOptionalFileContent(github, repository, ".gitmodules", branch);
-  if (!gitmodules) return findings;
-  const submodules = parseGitmodules(gitmodules);
+  const parsed = parseGitmodulesDocument(gitmodules);
+  const submodules = parsed.submodules;
   const seenPaths = new Set();
+  const declaredPaths = new Set();
 
-  for (const submodule of submodules) {
-    if (!submodule.name || !submodule.path || !submodule.url) {
-      findings.push(doctorFinding(`submodule-declaration-${slug(submodule.name || submodule.path || "unknown")}-invalid`, "submodule metadata", `Submodule declaration \`${submodule.name || "unknown"}\` is missing name, path, or URL.`, { severity: "critical" }));
+  if (gitmodules !== null && (parsed.malformed || submodules.length === 0)) {
+    findings.push(doctorFinding(
+      `submodule-metadata-${slug(branch)}-invalid`,
+      "submodule metadata",
+      `The .gitmodules file on \`${branch}\` is malformed or contains no complete submodule declarations.`,
+      { severity: "critical" }
+    ));
+  }
+
+  for (const [index, submodule] of submodules.entries()) {
+    if (isSafeSubmodulePath(submodule.path)) declaredPaths.add(submodule.path);
+    if (
+      !isSafeSubmoduleName(submodule.name) ||
+      !isSafeSubmodulePath(submodule.path) ||
+      !submodule.url ||
+      !isSafeSubmoduleBranch(submodule.branch)
+    ) {
+      findings.push(doctorFinding(
+        `submodule-declaration-${slug(branch)}-${index + 1}-invalid`,
+        "submodule metadata",
+        `Submodule declaration #${index + 1} on \`${branch}\` has an invalid or missing name, repository-relative path, URL, or branch.`,
+        { severity: "critical" }
+      ));
       continue;
     }
     if (seenPaths.has(submodule.path)) {
@@ -1267,30 +1353,130 @@ export async function auditSubmoduleState(github, repository, branch) {
       }));
     }
   }
+
+  let tree;
+  try {
+    tree = await getRecursiveTree(github, repository, branch);
+  } catch (error) {
+    findings.push(doctorFinding(
+      `submodule-tree-${slug(branch)}-unavailable`,
+      "submodule pointer",
+      `The recursive tree on \`${branch}\` is unavailable, so declared and actual gitlinks cannot be correlated.`,
+      { severity: "critical" }
+    ));
+    return findings;
+  }
+  if (tree?.truncated === true || !Array.isArray(tree?.tree)) {
+    findings.push(doctorFinding(
+      `submodule-tree-${slug(branch)}-incomplete`,
+      "submodule pointer",
+      `The recursive tree on \`${branch}\` is incomplete, so declared and actual gitlinks cannot be correlated.`,
+      { severity: "critical" }
+    ));
+    return findings;
+  }
+  const observedGitlinks = new Set();
+  let malformedGitlink = false;
+  for (const entry of tree.tree) {
+    if (entry?.type !== "commit") continue;
+    if (!isSafeSubmodulePath(entry.path) || observedGitlinks.has(entry.path)) {
+      malformedGitlink = true;
+      continue;
+    }
+    observedGitlinks.add(entry.path);
+  }
+  if (malformedGitlink) {
+    findings.push(doctorFinding(
+      `submodule-tree-${slug(branch)}-entry-invalid`,
+      "submodule pointer",
+      `The recursive tree on \`${branch}\` contains an invalid or duplicate gitlink entry.`,
+      { severity: "critical" }
+    ));
+  }
+  for (const gitlinkPath of observedGitlinks) {
+    if (declaredPaths.has(gitlinkPath)) continue;
+    findings.push(doctorFinding(
+      `submodule-${slug(gitlinkPath)}-undeclared-${slug(branch)}`,
+      "submodule metadata",
+      `Gitlink \`${gitlinkPath}\` exists on \`${branch}\` but is not declared by .gitmodules.`,
+      { severity: "critical" }
+    ));
+  }
   return findings;
 }
 
 export function parseGitmodules(content) {
+  return parseGitmodulesDocument(content).submodules;
+}
+
+function parseGitmodulesDocument(content) {
   const submodules = [];
-  if (typeof content !== "string") return submodules;
+  if (content === null) return { submodules, malformed: false };
+  if (typeof content !== "string") return { submodules, malformed: true };
   let current = null;
+  let malformed = false;
+  let observedContent = false;
+  const seenKeys = new Set();
   for (const rawLine of content.replace(/\r\n/g, "\n").split("\n")) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+    observedContent = true;
     const section = line.match(/^\[submodule\s+"([^"]+)"\]\s*$/);
     if (section) {
       if (current) submodules.push(current);
       current = { name: section[1], path: "", url: "", branch: "" };
+      seenKeys.clear();
       continue;
     }
-    if (!current) continue;
+    if (line.startsWith("[")) {
+      if (current) submodules.push(current);
+      current = null;
+      seenKeys.clear();
+      malformed = true;
+      continue;
+    }
+    if (!current) {
+      malformed = true;
+      continue;
+    }
     const pair = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(.*)$/);
-    if (!pair) continue;
+    if (!pair) {
+      malformed = true;
+      continue;
+    }
     const key = pair[1].toLowerCase();
-    if (["path", "url", "branch"].includes(key)) current[key] = pair[2].trim();
+    if (["path", "url", "branch"].includes(key)) {
+      if (seenKeys.has(key)) malformed = true;
+      seenKeys.add(key);
+      current[key] = pair[2].trim();
+    }
   }
   if (current) submodules.push(current);
-  return submodules;
+  return { submodules, malformed: malformed || (observedContent && submodules.length === 0) };
+}
+
+function isSafeSubmoduleName(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 200 && /^[A-Za-z0-9._/-]+$/.test(value) && !hasUnsafePathSegment(value);
+}
+
+function isSafeSubmodulePath(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 1024 && /^[A-Za-z0-9._/-]+$/.test(value) && !value.startsWith("/") && !value.endsWith("/") && !hasUnsafePathSegment(value);
+}
+
+function isSafeSubmoduleBranch(value) {
+  return value === "" || (
+    typeof value === "string" &&
+    value.length <= 255 &&
+    /^[A-Za-z0-9._/-]+$/.test(value) &&
+    !value.startsWith("/") &&
+    !value.endsWith("/") &&
+    !value.includes("..") &&
+    !value.includes("@{")
+  );
+}
+
+function hasUnsafePathSegment(value) {
+  return value.split("/").some((segment) => !segment || segment === "." || segment === "..");
 }
 
 export function resolveSubmoduleRepo(parentRepo, url) {
@@ -1592,15 +1778,18 @@ export function formatDoctorReports(reports) {
   return lines.join("\n");
 }
 
-function skippedReport(repository, mode, reason) {
+function skippedReport(repository, mode, reason, options = {}) {
   return {
     schema_version: DOCTOR_SCHEMA_VERSION,
     mode,
+    trigger: options.trigger || "unknown",
     target_repository: repoName(repository),
     read_only: true,
     skipped: true,
     reason,
-    source_refs: {},
+    source_refs: {
+      control: `${repoName(options.controlRepo || CONTROL_REPO)}@${assertExactCommit(options.controlRevision, "trusted control")}`
+    },
     findings: [],
     observations: [reason],
     actions: [],
@@ -1802,7 +1991,16 @@ async function listRemoteDirectoryFiles(github, repository, dir, ref) {
       const type = entry && typeof entry === "object" && !Array.isArray(entry) ? entry.type : null;
       const prefix = `${currentDir}/`;
       const relative = typeof entryPath === "string" && entryPath.startsWith(prefix) ? entryPath.slice(prefix.length) : "";
-      if (!relative || relative.includes("/") || !["file", "dir"].includes(type) || childPaths.has(entryPath)) {
+      if (
+        !relative ||
+        relative.includes("/") ||
+        !/^[A-Za-z0-9._-]+$/.test(relative) ||
+        relative === "." ||
+        relative === ".." ||
+        !["file", "dir"].includes(type) ||
+        (type === "file" && !EXACT_COMMIT_PATTERN.test(entry?.sha || "")) ||
+        childPaths.has(entryPath)
+      ) {
         throw new Error(`Repository doctor received a malformed managed project overlay entry for ${repoName(repository)}.`);
       }
       childPaths.add(entryPath);
@@ -1813,6 +2011,30 @@ async function listRemoteDirectoryFiles(github, repository, dir, ref) {
 
   await walk(dir, true);
   return files;
+}
+
+async function readListedRemoteFile(github, repository, source, ref) {
+  let data;
+  try {
+    data = await github.request(
+      "GET",
+      `/repos/${repoName(repository)}/contents/${encodePath(source.path)}?ref=${encodeURIComponent(ref)}`
+    );
+  } catch (error) {
+    if (error.status === 404) {
+      throw new Error(`Repository doctor could not re-attest a listed managed project overlay file in ${repoName(repository)}.`);
+    }
+    throw error;
+  }
+  if (
+    data?.type !== "file" ||
+    data.sha !== source.sha ||
+    data.encoding !== "base64" ||
+    typeof data.content !== "string"
+  ) {
+    throw new Error(`Repository doctor could not re-attest a listed managed project overlay file in ${repoName(repository)}.`);
+  }
+  return Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf8").replace(/\r\n/g, "\n");
 }
 
 async function listWorkflowRuns(repository, branch, github) {

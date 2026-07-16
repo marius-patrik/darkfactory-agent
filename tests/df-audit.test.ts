@@ -9,6 +9,8 @@ import test from "node:test";
 const doctor: any = await import("../.github/scripts/df-audit.mjs?unit=repository-doctor-test");
 
 const repo = { owner: "marius-patrik", repo: "DarkFactory" };
+const controlRevision = "c".repeat(40);
+const agentOsDataRevision = "d".repeat(40);
 
 function content(text: string) {
   return { type: "file", encoding: "base64", content: Buffer.from(text).toString("base64") };
@@ -45,6 +47,12 @@ test("doctor modes are explicit and repair is fail-closed", () => {
   assert.equal(doctor.parseDoctorMode("report"), "report");
   assert.throws(() => doctor.parseDoctorMode("repair"), /repair mode is not implemented/i);
   assert.throws(() => doctor.parseDoctorMode("surprise"), /Unknown repository-doctor mode/);
+});
+
+test("doctor source authority accepts only exact immutable commit revisions", () => {
+  assert.equal(doctor.assertExactCommit(controlRevision.toUpperCase(), "trusted control"), controlRevision);
+  assert.throws(() => doctor.assertExactCommit("main", "trusted control"), /exact 40-character trusted control commit/);
+  assert.throws(() => doctor.assertExactCommit("a".repeat(39), "canonical Andromeda-data"), /exact 40-character canonical Andromeda-data commit/);
 });
 
 test("report mode requires a distinct ledger authority and diagnose needs none", () => {
@@ -92,6 +100,7 @@ test("report mode writes ledger-only skipped evidence for canonical parked and a
       mode: "report",
       trigger: "test",
       controlRepo: repo,
+      controlRevision,
       target,
       ledgerGithub: ledgerGh,
       registry: { schemaVersion: 1, repositories: { "marius-patrik/ArchivedProduct": { state: "active" } } }
@@ -107,6 +116,7 @@ test("report mode writes ledger-only skipped evidence for canonical parked and a
     const ledger = JSON.parse(Buffer.from((ledgerWrite.body as { content: string }).content, "base64").toString("utf8"));
     assert.equal(ledger.phase, "completion");
     assert.equal(ledger.mode, "report");
+    assert.equal(ledger.source_refs.control, `marius-patrik/DarkFactory@${controlRevision}`);
     assert.match(ledger.observations[0], variant === "parked" ? /parked/ : /read-only/);
     assert.deepEqual(ledger.actions, []);
   }
@@ -138,6 +148,7 @@ test("report mode refuses unmanaged and removed targets before target inspection
       mode: "report",
       trigger: "test",
       controlRepo: repo,
+      controlRevision,
       target,
       ledgerGithub: ledgerGh,
       registry
@@ -207,7 +218,7 @@ test("an open PR exempts only the exact same-repository branch head SHA", async 
     head: { ref: "feature/moved", sha: "stale-pr-head", repo: { full_name: "marius-patrik/DarkFactory" } },
     base: { ref: "dev" }
   };
-  const { gh } = mockGh((_method, requestPath) => {
+  const { gh, calls } = mockGh((_method, requestPath) => {
     if (requestPath.endsWith("/compare/main...dev")) return { status: "identical", ahead_by: 0, behind_by: 0 };
     if (requestPath.includes("/protection")) return protectedBranch();
     if (requestPath.endsWith("/pulls/11")) return { ...pull, updated_at: "2026-07-13T00:00:00Z", mergeable: true, mergeable_state: "clean", html_url: "https://example.test/11" };
@@ -528,6 +539,7 @@ test("canonical data repositories run only the main-only protection and branch p
   const reports = await doctor.runRepositoryDoctor(gh, {
     mode: "diagnose",
     controlRepo: repo,
+    controlRevision,
     target: dataRepo,
     registry: { schemaVersion: 1, repositories: {} }
   });
@@ -782,7 +794,7 @@ test("managed baseline audit detects drift and files that must be removed", asyn
     packageFiles: ["managed.txt"],
     removedFiles: ["retired.txt"]
   });
-  const { gh } = mockGh((_method, requestPath) => {
+  const { gh, calls } = mockGh((_method, requestPath) => {
     if (requestPath.includes("/repos/marius-patrik/DarkFactory/contents/.darkfactory/managed-repository.json")) return content(manifest);
     if (requestPath.includes("/repos/marius-patrik/DarkFactory/contents/managed.txt")) return content("expected\n");
     if (requestPath.includes("/repos/marius-patrik/Andromeda/contents/managed.txt")) return content("actual\n");
@@ -790,10 +802,13 @@ test("managed baseline audit detects drift and files that must be removed", asyn
     if (requestPath.includes("/repos/marius-patrik/Andromeda-data/contents/managed-repository/repositories/")) throw notFound();
     throw new Error(`unexpected ${requestPath}`);
   });
-  const findings = await doctor.auditManagedFileDrift(gh, target, "main", repo);
+  const findings = await doctor.auditManagedFileDrift(gh, target, "main", repo, { controlRevision, agentOsDataRevision });
   const ids = new Set(findings.map((finding) => finding.id));
   assert.ok(ids.has("managed-file-drift-managed-txt"));
   assert.ok(ids.has("managed-removed-file-retired-txt"));
+  const sourceReads = calls.filter((call) => /\/repos\/marius-patrik\/(?:DarkFactory|Andromeda-data)\/contents\//.test(call.path));
+  assert.ok(sourceReads.some((call) => call.path.includes(`ref=${controlRevision}`)));
+  assert.ok(sourceReads.some((call) => call.path.includes(`ref=${agentOsDataRevision}`)));
 });
 
 test("managed project overlay enumeration fails closed on malformed or disappearing directory evidence", async () => {
@@ -803,6 +818,7 @@ test("managed project overlay enumeration fails closed on malformed or disappear
   const cases = [
     ["file returned for directory", { type: "file", path: "C:/private/overlay" }, /malformed managed project overlay directory listing/],
     ["unsupported entry type", [{ type: "submodule", path: `${prefix}/private-name` }], /malformed managed project overlay entry/],
+    ["unsafe child path", [{ type: "file", path: `${prefix}/C:\\Users\\private-user`, sha: "a".repeat(40) }], /malformed managed project overlay entry/],
     ["child disappears", [{ type: "dir", path: `${prefix}/nested` }], /could not complete managed project overlay enumeration/]
   ] as const;
 
@@ -813,11 +829,51 @@ test("managed project overlay enumeration fails closed on malformed or disappear
       if (requestPath.includes(`/contents/${prefix}?`)) return rootResponse;
       throw new Error(`unexpected ${requestPath}`);
     });
-    await assert.rejects(() => doctor.auditManagedFileDrift(gh, target, "main", repo), expected, label);
+    await assert.rejects(() => doctor.auditManagedFileDrift(gh, target, "main", repo, { controlRevision, agentOsDataRevision }), expected, label);
     await assert.rejects(
-      () => doctor.auditManagedFileDrift(gh, target, "main", repo),
-      (error: Error) => !/C:\/private|private-name/.test(error.message),
+      () => doctor.auditManagedFileDrift(gh, target, "main", repo, { controlRevision, agentOsDataRevision }),
+      (error: Error) => !/C:\/private|private-name|private-user/.test(error.message),
       `${label} redaction`
+    );
+  }
+});
+
+test("managed project overlay re-attests every listed file before comparing target content", async () => {
+  const target = { owner: "marius-patrik", repo: "Andromeda" };
+  const manifest = JSON.stringify({ schemaVersion: 1, requiredFiles: [], packageFiles: [], removedFiles: [] });
+  const prefix = "managed-repository/repositories/marius-patrik/Andromeda/.agents/.project";
+  const sourcePath = `${prefix}/STATUS.md`;
+  const listedSha = "a".repeat(40);
+
+  const { gh: validGh } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/repos/marius-patrik/DarkFactory/contents/.darkfactory/managed-repository.json")) return content(manifest);
+    if (requestPath.includes(`/contents/${sourcePath}?`)) return { ...content("expected\n"), sha: listedSha };
+    if (requestPath.includes(`/contents/${prefix}?`)) return [{ type: "file", path: sourcePath, sha: listedSha }];
+    if (requestPath.includes("/repos/marius-patrik/Andromeda/contents/.agents/.project/STATUS.md")) return content("expected\n");
+    throw new Error(`unexpected ${requestPath}`);
+  });
+  assert.deepEqual(
+    await doctor.auditManagedFileDrift(validGh, target, "main", repo, { controlRevision, agentOsDataRevision }),
+    []
+  );
+
+  for (const [label, sourceResponse] of [
+    ["listed file disappears", notFound()],
+    ["listed file identity changes", { ...content("expected\n"), sha: "b".repeat(40) }]
+  ] as const) {
+    const { gh } = mockGh((_method, requestPath) => {
+      if (requestPath.includes("/repos/marius-patrik/DarkFactory/contents/.darkfactory/managed-repository.json")) return content(manifest);
+      if (requestPath.includes(`/contents/${sourcePath}?`)) {
+        if (sourceResponse instanceof Error) throw sourceResponse;
+        return sourceResponse;
+      }
+      if (requestPath.includes(`/contents/${prefix}?`)) return [{ type: "file", path: sourcePath, sha: listedSha }];
+      throw new Error(`target comparison escaped source re-attestation: ${requestPath}`);
+    });
+    await assert.rejects(
+      () => doctor.auditManagedFileDrift(gh, target, "main", repo, { controlRevision, agentOsDataRevision }),
+      /could not re-attest a listed managed project overlay file/,
+      label
     );
   }
 });
@@ -885,9 +941,37 @@ test("submodule gitlink admission accepts both REST representations and rejects 
   }
 });
 
+test("submodule audit correlates tree gitlinks and redacts malformed declaration paths", async () => {
+  const parent = { owner: "marius-patrik", repo: "Andromeda" };
+  const { gh: undeclaredGh } = mockGh((_method, requestPath) => {
+    if (requestPath.includes("/contents/.gitmodules")) throw notFound();
+    if (requestPath.includes("/git/trees/main?recursive=1")) {
+      return { truncated: false, tree: [{ type: "commit", path: "plugins/Undeclared" }] };
+    }
+    throw new Error(`unexpected ${requestPath}`);
+  });
+  const undeclared = await doctor.auditSubmoduleState(undeclaredGh, parent, "main");
+  assert.ok(undeclared.some((finding) => finding.id === "submodule-plugins-undeclared-undeclared-main"));
+
+  const privatePath = "C:\\Users\\private-user\\private-child";
+  for (const [label, gitmodules] of [
+    ["malformed section", `[submodule \"broken\"\n path = ${privatePath}\n`],
+    ["unsafe declared path", `[submodule \"${privatePath}\"]\n path = ${privatePath}\n url = file:///private-machine/child\n`]
+  ] as const) {
+    const { gh } = mockGh((_method, requestPath) => {
+      if (requestPath.includes("/contents/.gitmodules")) return content(gitmodules);
+      if (requestPath.includes("/git/trees/main?recursive=1")) return { truncated: false, tree: [] };
+      throw new Error(`unexpected ${requestPath}`);
+    });
+    const findings = await doctor.auditSubmoduleState(gh, parent, "main");
+    assert.ok(findings.some((finding) => /submodule-(?:metadata|declaration)-main/.test(finding.id)), label);
+    assert.doesNotMatch(JSON.stringify(findings), /private-user|private-child|C:\\\\Users|private-machine/, label);
+  }
+});
+
 test("root-layout and naming fixtures catch Andromeda and DarkFactory contract drift without exposing local submodule URLs", async () => {
   const andromeda = { owner: "marius-patrik", repo: "Andromeda" };
-  const modules = '[submodule "Wrong"]\n path = plugins/DarkFactory\n url = C:\\Users\\private-user\\private-repo\n[submodule "Extra"]\n path = extras/Extra\n url = https://github.com/marius-patrik/Extra.git\n';
+  const modules = '[submodule "Wrong"]\n path = plugins/DarkFactory\n url = C:\\Users\\private-user\\private-repo\n[submodule "Extra"]\n path = extras/Extra\n url = https://github.com/marius-patrik/Extra.git\n[submodule "C:\\Users\\private-local"]\n path = C:\\Users\\private-local\\child\n url = file:///private-local/child\n';
   const { gh: andromedaGh } = mockGh((_method, requestPath) => {
     if (requestPath.includes("/.gitmodules")) return content(modules);
     if (requestPath.includes("/README.md")) return content("# Wrong\n");
@@ -901,9 +985,10 @@ test("root-layout and naming fixtures catch Andromeda and DarkFactory contract d
   assert.ok(andromedaIds.has("andromeda-submodule-plugins-darkfactory-identity"));
   assert.ok(andromedaIds.has("andromeda-submodule-plugins-darkfactory-mode"));
   assert.ok(andromedaIds.has("andromeda-submodule-unexpected-extras-extra"));
+  assert.ok(andromedaIds.has("andromeda-submodule-declaration-3-invalid"));
   assert.ok(andromedaIds.has("andromeda-product-name"));
   assert.match(andromedaFindings.find((finding) => finding.id === "andromeda-submodule-plugins-darkfactory-identity")?.message || "", /machine-local path/);
-  assert.doesNotMatch(JSON.stringify(andromedaFindings), /private-user|private-repo|C:\\\\Users/i);
+  assert.doesNotMatch(JSON.stringify(andromedaFindings), /private-user|private-repo|private-local|C:\\\\Users/i);
 
   const { gh: darkFactoryGh } = mockGh((_method, requestPath) => {
     if (requestPath.includes("/README.md")) return content("# Wrong\n");
@@ -924,7 +1009,7 @@ test("runtime authority and prerequisites fail closed on direct providers, missi
     if (requestPath.includes("/actions/runners")) return { runners: [{ status: "offline", labels: [{ name: "df-local" }] }] };
     throw new Error(`unexpected ${requestPath}`);
   });
-  const authority = await doctor.auditRuntimeAuthority(gh, repo, "main", repo);
+  const authority = await doctor.auditRuntimeAuthority(gh, repo, "main", repo, controlRevision);
   const prerequisites = await doctor.auditPrerequisites(gh, repo, "main", { controlRepo: repo });
   const ids = new Set([...authority, ...prerequisites].map((finding) => finding.id));
   assert.ok(ids.has("canonical-launcher-binding-invalid"));
@@ -1031,6 +1116,8 @@ test("diagnose mode performs no GitHub writes", async () => {
     mode: "diagnose",
     trigger: "test",
     controlRepo: repo,
+    controlRevision,
+    agentOsDataRevision,
     target: repo,
     registry: { schemaVersion: 1, repositories: { "marius-patrik/DarkFactory": { state: "active" } } }
   });
@@ -1084,6 +1171,8 @@ test("report mode routes issue writes to target authority and contents writes on
     mode: "report",
     trigger: "test",
     controlRepo: repo,
+    controlRevision,
+    agentOsDataRevision,
     target: repo,
     ledgerGithub: ledgerGh,
     registry: { schemaVersion: 1, repositories: { "marius-patrik/DarkFactory": { state: "active" } } }
@@ -1103,6 +1192,8 @@ test("report mode routes issue writes to target authority and contents writes on
   const ledgers = ledgerWrites.map((call) => JSON.parse(Buffer.from((call.body as { content: string }).content, "base64").toString("utf8")));
   const admission = ledgers.find((ledger) => ledger.phase === "admission");
   const completion = ledgers.find((ledger) => ledger.phase === "completion");
+  assert.equal(admission.source_refs.control, `marius-patrik/DarkFactory@${controlRevision}`);
+  assert.equal(admission.source_refs.agent_os_data, `marius-patrik/Andromeda-data@${agentOsDataRevision}`);
   assert.ok(admission.planned_actions.some((action: { action: string }) => action.action === "retire-legacy-audit-issues"));
   assert.ok(admission.actions.some((action: { action: string; state: string }) => action.action === "retire-legacy-audit-issues" && action.state === "admitted"));
   assert.ok(completion.actions.some((action: { action: string }) => action.action === "create-repair-issue"));
