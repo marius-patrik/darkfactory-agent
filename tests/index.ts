@@ -7,6 +7,7 @@ import "./df-autoreview.test.js";
 import "./df-orchestrate.test.js";
 import "./df-plan.test.js";
 import "./df-release.test.js";
+import "./df-submodule-autoupdate.test.js";
 import "./df-verify.test.js";
 import "./enforcement-rules.test.js";
 import "./human-cli.test.js";

@@ -79,6 +79,7 @@ export async function orchestrate(options) {
     policy: policyInput,
     triggerPolicy: triggerPolicyInput,
     loopEvidence: loopEvidenceInput,
+    submoduleStatuses: submoduleStatusesInput,
     readinessByRepository: readinessInput,
     writeLedger: shouldWriteLedger = true,
     updateDashboard: shouldUpdateDashboard = true,
@@ -217,6 +218,18 @@ export async function orchestrate(options) {
       loopEvidence = {};
     }
     const loopStatuses = projectLoopStatus(triggerPolicy, loopEvidence);
+    let submoduleStatuses = submoduleStatusesInput;
+    if (!Array.isArray(submoduleStatuses)) {
+      try {
+        submoduleStatuses = await collectSubmodulePointerStatuses(
+          gh,
+          plan.repositories.map((state) => state.repo)
+        );
+      } catch (error) {
+        warn(`DarkFactory submodule dashboard evidence warning: ${error.message || String(error)}`);
+        submoduleStatuses = [];
+      }
+    }
     await updateDashboardIssue(
       gh,
       controlRepo,
@@ -227,6 +240,7 @@ export async function orchestrate(options) {
       recoveries,
       trigger,
       loopStatuses,
+      submoduleStatuses,
       warn,
       log
     );
@@ -1363,11 +1377,11 @@ function askOwnerComment(repository, issue, escalation) {
   ].join("\n");
 }
 
-async function updateDashboardIssue(gh, controlRepo, policy, plan, dispatched, escalated, recoveries, trigger, loopStatuses = [], warn = console.warn, log = console.log) {
+async function updateDashboardIssue(gh, controlRepo, policy, plan, dispatched, escalated, recoveries, trigger, loopStatuses = [], submoduleStatuses = [], warn = console.warn, log = console.log) {
   try {
     await ensureLabels(gh, controlRepo, PLANNING_LABELS);
     const title = policy.dashboard.issueTitle;
-    const body = dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, trigger, loopStatuses);
+    const body = dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, trigger, loopStatuses, submoduleStatuses);
     const existing = await findDashboardIssue(gh, controlRepo);
     if (existing) {
       await gh.request("PATCH", `/repos/${repoName(controlRepo)}/issues/${existing.number}`, { title, body });
@@ -1402,7 +1416,7 @@ async function findDashboardIssue(gh, controlRepo) {
   return null;
 }
 
-function dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, trigger, loopStatuses = []) {
+function dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, trigger, loopStatuses = [], submoduleStatuses = []) {
   const updatedAt = new Date().toISOString();
   const rows = plan.repositories.length
     ? plan.repositories.map((state) => {
@@ -1422,6 +1436,20 @@ function dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, tri
   const loopRows = loopStatuses.length
     ? loopStatusMarkdownRows(loopStatuses)
     : "| _unavailable_ | stale | never | n/a | `refs/heads/main` | `escalate:df:ask-owner` |";
+  const submoduleRows = submoduleStatuses.length
+    ? submoduleStatuses.map((status) => {
+      const parent = status.parent ? `\`${status.parent}\`` : "_unresolved_";
+      const gitlinkPath = status.path ? `\`${status.path}\`` : "_unresolved_";
+      const parentPointer = status.parentPointer ? `\`${status.parentPointer.slice(0, 12)}\`` : "n/a";
+      const childSha = status.childSha ? `\`${status.childSha.slice(0, 12)}\`` : "n/a";
+      const evidence = [
+        status.pointerUrl ? `[pointer](${status.pointerUrl})` : null,
+        status.childUrl ? `[child](${status.childUrl})` : null,
+        status.receiptUrl ? `[receipt](${status.receiptUrl})` : null
+      ].filter(Boolean).join(" / ") || "blocked before exact parent resolution";
+      return `| ${parent} | ${gitlinkPath} | ${status.state} | ${parentPointer} | \`${status.child}\` | ${childSha} | ${evidence} |`;
+    }).join("\n")
+    : "| _none_ | n/a | current | n/a | n/a | n/a | no pending pointer receipt |";
 
   return [
     `<!-- ${DASHBOARD_MARKER} -->`,
@@ -1465,6 +1493,12 @@ function dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, tri
     "| --- | --- | --- | --- | --- | --- |",
     loopRows,
     "",
+    "## Submodule Pointer Convergence",
+    "",
+    "| Parent | Path | State | Parent pointer | Child | Verified child | Evidence |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    submoduleRows,
+    "",
     "## Notes",
     "",
     "- `Running` = worker claimed success but verification against GitHub reality is pending.",
@@ -1472,6 +1506,72 @@ function dashboardIssueBody(policy, plan, dispatched, escalated, recoveries, tri
     "- Cross-repo waves, stream lanes, and concurrency caps are deterministic; AI tokens: 0.",
     "- Execution boundary: this is deterministic GitHub control-plane state; local worker turns run only through Agent OS."
   ].join("\n");
+}
+
+export async function collectSubmodulePointerStatuses(github, repositories) {
+  const statuses = [];
+  for (const repository of [...new Set(repositories)].sort()) {
+    let ledger;
+    try {
+      ledger = await readLatestRunLedger(github, DARK_FACTORY_DATA_REPO, "df-submodule-update", repository);
+    } catch (error) {
+      if (error.status === 404) continue;
+      throw error;
+    }
+    const status = submodulePointerStatusFromLedger(ledger, repository);
+    if (status) statuses.push(status);
+  }
+  return statuses;
+}
+
+export function submodulePointerStatusFromLedger(ledger, expectedTarget) {
+  const stateByStatus = new Map([
+    ["blocked", "blocked"],
+    ["waiting-for-validation", "pending"],
+    ["waiting-for-green", "pending"],
+    ["automerge-armed", "pending"],
+    ["release-dispatched", "merged"],
+    ["waiting-for-parent-release", "merged"],
+    ["released", "released"]
+  ]);
+  const state = stateByStatus.get(ledger?.status);
+  const evidence = ledger?.plan?.evidence;
+  if (ledger?.kind !== "df-submodule-update" || !state || !evidence) return null;
+  const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+  const pathPattern = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
+  const shaPattern = /^[0-9a-f]{40}$/;
+  const target = String(expectedTarget || "");
+  const rawParent = String(evidence.parent || "");
+  const rawChild = String(evidence.child || "");
+  const rawPath = String(evidence.path || "");
+  const rawParentPointer = String(evidence.dev_pointer || "");
+  const rawChildSha = String(evidence.child_sha || "");
+  if (!repositoryPattern.test(target)
+      || (rawParent && !repositoryPattern.test(rawParent))
+      || !repositoryPattern.test(rawChild)
+      || (rawPath && !pathPattern.test(rawPath))
+      || (rawParentPointer && !shaPattern.test(rawParentPointer))
+      || (rawChildSha && !shaPattern.test(rawChildSha))) return null;
+
+  const parent = rawParent || null;
+  const path = rawPath || null;
+  const parentPointer = rawParentPointer || null;
+  const childSha = rawChildSha || null;
+  const targetMatches = parent
+    ? parent.toLowerCase() === target.toLowerCase()
+    : state === "blocked" && rawChild.toLowerCase() === target.toLowerCase();
+  if (!targetMatches) return null;
+  if (state !== "blocked" && (!parent || !path || !parentPointer || !childSha)) return null;
+  const receiptUrl = /^https:\/\/github\.com\/[A-Za-z0-9_.\/-]+$/.test(String(evidence.receipt || ""))
+    ? evidence.receipt
+    : null;
+  return {
+    parent, child: rawChild, path, state, parentPointer, childSha, receiptUrl,
+    pointerUrl: parent && parentPointer && path
+      ? `https://github.com/${parent}/tree/${parentPointer}/${path}`
+      : null,
+    childUrl: childSha ? `https://github.com/${rawChild}/commit/${childSha}` : null
+  };
 }
 
 export function compareReadyIssues(a, b) {

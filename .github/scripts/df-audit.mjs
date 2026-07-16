@@ -26,6 +26,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const DOCTOR_SCHEMA_VERSION = 2;
+export const DATA_REPOSITORY_POLICY_PATH = ".darkfactory/data-repository-policy.json";
 export const DOCTOR_REPAIR_CLASSES = ["auto", "pr", "owner", "blocked"];
 export const DOC_PATHS = ["PRD.md", "AGENTS.md", ".agents/.project/STATUS.md", ".agents/.project/PROJECT.md"];
 export const DOC_STALE_DAYS = 90;
@@ -56,6 +57,12 @@ const DOCTOR_MODES = new Set(["diagnose", "report"]);
 const CONTROL_REPO = { owner: "marius-patrik", repo: "DarkFactory" };
 const DOCTOR_ISSUE_AUTHORS = new Set(["darkfactory-agent[bot]", "mp-agents[bot]"]);
 const MAIN_ONLY_DATA_REPOSITORIES = new Set([AGENT_OS_DATA_REPO, DARK_FACTORY_DATA_REPO].map((name) => name.toLowerCase()));
+const DATA_REPOSITORY_POLICY_FILE = fileURLToPath(new URL(`../../${DATA_REPOSITORY_POLICY_PATH}`, import.meta.url));
+const PLAN_BRANCH_PROTECTION_MESSAGE_MARKERS = [
+  "upgrade to github pro",
+  "make this repository public",
+  "enable this feature"
+];
 const REPOSITORY_TREE_ENTRY_TYPES = new Set(["blob", "tree", "commit"]);
 export const DOCTOR_REPORT_LABEL_NAMES = ["P0", "P1", "P2", "df:doctor", "df:class:mechanical"];
 const GENERATED_SEGMENTS = new Set([
@@ -121,9 +128,67 @@ export function parseDoctorMode(value) {
   return mode;
 }
 
+export function loadDataRepositoryPolicy(filePath = DATA_REPOSITORY_POLICY_FILE) {
+  let value;
+  try {
+    value = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch (error) {
+    throw new Error(`Trusted data repository policy is missing or invalid JSON: ${error.message || String(error)}`);
+  }
+  return validateDataRepositoryPolicy(value);
+}
+
+export function validateDataRepositoryPolicy(value) {
+  const expectedRepositories = [AGENT_OS_DATA_REPO, DARK_FACTORY_DATA_REPO];
+  const expectedGuarantees = ["encrypted-bundle-admission", "plaintext-rejection"];
+  const validEntry = (entry) => isObjectRecord(entry)
+    && hasExactKeys(entry, ["repository", "visibility", "defaultBranch", "branches", "branchProtection"])
+    && expectedRepositories.includes(entry.repository)
+    && entry.visibility === "private"
+    && entry.defaultBranch === "main"
+    && Array.isArray(entry.branches)
+    && entry.branches.length === 1
+    && entry.branches[0] === "main"
+    && isObjectRecord(entry.branchProtection)
+    && hasExactKeys(entry.branchProtection, ["required", "acceptedResidue"])
+    && entry.branchProtection.required === true
+    && isObjectRecord(entry.branchProtection.acceptedResidue)
+    && hasExactKeys(entry.branchProtection.acceptedResidue, ["classification", "kind", "httpStatus"])
+    && entry.branchProtection.acceptedResidue.classification === "accepted_residue"
+    && entry.branchProtection.acceptedResidue.kind === "github-plan-branch-protection-unavailable"
+    && entry.branchProtection.acceptedResidue.httpStatus === 403;
+  const control = value?.compensatingControl;
+  const validControl = isObjectRecord(control)
+    && hasExactKeys(control, ["id", "repository", "pullRequest", "url", "guarantees"])
+    && control.id === "andromeda-pr-190-encrypted-bundle-admission"
+    && control.repository === "marius-patrik/Andromeda"
+    && control.pullRequest === 190
+    && control.url === "https://github.com/marius-patrik/Andromeda/pull/190"
+    && Array.isArray(control.guarantees)
+    && control.guarantees.length === expectedGuarantees.length
+    && expectedGuarantees.every((guarantee) => control.guarantees.includes(guarantee));
+  const repositories = Array.isArray(value?.repositories) ? value.repositories : [];
+  const repositoryNames = repositories.map((entry) => entry?.repository);
+  if (!isObjectRecord(value)
+      || !hasExactKeys(value, ["schemaVersion", "managedBy", "repositories", "compensatingControl"])
+      || value.schemaVersion !== 1
+      || value.managedBy !== "darkfactory"
+      || repositories.length !== expectedRepositories.length
+      || !repositories.every(validEntry)
+      || new Set(repositoryNames).size !== expectedRepositories.length
+      || !expectedRepositories.every((repository) => repositoryNames.includes(repository))
+      || !validControl) {
+    throw new Error("Trusted data repository policy must name exactly the two canonical private main-only data repositories, one HTTP 403 plan residue, and Andromeda PR #190 encrypted/plaintext admission evidence.");
+  }
+  return value;
+}
+
 export async function runRepositoryDoctor(github, options = {}) {
   const mode = parseDoctorMode(options.mode || "diagnose");
   assertDoctorReportAuthorities(mode, github, options.ledgerGithub);
+  const dataRepositoryPolicy = options.dataRepositoryPolicy
+    ? validateDataRepositoryPolicy(options.dataRepositoryPolicy)
+    : loadDataRepositoryPolicy(options.dataRepositoryPolicyPath);
   const controlRepo = options.controlRepo || CONTROL_REPO;
   const registry = options.registry || await readManagedRepoRegistry(options.root || process.cwd());
   const targets = await resolveDoctorTargets(github, controlRepo, registry, options);
@@ -157,6 +222,7 @@ export async function runRepositoryDoctor(github, options = {}) {
 
     const report = await auditTargetRepository(github, repository, metadata, {
       ...options,
+      dataRepositoryPolicy,
       controlRepo,
       lifecycle,
       mode
@@ -245,6 +311,7 @@ async function auditTargetRepository(github, repository, metadata, options) {
     branchNames,
     pulls,
     isData,
+    dataRepositoryPolicy: options.dataRepositoryPolicy,
     now: options.now
   });
   findings.push(...branchAudit.findings);
@@ -306,6 +373,7 @@ async function auditTargetRepository(github, repository, metadata, options) {
     machine_evidence_schema: normalizedName(repository) === normalizedName(options.controlRepo) && options.agentsHome ? 1 : 0,
     read_only: options.mode === "diagnose",
     findings: dedupeFindings(findings),
+    accepted_residue: dedupeAcceptedResidue(branchAudit.acceptedResidue),
     observations: [...new Set(observations)].sort(),
     actions: [],
     token_usage: {
@@ -320,7 +388,27 @@ async function auditTargetRepository(github, repository, metadata, options) {
 export async function auditBranchAndReleaseState(github, repository, metadata, context) {
   const findings = [];
   const observations = [];
+  const acceptedResidue = [];
   const { branches, branchNames, pulls, isData } = context;
+  const dataRepositoryPolicy = isData
+    ? validateDataRepositoryPolicy(context.dataRepositoryPolicy || loadDataRepositoryPolicy())
+    : null;
+  const dataPolicyEntry = dataRepositoryPolicy?.repositories.find((entry) => entry.repository === repoName(repository)) || null;
+  const activeHeads = new Set(
+    pulls
+      .filter((pull) => sameRepositoryPullHead(pull, repository) && pull.head?.ref && pull.head?.sha)
+      .map((pull) => `${pull.head.ref}\0${pull.head.sha}`)
+  );
+  const hasUnownedDataBranch = isData && branches.some((branch) => branch.name !== "main"
+    && !activeHeads.has(`${branch.name}\0${branch.commit?.sha || ""}`));
+
+  if (isData && (metadata.private !== true || metadata.visibility !== "private")) {
+    findings.push(doctorFinding("data-repository-not-private", "branch policy", "Canonical data repository visibility is public, contradictory, or unobservable; the private-only accepted-residue policy cannot apply.", {
+      severity: "critical",
+      repairClass: "blocked",
+      repair: ["Restore observable private repository metadata or surface an explicit owner visibility decision; never infer private state."]
+    }));
+  }
 
   if (metadata.default_branch !== "main") {
     findings.push(doctorFinding(
@@ -391,15 +479,20 @@ export async function auditBranchAndReleaseState(github, repository, metadata, c
     findings.push(...await auditBranchProtection(github, repository, branch, {
       protectionRequired: true,
       gatesRequired: !isData,
-      observations
+      observations,
+      acceptedResidue,
+      acceptedResiduePolicy: isData
+        && dataPolicyEntry
+        && metadata.private === true
+        && metadata.visibility === "private"
+        && metadata.default_branch === dataPolicyEntry.defaultBranch
+        && branchNames.has("main")
+        && !hasUnownedDataBranch
+        ? dataRepositoryPolicy
+        : null
     }));
   }
 
-  const activeHeads = new Set(
-    pulls
-      .filter((pull) => sameRepositoryPullHead(pull, repository) && pull.head?.ref && pull.head?.sha)
-      .map((pull) => `${pull.head.ref}\0${pull.head.sha}`)
-  );
   for (const branch of branches) {
     const verifiedPullHead = activeHeads.has(`${branch.name}\0${branch.commit?.sha || ""}`);
     if (branch.name === "main" || (!isData && branch.name === "dev") || verifiedPullHead) continue;
@@ -416,7 +509,7 @@ export async function auditBranchAndReleaseState(github, repository, metadata, c
   if (!isData && comparison) {
     findings.push(...await auditReleaseLane(github, repository, comparison, pullAudit.pulls));
   }
-  return { findings, observations };
+  return { findings, observations, acceptedResidue };
 }
 
 export async function auditBranchProtection(github, repository, branch, options = {}) {
@@ -425,6 +518,12 @@ export async function auditBranchProtection(github, repository, branch, options 
   const protection = await getBranchProtection(github, repository, branch);
   if (!protection.configured) {
     if (protection.status === 403) {
+      const residue = acceptedDataRepositoryProtectionResidue(protection, repository, branch, options.acceptedResiduePolicy);
+      if (residue) {
+        options.acceptedResidue?.push(residue);
+        options.observations?.push(`Branch ${branch} protection remains unobservable under the owner-accepted private-plan residue; it is not reported as healthy protection.`);
+        return [];
+      }
       return [doctorFinding(`protection-${slug(branch)}-unobservable`, "branch protection", `Branch protection for \`${branch}\` is inaccessible (HTTP 403); posture is unknown, not absent.`, {
         severity: "critical",
         evidence: [{ label: `${branch} settings`, url: `https://github.com/${repoName(repository)}/settings/branches` }],
@@ -502,6 +601,35 @@ export async function auditBranchProtection(github, repository, branch, options 
   }
   options.observations?.push(`Branch ${branch} protection: protection_required=${protectionRequired}, gates_required=${gatesRequired}, strict=${data.required_status_checks?.strict === true}, enforce_admins=${data.enforce_admins?.enabled === true}, required=${required.checks.map((check) => `${check.context}@app:${check.appId ?? "unbound"}`).join(", ") || "none"}.`);
   return findings;
+}
+
+export function acceptedDataRepositoryProtectionResidue(protection, repository, branch, policy) {
+  if (!policy || protection?.configured !== false || protection?.status !== 403) return null;
+  const validated = validateDataRepositoryPolicy(policy);
+  const entry = validated.repositories.find((candidate) => candidate.repository === repoName(repository));
+  const reason = String(protection.reason || "").toLowerCase();
+  if (!entry
+      || branch !== entry.defaultBranch
+      || !entry.branches.includes(branch)
+      || !PLAN_BRANCH_PROTECTION_MESSAGE_MARKERS.every((marker) => reason.includes(marker))) {
+    return null;
+  }
+  const control = validated.compensatingControl;
+  return {
+    id: `protection-${slug(branch)}-github-plan-unavailable`,
+    classification: "accepted_residue",
+    category: "branch protection",
+    repository: repoName(repository),
+    branch,
+    http_status: 403,
+    kind: entry.branchProtection.acceptedResidue.kind,
+    message: `Branch protection for \`${branch}\` is unavailable on the current private-repository GitHub plan. This owner-accepted residue remains unobservable and is not healthy protection.`,
+    compensating_controls: [{
+      id: control.id,
+      guarantees: [...control.guarantees],
+      evidence: { label: "Andromeda PR #190 encrypted/plaintext admission", url: control.url }
+    }]
+  };
 }
 
 export function requiredStatusChecks(protection) {
@@ -1849,6 +1977,15 @@ export function dedupeFindings(findings) {
   return [...byId.values()].map((item) => ({ ...item, evidence: dedupeEvidence(item.evidence) })).sort((a, b) => a.id.localeCompare(b.id));
 }
 
+export function dedupeAcceptedResidue(residue) {
+  const byKey = new Map();
+  for (const item of residue || []) {
+    if (!isObjectRecord(item) || item.classification !== "accepted_residue" || typeof item.id !== "string") continue;
+    byKey.set(`${item.repository || ""}|${item.branch || ""}|${item.id}`, item);
+  }
+  return [...byKey.values()].sort((a, b) => `${a.repository}|${a.branch}|${a.id}`.localeCompare(`${b.repository}|${b.branch}|${b.id}`));
+}
+
 export function doctorFinding(id, category, message, options = {}) {
   const repairClass = options.repairClass ?? classifyDoctorRepairClass(id, category, message);
   if (!DOCTOR_REPAIR_CLASSES.includes(repairClass)) {
@@ -2030,6 +2167,7 @@ async function writeDoctorLedger(ledgerGithub, repository, report, options) {
     trigger: report.trigger,
     source_refs: report.source_refs,
     findings: report.findings,
+    accepted_residue: report.accepted_residue || [],
     observations: report.observations,
     actions: phase === "admission"
       ? options.plannedActions.map((action) => ({ ...action, state: "admitted" }))
@@ -2043,9 +2181,22 @@ async function writeDoctorLedger(ledgerGithub, repository, report, options) {
 export function formatDoctorReports(reports) {
   const lines = [];
   for (const report of reports) {
-    lines.push(`${report.target_repository}: ${report.skipped ? "SKIPPED" : report.findings.length ? "FINDINGS" : "HEALTHY"} (${report.mode}, read_only=${report.read_only})`);
+    const state = report.skipped
+      ? "SKIPPED"
+      : report.findings.length
+        ? "FINDINGS"
+        : (report.accepted_residue || []).length
+          ? "ACCEPTED RESIDUE"
+          : "HEALTHY";
+    lines.push(`${report.target_repository}: ${state} (${report.mode}, read_only=${report.read_only})`);
     if (report.reason) lines.push(`  ${report.reason}`);
     for (const finding of report.findings || []) lines.push(`  [${finding.severity}] ${finding.id}: ${finding.message}`);
+    for (const residue of report.accepted_residue || []) {
+      lines.push(`  [accepted_residue] ${residue.id}: ${residue.message}`);
+      for (const control of residue.compensating_controls || []) {
+        if (control.evidence?.url) lines.push(`    compensating control: ${control.id} (${control.evidence.url})`);
+      }
+    }
     for (const observation of report.observations || []) lines.push(`  note: ${observation}`);
   }
   return lines.join("\n");
@@ -2061,6 +2212,7 @@ function skippedReport(repository, mode, reason) {
     reason,
     source_refs: {},
     findings: [],
+    accepted_residue: [],
     observations: [reason],
     actions: [],
     token_usage: { model_calls: 0, input_tokens: 0, output_tokens: 0 }
@@ -2360,6 +2512,17 @@ function readJsonFile(filePath) {
   } catch {
     return null;
   }
+}
+
+function isObjectRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value, expected) {
+  if (!isObjectRecord(value)) return false;
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
 }
 
 function hasActiveWorkState(issue) {

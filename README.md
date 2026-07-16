@@ -189,8 +189,14 @@ Only the exact canonical `marius-patrik/Andromeda-data` and
 `marius-patrik/darkfactory-data` repositories use the main-only data policy.
 They are exempt from `dev`, release-lane, and product gate expectations, but
 their `main` branch must still expose protection with administrator bypass,
-force-push, and deletion disabled. Repository names that merely end in
-`-data` receive no exemption.
+force-push, and deletion disabled. For these two private repositories only,
+GitHub's exact plan-upgrade HTTP 403 is retained as structured
+`accepted_residue`, never as healthy protection. The compensating admission
+control is [Andromeda PR #190](https://github.com/marius-patrik/Andromeda/pull/190):
+encrypted bundles are admitted and plaintext state is rejected. A generic 403,
+404, public visibility, wrong repository or branch, malformed policy, or
+observable unsafe protection remains a fail-closed doctor finding. Repository
+names that merely end in `-data` receive no exemption.
 
 The doctor target token requests only read access to administration, actions,
 checks, contents, pull requests, secrets, and statuses; issue access becomes
@@ -336,10 +342,9 @@ agents packages run darkfactory -- serve
 
 Canonical policy/state authority is the root `$AGENTS_HOME` checkout of
 `marius-patrik/Andromeda-data`; DarkFactory reads only its
-`managed-repository` child. The current managed-sync adapter still accepts the
-pre-Andromeda redirected repository and nested checkout contract. That is a
-tracked implementation gap, not current policy; #255 migrates the adapter,
-workflow, manifest, and documentation together.
+`managed-repository` child. Runtime action receipts remain independently
+written to `marius-patrik/darkfactory-data`; the managed source and runtime
+ledger are deliberately distinct authorities.
 
 The service requires these settings or Agent OS-managed secrets:
 
@@ -431,7 +436,7 @@ release authority away from this repository.
 ## Development notes
 
 - Keep webhook handlers registered in `src/bot.ts`.
-- Keep managed file templates in `$AGENTS_HOME/managed-repository/` (migration tracked by #255).
+- Keep managed file templates in canonical `$AGENTS_HOME/managed-repository/`; keep runtime ledgers in darkfactory-data.
 - Keep managed sync logic in `src/managed-sync.ts`.
 - Keep installed-repository setup enforcement in `src/repository-setup.ts`.
 - Keep HTTP routing and signature handoff behavior in `src/server.ts`.

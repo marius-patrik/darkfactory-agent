@@ -20,6 +20,12 @@ function readConfig() {
   if (config.schemaVersion !== 1) {
     throw new Error("Managed repository config must use schemaVersion 1.");
   }
+  if (config.dataRepo !== "marius-patrik/Andromeda-data") {
+    throw new Error("Managed repository config must use canonical Andromeda-data as its source authority.");
+  }
+  if (config.ledgerRepo !== "marius-patrik/darkfactory-data") {
+    throw new Error("Managed repository config must use darkfactory-data as its runtime ledger authority.");
+  }
   if (!Array.isArray(config.packageFiles) || !config.packageFiles.every(isNonEmptyString)) {
     throw new Error("Managed repository config packageFiles must be an array of paths.");
   }

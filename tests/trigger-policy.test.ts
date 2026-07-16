@@ -80,10 +80,14 @@ test("event and schedule recovery share one idempotency key while stale or untru
     () => admitLoopInvocation(policy, "worker-dispatch", context, new Date("2026-07-15T10:30:01.000Z")),
     /stale and must be replanned/
   );
-  assert.throws(
-    () => admitLoopInvocation(policy, "submodule-autoupdate", context, new Date("2026-07-15T10:05:00.000Z")),
-    /planned, not active/
+  const submodule = admitLoopInvocation(
+    policy,
+    "submodule-autoupdate",
+    { ...context, target: "plugins/DarkFactory" },
+    new Date("2026-07-15T10:05:00.000Z")
   );
+  assert.equal(submodule.loopId, "submodule-autoupdate");
+  assert.match(submodule.idempotencyKey, /^submodule-autoupdate:/);
 });
 
 test("loop status projection exposes success, next run, source, retry, stale, and planned blockers", async () => {
@@ -118,10 +122,11 @@ test("loop status projection exposes success, next run, source, retry, stale, an
   assert.equal(worker.source, "refs/heads/main@1234567890ab");
   assert.match(worker.nextExpected, /^2026-07-15T10:01:00/);
   const submodules = statuses.find((entry: any) => entry.id === "submodule-autoupdate");
-  assert.equal(submodules.retry, "blocked-by:#43");
+  assert.equal(submodules.state, "success");
+  assert.equal(submodules.retry, "idle");
   const markdown = loopStatusMarkdownRows(statuses);
   assert.match(markdown, /worker-dispatch/);
-  assert.match(markdown, /blocked-by:#43/);
+  assert.match(markdown, /submodule-autoupdate/);
 });
 
 test("workflow evidence is fetched only for active trusted workflow names", async () => {
@@ -135,6 +140,7 @@ test("workflow evidence is fetched only for active trusted workflow names", asyn
   }, { owner: "marius-patrik", repo: "DarkFactory" }, policy);
   assert.ok(calls.every((call) => call.includes("/actions/workflows/") && call.includes("branch=main")));
   assert.equal(calls.some((call) => call.includes("df-release.yml")), true);
-  assert.equal(calls.some((call) => call.includes("df-submodule-autoupdate.yml")), false);
+  assert.equal(calls.some((call) => call.includes("df-submodule-autoupdate.yml")), true);
   assert.ok(Object.prototype.hasOwnProperty.call(evidence, ".github/workflows/df-orchestrate.yml"));
+  assert.ok(Object.prototype.hasOwnProperty.call(evidence, ".github/workflows/df-submodule-autoupdate.yml"));
 });

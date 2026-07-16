@@ -811,6 +811,7 @@ test("orchestrator updates the L6 dashboard issue after dispatch", async () => {
   assert.equal(dashboardUpdate?.body.title, "Dashboard");
   assert.match(dashboardUpdate?.body.body, new RegExp(DASHBOARD_MARKER));
   assert.match(dashboardUpdate?.body.body, /marius-patrik\/example#7/);
+  assert.match(dashboardUpdate?.body.body, /Submodule Pointer Convergence/);
   assert.match(dashboardUpdate?.body.body, /AI tokens: 0/);
 });
 

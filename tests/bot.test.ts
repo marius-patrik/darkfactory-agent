@@ -20,7 +20,14 @@ const MANAGED_FILES: ManagedFile[] = [
   { path: ".github/workflows/ci.yml", content: "name: CI\n" },
   {
     path: ".darkfactory/managed-repository.json",
-    content: JSON.stringify({ schemaVersion: 1, packageFiles: [], requiredFiles: [], removedFiles: [] })
+    content: JSON.stringify({
+      schemaVersion: 1,
+      dataRepo: "marius-patrik/Andromeda-data",
+      ledgerRepo: "marius-patrik/darkfactory-data",
+      packageFiles: [],
+      requiredFiles: [],
+      removedFiles: []
+    })
   }
 ];
 

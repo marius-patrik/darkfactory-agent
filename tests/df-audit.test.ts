@@ -458,6 +458,125 @@ test("branch protection distinguishes inaccessible 403 state from absent 404 sta
   }
 });
 
+test("data repository policy accepts exactly the two canonical private main-only repositories", () => {
+  const policy = doctor.loadDataRepositoryPolicy();
+  assert.deepEqual(policy.repositories.map((entry: { repository: string }) => entry.repository), [
+    "marius-patrik/Andromeda-data",
+    "marius-patrik/darkfactory-data"
+  ]);
+  assert.equal(policy.compensatingControl.url, "https://github.com/marius-patrik/Andromeda/pull/190");
+  assert.deepEqual(new Set(policy.compensatingControl.guarantees), new Set(["encrypted-bundle-admission", "plaintext-rejection"]));
+
+  const extra = structuredClone(policy);
+  extra.repositories.push(structuredClone(extra.repositories[0]));
+  extra.repositories[2].repository = "marius-patrik/other-data";
+  assert.throws(() => doctor.validateDataRepositoryPolicy(extra), /exactly the two canonical/);
+
+  const malformed = structuredClone(policy);
+  malformed.repositories[0].branchProtection.acceptedResidue.httpStatus = 404;
+  assert.throws(() => doctor.validateDataRepositoryPolicy(malformed), /HTTP 403 plan residue/);
+});
+
+test("private main-only data repository records the exact GitHub plan 403 as accepted residue", async () => {
+  const policy = doctor.loadDataRepositoryPolicy();
+  const dataRepo = { owner: "marius-patrik", repo: "Andromeda-data" };
+  const branches = [{ name: "main", commit: { sha: "a" } }];
+  const { gh } = mockGh(() => {
+    throw Object.assign(new Error("Upgrade to GitHub Pro or make this repository public to enable this feature."), { status: 403 });
+  });
+  const result = await doctor.auditBranchAndReleaseState(gh, dataRepo, {
+    default_branch: "main",
+    private: true,
+    visibility: "private",
+    allow_auto_merge: false
+  }, {
+    branches,
+    branchNames: new Set(["main"]),
+    pulls: [],
+    isData: true,
+    dataRepositoryPolicy: policy
+  });
+
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.acceptedResidue.length, 1);
+  assert.equal(result.acceptedResidue[0].classification, "accepted_residue");
+  assert.equal(result.acceptedResidue[0].http_status, 403);
+  assert.match(result.acceptedResidue[0].message, /not healthy protection/);
+  assert.equal(result.acceptedResidue[0].compensating_controls[0].evidence.url, "https://github.com/marius-patrik/Andromeda/pull/190");
+});
+
+test("data repository residue fails closed for permission, absence, visibility, target, branch, policy, and unsafe protection drift", async () => {
+  const policy = doctor.loadDataRepositoryPolicy();
+  const dataRepo = { owner: "marius-patrik", repo: "Andromeda-data" };
+  for (const [status, message, expected] of [
+    [403, "Forbidden", "protection-main-unobservable"],
+    [404, "Not Found", "protection-main-missing"]
+  ] as const) {
+    const acceptedResidue: unknown[] = [];
+    const { gh } = mockGh(() => { throw Object.assign(new Error(message), { status }); });
+    const findings = await doctor.auditBranchProtection(gh, dataRepo, "main", {
+      protectionRequired: true,
+      gatesRequired: false,
+      acceptedResidue,
+      acceptedResiduePolicy: policy
+    });
+    assert.equal(findings[0].id, expected);
+    assert.deepEqual(acceptedResidue, []);
+  }
+
+  for (const [repository, branch] of [
+    [{ owner: "marius-patrik", repo: "other-data" }, "main"],
+    [dataRepo, "dev"]
+  ] as const) {
+    const acceptedResidue: unknown[] = [];
+    const { gh } = mockGh(() => { throw Object.assign(new Error("Upgrade to GitHub Pro or make this repository public to enable this feature."), { status: 403 }); });
+    const findings = await doctor.auditBranchProtection(gh, repository, branch, {
+      protectionRequired: true,
+      gatesRequired: false,
+      acceptedResidue,
+      acceptedResiduePolicy: policy
+    });
+    assert.equal(findings[0].id, `protection-${branch}-unobservable`);
+    assert.deepEqual(acceptedResidue, []);
+  }
+
+  const { gh: publicGh } = mockGh(() => { throw Object.assign(new Error("Upgrade to GitHub Pro or make this repository public to enable this feature."), { status: 403 }); });
+  const publicResult = await doctor.auditBranchAndReleaseState(publicGh, dataRepo, {
+    default_branch: "main",
+    private: false,
+    visibility: "public",
+    allow_auto_merge: false
+  }, {
+    branches: [{ name: "main", commit: { sha: "a" } }],
+    branchNames: new Set(["main"]),
+    pulls: [],
+    isData: true,
+    dataRepositoryPolicy: policy
+  });
+  assert.ok(publicResult.findings.some((finding) => finding.id === "data-repository-not-private"));
+  assert.ok(publicResult.findings.some((finding) => finding.id === "protection-main-unobservable"));
+  assert.deepEqual(publicResult.acceptedResidue, []);
+
+  const acceptedResidue: unknown[] = [];
+  const { gh: unsafeGh } = mockGh(() => ({
+    enforce_admins: { enabled: false },
+    allow_force_pushes: { enabled: true },
+    allow_deletions: { enabled: true }
+  }));
+  const unsafe = await doctor.auditBranchProtection(unsafeGh, dataRepo, "main", {
+    protectionRequired: true,
+    gatesRequired: false,
+    acceptedResidue,
+    acceptedResiduePolicy: policy
+  });
+  assert.deepEqual(new Set(unsafe.map((finding) => finding.id)), new Set([
+    "protection-main-admin-bypass",
+    "protection-main-force-push",
+    "protection-main-deletion"
+  ]));
+  assert.deepEqual(acceptedResidue, []);
+});
+
 test("main-only data repositories do not inherit product gate requirements", async () => {
   const { gh } = mockGh(() => ({
     enforce_admins: { enabled: true },
@@ -1449,4 +1568,26 @@ test("human and JSON formats preserve deterministic zero-token evidence", () => 
   const reports = [{ target_repository: "marius-patrik/DarkFactory", mode: "diagnose", read_only: true, findings: [], observations: ["checked"], token_usage: { model_calls: 0 } }];
   assert.match(doctor.formatDoctorReports(reports), /HEALTHY \(diagnose, read_only=true\)/);
   assert.equal(JSON.parse(JSON.stringify(reports))[0].token_usage.model_calls, 0);
+
+  const residueReports = [{
+    target_repository: "marius-patrik/Andromeda-data",
+    mode: "diagnose",
+    read_only: true,
+    findings: [],
+    accepted_residue: [{
+      id: "protection-main-github-plan-unavailable",
+      message: "Protection remains unobservable and is not healthy protection.",
+      compensating_controls: [{
+        id: "andromeda-pr-190-encrypted-bundle-admission",
+        evidence: { url: "https://github.com/marius-patrik/Andromeda/pull/190" }
+      }]
+    }],
+    observations: [],
+    token_usage: { model_calls: 0 }
+  }];
+  const rendered = doctor.formatDoctorReports(residueReports);
+  assert.match(rendered, /ACCEPTED RESIDUE \(diagnose, read_only=true\)/);
+  assert.match(rendered, /\[accepted_residue\].*not healthy protection/);
+  assert.match(rendered, /Andromeda\/pull\/190/);
+  assert.doesNotMatch(rendered, /HEALTHY \(diagnose/);
 });

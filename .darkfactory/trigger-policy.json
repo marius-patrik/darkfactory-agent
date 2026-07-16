@@ -229,7 +229,7 @@
     {
       "id": "submodule-autoupdate",
       "ownerIssue": 43,
-      "status": "planned",
+      "status": "active",
       "engine": "df submodules update",
       "eventWorkflows": [".github/workflows/df-submodule-autoupdate.yml"],
       "recoveryWorkflow": ".github/workflows/df-submodule-autoupdate.yml",
