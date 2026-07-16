@@ -144,29 +144,76 @@ test("clean plan enumerates and removes only independently preserved local branc
   assert.ok(plan.entries.some((entry) => entry.kind === "worktree" && entry.target === "wt-local" && entry.action === "preserve"));
 });
 
-test("clean plan classifies every open PR and issue while preserving review records", () => {
+test("clean plan classifies every open PR and issue while scheduling only evidence-backed review work", () => {
+  const baseSha = "b".repeat(40);
+  const head3 = "3".repeat(40);
+  const head4 = "4".repeat(40);
   const plan = buildCleanPlan(evidence([], {
     pullRequests: [
-      { number: 3, head: "pr-3", classification: "active", findingIds: [] },
-      { number: 4, head: "pr-4", classification: "red", findingIds: ["pr-4-red"] }
+      { number: 3, version: `${baseSha}:${head3}`, base: "dev", baseSha, headRef: "feature/3", head: head3, classification: "active", findingIds: [], autoreview: "current", successor: null },
+      { number: 4, version: `${baseSha}:${head4}`, base: "dev", baseSha, headRef: "feature/4", head: head4, classification: "red", findingIds: ["pr-4-red"], autoreview: "failed", successor: null }
     ],
     issues: [
-      { number: 7, fingerprint: "issue-7", classification: "current", findingIds: [] },
-      { number: 8, fingerprint: "issue-8", classification: "finding", findingIds: ["issue-8-blocker-2-missing"] }
+      { number: 7, fingerprint: "7".repeat(64), classification: "current", findingIds: [], reviewable: false, autoreview: "missing" },
+      { number: 8, fingerprint: "8".repeat(64), classification: "finding", findingIds: ["issue-8-blocker-2-missing"], reviewable: true, autoreview: "stale" }
     ],
     reviewFindings: [{ id: "issue-8-blocker-2-missing", category: "issue lane", severity: "error", repairClass: "pr", message: "Issue #8 names a missing blocker.", evidence: [], fingerprint: "finding-8" }]
   }), new Date("2026-07-15T00:00:00Z"));
 
   assert.deepEqual(plan.entries.filter((entry) => entry.kind === "pull-request").map((entry) => [entry.target, entry.classification, entry.action]), [
     ["#3", "active", "preserve"],
-    ["#4", "red", "preserve"]
+    ["#4", "red", "autoreview"]
   ]);
-  assert.deepEqual(plan.entries.filter((entry) => entry.kind === "issue").map((entry) => [entry.target, entry.classification]), [
-    ["#7", "current"],
-    ["#8", "finding"]
+  assert.deepEqual(plan.entries.filter((entry) => entry.kind === "issue").map((entry) => [entry.target, entry.classification, entry.action]), [
+    ["#7", "current", "preserve"],
+    ["#8", "finding", "autoreview"]
   ]);
   assert.ok(plan.entries.some((entry) => entry.kind === "lane-finding" && entry.target === "issue-8-blocker-2-missing"));
-  assert.equal(plan.entries.every((entry) => !["pull-request", "issue", "lane-finding"].includes(entry.kind) || entry.action === "preserve"), true);
+  assert.equal(plan.entries.find((entry) => entry.kind === "lane-finding")?.action, "preserve");
+});
+
+test("clean plan closes only superseded or abandoned PRs with an exact independently proven successor", () => {
+  const baseSha = "b".repeat(40);
+  const sourceHead = "1".repeat(40);
+  const successorHead = "2".repeat(40);
+  const successor = {
+    number: 20,
+    version: `${baseSha}:${successorHead}`,
+    base: "dev",
+    baseSha,
+    headRef: "feature/successor",
+    head: successorHead,
+    proof: "head-ancestry" as const
+  };
+  const pull = (number: number, classification: "active" | "superseded" | "abandoned", withSuccessor: boolean) => ({
+    number,
+    version: `${baseSha}:${sourceHead}`,
+    base: "dev",
+    baseSha,
+    headRef: `feature/${number}`,
+    head: sourceHead,
+    classification,
+    findingIds: [],
+    autoreview: "current" as const,
+    successor: withSuccessor ? successor : null
+  });
+  const plan = buildCleanPlan(evidence([], {
+    pullRequests: [
+      pull(1, "superseded", true),
+      pull(2, "abandoned", true),
+      pull(3, "superseded", false),
+      pull(4, "abandoned", false),
+      pull(5, "active", true)
+    ]
+  }));
+
+  assert.deepEqual(plan.entries.filter((entry) => entry.kind === "pull-request").map((entry) => [entry.target, entry.action]), [
+    ["#1", "close"],
+    ["#2", "close"],
+    ["#3", "preserve"],
+    ["#4", "preserve"],
+    ["#5", "preserve"]
+  ]);
 });
 
 test("clean apply admission aborts when any observed fact drifts", () => {

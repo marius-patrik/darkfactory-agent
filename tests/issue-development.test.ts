@@ -149,6 +149,14 @@ test("ready evaluation succeeds only for the exact reviewed version with closed 
   assert.ok(denied.findings.some((finding) => finding.startsWith("dependencies-closed:")));
 });
 
+test("Autoreview target markers bind issue digests and exact PR base/head identities", () => {
+  const issueTarget = "a".repeat(64);
+  const pullTarget = `${"b".repeat(40)}:${"c".repeat(40)}`;
+  assert.equal(autoreviewTargetVersionMarker(issueTarget), `<!-- darkfactory-autoreview-target version=${issueTarget} -->`);
+  assert.equal(autoreviewTargetVersionMarker(pullTarget), `<!-- darkfactory-autoreview-target version=${pullTarget} -->`);
+  assert.throws(() => autoreviewTargetVersionMarker("b".repeat(40)), /issue SHA-256 or exact BASE_SHA:HEAD_SHA/);
+});
+
 test("append-only issue autofix corrections apply only to the exact owner-authored base version", () => {
   const issue = { title: "Old title", body: "# Goal\n\nOld\n\n## Acceptance\n\n- Old", state: "open" };
   const targetVersion = issueVersion(issue);

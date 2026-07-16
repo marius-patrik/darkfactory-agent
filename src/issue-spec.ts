@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const PULL_REQUEST_VERSION = /^[0-9a-f]{40}:[0-9a-f]{40}$/;
 const MAX_TITLE_BYTES = 256;
 const MAX_BODY_BYTES = 1_000_000;
 const MAX_ITEM_BYTES = 16_384;
@@ -59,12 +60,15 @@ export function isTrustedDarkFactoryComment(value: unknown): boolean {
 }
 
 export function autoreviewTargetVersionMarker(value: string): string {
-  return `${AUTOREVIEW_TARGET_VERSION_MARKER_PREFIX}${validateIssueVersion(value)} -->`;
+  if (!SHA256.test(value) && !PULL_REQUEST_VERSION.test(value)) {
+    throw new Error("Autoreview target version must be an issue SHA-256 or exact BASE_SHA:HEAD_SHA");
+  }
+  return `${AUTOREVIEW_TARGET_VERSION_MARKER_PREFIX}${value} -->`;
 }
 
 function autoreviewTargetVersion(body: string): string | null {
   const escaped = AUTOREVIEW_TARGET_VERSION_MARKER_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^${escaped}([0-9a-f]{64}) -->$`, "m").exec(body);
+  const match = new RegExp(`^${escaped}([0-9a-f]{64}|[0-9a-f]{40}:[0-9a-f]{40}) -->$`, "m").exec(body);
   return match ? match[1] : null;
 }
 

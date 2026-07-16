@@ -817,7 +817,7 @@ function resultComment(result) {
   const findings = lastReview?.verdict?.blockingFindings || [];
   const lines = [
     REVIEW_MARKER,
-    ...(/^[0-9a-f]{64}$/.test(String(result.targetVersion || "")) ? [autoreviewTargetVersionMarker(result.targetVersion)] : []),
+    ...(result.targetVersion ? [autoreviewTargetVersionMarker(result.targetVersion)] : []),
     "## DarkFactory Autoreview",
     "",
     `**Verdict:** ${result.ok ? "Clean high confirmation" : "Blocked closed"}`,

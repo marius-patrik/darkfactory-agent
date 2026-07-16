@@ -148,6 +148,7 @@ export type BranchClassification =
 export type PullRequestClassification = "active" | "stale" | "red" | "superseded" | "abandoned";
 export type IssueClassification = "current" | "finding";
 export type CleanClassification = BranchClassification | PullRequestClassification | IssueClassification | "review-finding";
+export type AutoreviewState = "current" | "pending" | "missing" | "failed" | "stale";
 
 export interface CleanWorktreeEvidence {
   pathId: string;
@@ -194,15 +195,31 @@ export interface CleanEvidence {
   detachedWorktrees: CleanWorktreeEvidence[];
   pullRequests: Array<{
     number: number;
+    version: string;
+    base: string;
+    baseSha: string;
+    headRef: string;
     head: string;
     classification: PullRequestClassification;
     findingIds: string[];
+    autoreview: AutoreviewState;
+    successor: null | {
+      number: number;
+      version: string;
+      base: string;
+      baseSha: string;
+      headRef: string;
+      head: string;
+      proof: "head-ancestry" | "tree-equivalence";
+    };
   }>;
   issues: Array<{
     number: number;
     fingerprint: string;
     classification: IssueClassification;
     findingIds: string[];
+    reviewable: boolean;
+    autoreview: AutoreviewState;
   }>;
   reviewFindings: Array<{
     id: string;
@@ -223,7 +240,20 @@ export interface CleanPlanEntry {
   target: string;
   head: string;
   classification: CleanClassification;
-  action: "preserve" | "delete" | "remove";
+  action: "preserve" | "delete" | "remove" | "autoreview" | "close";
+  version?: string;
+  base?: string;
+  baseSha?: string;
+  headRef?: string;
+  successor?: {
+    number: number;
+    version: string;
+    base: string;
+    baseSha: string;
+    headRef: string;
+    head: string;
+    proof: "head-ancestry" | "tree-equivalence";
+  };
   reasons: string[];
 }
 
@@ -331,23 +361,54 @@ export function buildCleanPlan(evidence: CleanEvidence, now = new Date()): Clean
 
 
   for (const pull of [...evidence.pullRequests].sort((a, b) => a.number - b.number)) {
+    const canClose = (pull.classification === "superseded" || pull.classification === "abandoned") && pull.successor !== null;
+    const shouldReview = !canClose
+      && pull.classification !== "abandoned"
+      && pull.autoreview !== "current"
+      && pull.autoreview !== "pending";
     entries.push({
       kind: "pull-request",
       target: `#${pull.number}`,
       head: pull.head,
       classification: pull.classification,
-      action: "preserve",
-      reasons: pull.findingIds.length ? pull.findingIds : ["Open pull request is active and remains preserved for its review lane."]
+      action: canClose ? "close" : shouldReview ? "autoreview" : "preserve",
+      version: pull.version,
+      base: pull.base,
+      baseSha: pull.baseSha,
+      headRef: pull.headRef,
+      ...(pull.successor ? { successor: pull.successor } : {}),
+      reasons: canClose
+        ? [`Exact head is independently preserved by PR #${pull.successor!.number} through ${pull.successor!.proof}; close with a durable successor receipt.`]
+        : shouldReview
+        ? [`Exact ${pull.version} is a live PR version requiring the shared Autoreview/fix protocol.`, ...pull.findingIds]
+        : pull.classification === "abandoned" || pull.classification === "superseded"
+        ? ["A successor was claimed but exact independent preservation was not proved; the PR remains preserved.", ...pull.findingIds]
+        : pull.autoreview === "pending"
+        ? ["The exact PR version already has an in-progress Autoreview; duplicate dispatch is suppressed."]
+        : ["The exact PR version already has clean Autoreview evidence and remains in its normal merge lane."]
     });
   }
   for (const issue of [...evidence.issues].sort((a, b) => a.number - b.number)) {
+    const shouldReview = issue.classification === "finding"
+      && issue.reviewable
+      && issue.autoreview !== "current"
+      && issue.autoreview !== "pending";
     entries.push({
       kind: "issue",
       target: `#${issue.number}`,
       head: issue.fingerprint,
       classification: issue.classification,
-      action: "preserve",
-      reasons: issue.findingIds.length ? issue.findingIds : ["Issue contract is current under deterministic lane review."]
+      action: shouldReview ? "autoreview" : "preserve",
+      version: issue.fingerprint,
+      reasons: shouldReview
+        ? ["The exact issue version has reviewable lane defects; invoke the shared issue Autoreview/autofix protocol without closing or dropping scope.", ...issue.findingIds]
+        : issue.autoreview === "pending"
+        ? ["The exact issue version already has an in-progress Autoreview; duplicate dispatch is suppressed.", ...issue.findingIds]
+        : issue.autoreview === "current"
+        ? ["The exact issue version already has clean Autoreview evidence; any remaining deterministic finding stays visible without duplicate model work.", ...issue.findingIds]
+        : issue.findingIds.length
+        ? ["The finding is blocked or owner-owned; issue text and scope remain immutable.", ...issue.findingIds]
+        : ["Issue contract is current under deterministic lane review."]
     });
   }
   for (const finding of [...evidence.reviewFindings].sort((a, b) => a.id.localeCompare(b.id))) {
