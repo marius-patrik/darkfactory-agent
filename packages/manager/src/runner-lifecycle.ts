@@ -28,7 +28,11 @@ export const RUNNER_REPOSITORY = "marius-patrik/DarkFactory";
 export const RUNNER_LABELS = ["self-hosted", "Windows", "X64", "df-local"] as const;
 export const RUNNER_SCHEDULED_TASK = "AgentOS-df-local-runner";
 export const RUNNER_SCHEDULED_TASK_PATH = "\\";
-export const RUNNER_GITHUB_CREDENTIAL = "github";
+// Agent OS secret names use the same uppercase identifier contract as every
+// other canonical secret. Keep the runner credential inside that public CLI
+// surface so `agents secrets set` can actually provision the live control
+// plane instead of referring to an impossible lowercase filename.
+export const RUNNER_GITHUB_CREDENTIAL = "GITHUB_TOKEN";
 
 /**
  * Resolve the inbox Windows PowerShell host from the OS-owned SystemRoot

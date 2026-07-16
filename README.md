@@ -133,6 +133,10 @@ agents cli doctor
 agents cli pin all
 agents cli env codex
 
+gh auth token | agents secrets set GITHUB_TOKEN
+agents runner install --json
+agents runner status --json
+
 agents run --mode orchestrator --provider codex "Review active work"
 agents tui --provider codex --mode orchestrator
 agents sessions list --json
@@ -148,6 +152,12 @@ agents installs --json
 agents identity activate <source-directory> --replace
 agents doctor
 ```
+
+The persistent DarkFactory `df-local` runner reads the repository-control
+credential only from the canonical `GITHUB_TOKEN` Agent OS secret. The
+registration token it obtains from GitHub is short lived and is never stored;
+runner install, enable, repair, and every process start remain gated on a green
+`agents state doctor` result.
 
 Cross-machine event exchange now satisfies the v2 tombstone, encrypted
 transport, deterministic merge, recovery, and secret/symlink rejection

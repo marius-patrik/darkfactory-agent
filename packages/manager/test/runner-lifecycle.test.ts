@@ -24,6 +24,7 @@ import {
   runnerLauncherPath,
   runnerStatus,
   RUNNER_LABELS,
+  RUNNER_GITHUB_CREDENTIAL,
   RUNNER_NAME,
   RUNNER_REPOSITORY,
   RUNNER_SCHEDULED_TASK,
@@ -46,10 +47,17 @@ import {
   type ScheduledTaskInfo,
   type ScheduledTaskSpec,
 } from "../src/runner-lifecycle";
+import { validateSecretName } from "../src/secrets";
 
 const REGISTRATION_TOKEN = "ghr_FAKE_REGISTRATION_TOKEN_0123456789";
 const UNRELATED_TASK = "ContosoBackupNightly";
 const TEST_PRINCIPAL = "FABRIKAM\\runner-user";
+
+test("runner GitHub credential is provisionable through the canonical secret-name contract", () => {
+  expect(RUNNER_GITHUB_CREDENTIAL).toBe("GITHUB_TOKEN");
+  expect(validateSecretName(RUNNER_GITHUB_CREDENTIAL)).toBe("GITHUB_TOKEN");
+  expect(() => validateSecretName("github")).toThrow("invalid secret name");
+});
 
 // ---------------------------------------------------------------------------
 // Fakes
