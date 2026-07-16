@@ -53,6 +53,12 @@ const REGISTRATION_TOKEN = "ghr_FAKE_REGISTRATION_TOKEN_0123456789";
 const UNRELATED_TASK = "ContosoBackupNightly";
 const TEST_PRINCIPAL = "FABRIKAM\\runner-user";
 
+test("runner GitHub credential is provisionable through the canonical secret-name contract", () => {
+  expect(RUNNER_GITHUB_CREDENTIAL).toBe("GITHUB_TOKEN");
+  expect(validateSecretName(RUNNER_GITHUB_CREDENTIAL)).toBe("GITHUB_TOKEN");
+  expect(() => validateSecretName("github")).toThrow("invalid secret name");
+});
+
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
@@ -408,31 +414,21 @@ afterEach(async () => {
   }
 });
 
-describe("runner GitHub credential contract", () => {
-  test("primary: the canonical runner credential is an admissible uppercase secret name", () => {
-    expect(validateSecretName(RUNNER_GITHUB_CREDENTIAL)).toBe("GITHUB");
+test("runner status requests the canonical provisionable credential name exactly", async () => {
+  const { state } = await freshState();
+  const kit = makeKit();
+  const requested: string[] = [];
+  const report = await runnerStatus(state, {
+    ...kit.deps,
+    github: undefined,
+    readCredential: async (_state, name) => {
+      requested.push(name);
+      throw new Error("credential unavailable");
+    },
   });
 
-  test("edge: the live default control plane requests the canonical secret name exactly", async () => {
-    const { state } = await freshState();
-    const kit = makeKit();
-    const requested: string[] = [];
-    const report = await runnerStatus(state, {
-      ...kit.deps,
-      github: undefined,
-      readCredential: async (_state, name) => {
-        requested.push(name);
-        throw new Error("credential unavailable");
-      },
-    });
-
-    expect(requested).toEqual([RUNNER_GITHUB_CREDENTIAL]);
-    expect(report.issues).toContain("GitHub runner observation failed");
-  });
-
-  test("denied: the legacy lowercase spelling cannot bypass secret-name admission", () => {
-    expect(() => validateSecretName("github")).toThrow("invalid secret name");
-  });
+  expect(requested).toEqual([RUNNER_GITHUB_CREDENTIAL]);
+  expect(report.issues).toContain("GitHub runner observation failed");
 });
 
 // ---------------------------------------------------------------------------
