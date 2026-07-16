@@ -420,7 +420,9 @@ export function createGithubClient(token, userAgent = "darkfactory") {
       }
 
       if (response.status === 204) return null;
-      return await response.json();
+      const text = await response.text();
+      if (!text.trim()) return null;
+      return JSON.parse(text);
     },
 
     async graphql(query, variables) {

@@ -10,6 +10,8 @@ const policyModule: any = await import("../.github/scripts/df-trigger-policy.mjs
 const recoveryModule: any = await import("../.github/scripts/df-autoreview-recovery.mjs?unit=trigger-policy-recovery-test");
 // @ts-ignore Base-trusted Autoreview result classification is exercised directly.
 const autoreviewRunner: any = await import("../.github/scripts/run-darkfactory-autoreview.mjs?unit=trigger-policy-result-test");
+// @ts-ignore Shared native ESM GitHub transport is exercised against real response semantics.
+const githubClientModule: any = await import("../.github/scripts/df-lib.mjs?unit=trigger-policy-github-client-test");
 const {
   REQUIRED_LOOP_IDS,
   admitLoopInvocation,
@@ -166,7 +168,27 @@ test("workflow evidence is fetched only for active trusted workflow names", asyn
   assert.ok(Object.prototype.hasOwnProperty.call(evidence, ".github/workflows/df-clean.yml"));
 });
 
-test("Autoreview recovery lifecycle-filters code repositories and dispatches exact PR and issue versions", async () => {
+test("shared GitHub transport accepts the rerun endpoint's successful empty 201 response", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return new Response(null, { status: 201 });
+  };
+  try {
+    const gh = githubClientModule.createGithubClient("test-token", "empty-rerun-response-test");
+    const result = await gh.request("POST", "/repos/marius-patrik/DarkFactory/actions/runs/5012/rerun");
+    assert.equal(result, null);
+    assert.deepEqual(calls.map((call) => [call.init?.method, call.url]), [[
+      "POST",
+      "https://api.github.com/repos/marius-patrik/DarkFactory/actions/runs/5012/rerun"
+    ]]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Autoreview recovery lifecycle-filters code repositories, reruns the exact PR gate, and dispatches exact issue versions", async () => {
   const SHA_A = "a".repeat(40);
   const SHA_B = "b".repeat(40);
   const issue = { number: 9, title: "Exact issue", body: "Review this contract", state: "open", labels: [] };
@@ -174,8 +196,33 @@ test("Autoreview recovery lifecycle-filters code repositories and dispatches exa
     number: 7,
     state: "open",
     draft: false,
-    base: { sha: SHA_A },
-    head: { sha: SHA_B, repo: { full_name: "marius-patrik/DarkFactory" } }
+    base: { sha: SHA_A, ref: "dev" },
+    head: { sha: SHA_B, ref: "feature/recover", repo: { full_name: "marius-patrik/DarkFactory" } }
+  };
+  const failedCheck = {
+    id: 701,
+    name: "DarkFactory Autoreview",
+    app: { id: 15368 },
+    head_sha: SHA_B,
+    status: "completed",
+    conclusion: "failure",
+    check_suite: { id: 9001 },
+    html_url: "https://github.com/marius-patrik/DarkFactory/runs/701"
+  };
+  const failedRun = {
+    id: 5001,
+    check_suite_id: 9001,
+    event: "pull_request_target",
+    head_sha: SHA_B,
+    head_branch: "feature/recover",
+    path: ".github/workflows/darkfactory-autoreview.yml",
+    pull_requests: [{ number: 7, head: { sha: SHA_B, ref: "feature/recover" }, base: { sha: SHA_A, ref: "dev" } }],
+    status: "completed",
+    conclusion: "failure",
+    run_attempt: 1,
+    created_at: "2026-07-16T11:00:00Z",
+    html_url: "https://github.com/marius-patrik/DarkFactory/actions/runs/5001",
+    rerun_url: "https://api.github.com/repos/marius-patrik/DarkFactory/actions/runs/5001/rerun"
   };
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const ledgers: Array<{ kind: string; target: string; payload: any }> = [];
@@ -189,10 +236,12 @@ test("Autoreview recovery lifecycle-filters code repositories and dispatches exa
       if (method === "GET" && requestPath.includes("/repos/marius-patrik/DarkFactory/issues?")) return [];
       if (method === "GET" && requestPath.includes("/repos/marius-patrik/Andromeda/issues?")) return [issue];
       if (method === "GET" && /\/issues\/(?:7|9)\/comments\?/.test(requestPath)) return [];
-      if (method === "GET" && requestPath.endsWith(`/commits/${SHA_B}/check-runs?per_page=100`)) return { check_runs: [] };
+      if (method === "GET" && requestPath.includes(`/commits/${SHA_B}/check-runs?check_name=DarkFactory%20Autoreview`)) return { check_runs: [failedCheck] };
+      if (method === "GET" && requestPath.includes("/actions/runs?event=pull_request_target&check_suite_id=9001")) return { workflow_runs: [failedRun] };
       if (method === "GET" && requestPath === "/repos/marius-patrik/DarkFactory/pulls/7") return pull;
       if (method === "GET" && requestPath === "/repos/marius-patrik/Andromeda/issues/9") return issue;
       if (method === "POST" && /\/issues\/(?:7|9)\/comments$/.test(requestPath)) return { id: commentId++, html_url: `https://github.com/comment/${commentId}` };
+      if (method === "POST" && requestPath === "/repos/marius-patrik/DarkFactory/actions/runs/5001/rerun") return {};
       if (method === "POST" && requestPath.endsWith("/actions/workflows/darkfactory-autoreview.yml/dispatches")) return {};
       throw new Error(`unexpected ${method} ${requestPath}`);
     }
@@ -220,20 +269,25 @@ test("Autoreview recovery lifecycle-filters code repositories and dispatches exa
   const result = await recoveryModule.recoverAutoreviews({ kind: "all", maxDispatches: 4, trigger: "test" });
   assert.equal(result.dispatched.length, 2);
   const dispatches = calls.filter((call) => call.method === "POST" && call.path.endsWith("/dispatches"));
-  assert.deepEqual(dispatches.map((call) => call.body.inputs.target_kind).sort(), ["issue", "pull_request"]);
-  assert.ok(dispatches.some((call) => call.body.inputs.target_version === `${SHA_A}:${SHA_B}`));
-  assert.ok(dispatches.some((call) => /^[0-9a-f]{64}$/.test(call.body.inputs.target_version)));
+  assert.deepEqual(dispatches.map((call) => call.body.inputs.target_kind), ["issue"]);
+  assert.ok(dispatches.every((call) => /^[0-9a-f]{64}$/.test(call.body.inputs.target_version)));
+  assert.deepEqual(
+    calls.filter((call) => call.method === "POST" && call.path.endsWith("/rerun")).map((call) => call.path),
+    ["/repos/marius-patrik/DarkFactory/actions/runs/5001/rerun"]
+  );
+  assert.equal(result.dispatched.find((entry: any) => entry.kind === "pull_request").status, "rerun-requested");
+  assert.equal(result.dispatched.find((entry: any) => entry.kind === "issue").status, "dispatched");
   assert.ok(ledgers.some((entry) => entry.kind === "autoreview-recovery-admission"));
   assert.ok(ledgers.some((entry) => entry.kind === "autoreview-recovery-completion"));
   assert.equal(calls.some((call) => /contents|git\/trees|tarball|zipball/.test(call.path)), false);
 });
 
-test("Autoreview recovery suppresses exact completed and fresh pending targets", async () => {
+test("Autoreview recovery suppresses only an exact successful result with a current trusted green gate, plus fresh pending targets", async () => {
   const base = "d".repeat(40);
   const head = "e".repeat(40);
   const version = `${base}:${head}`;
   const trusted = { login: "darkfactory-agent[bot]", type: "Bot" };
-  const pull = { number: 3, state: "open", draft: false, base: { sha: base }, head: { sha: head, repo: { full_name: "marius-patrik/DarkFactory" } } };
+  const pull = { number: 3, state: "open", draft: false, base: { sha: base, ref: "main" }, head: { sha: head, ref: "feature/clean", repo: { full_name: "marius-patrik/DarkFactory" } } };
   const pendingPull = { ...pull, number: 4 };
   const gh = {
     async request(method: string, requestPath: string) {
@@ -248,6 +302,15 @@ test("Autoreview recovery suppresses exact completed and fresh pending targets",
         created_at: "2026-07-16T11:59:00Z",
         body: `<!-- darkfactory:clean-autoreview schema=1 kind=pull-request number=4 version=${version} status=pending -->\nadmitted`
       }];
+      if (method === "GET" && requestPath.includes(`/commits/${head}/check-runs?check_name=DarkFactory%20Autoreview`)) return { check_runs: [{
+        id: 801,
+        name: "DarkFactory Autoreview",
+        app: { id: 15368 },
+        head_sha: head,
+        status: "completed",
+        conclusion: "success",
+        check_suite: { id: 9101 }
+      }] };
       if (method === "GET" && requestPath.includes("/issues?")) return [];
       throw new Error(`unexpected ${method} ${requestPath}`);
     }
@@ -266,6 +329,233 @@ test("Autoreview recovery suppresses exact completed and fresh pending targets",
   const result = await recoveryModule.recoverAutoreviews({ kind: "all", maxDispatches: 2, trigger: "test" });
   assert.equal(result.candidates, 0);
   assert.deepEqual(result.dispatched, []);
+});
+
+test("Autoreview recovery reruns an exact failed PR gate even when its exact trusted result comment is clean", async () => {
+  const base = "1".repeat(40);
+  const head = "2".repeat(40);
+  const version = `${base}:${head}`;
+  const pull = {
+    number: 12,
+    state: "open",
+    draft: false,
+    base: { sha: base, ref: "dev" },
+    head: { sha: head, ref: "feature/clean-red", repo: { full_name: "marius-patrik/DarkFactory" } }
+  };
+  const comments: any[] = [{
+    id: 120,
+    user: { login: "darkfactory-agent[bot]", type: "Bot" },
+    created_at: "2026-07-16T11:00:00Z",
+    body: [
+      "<!-- darkfactory-autoreview -->",
+      `<!-- darkfactory-autoreview-target version=${version} -->`,
+      "## DarkFactory Autoreview",
+      "",
+      "**Verdict:** Clean high confirmation"
+    ].join("\n")
+  }];
+  const mutations: Array<{ method: string; path: string; body?: any }> = [];
+  const gh = {
+    async request(method: string, requestPath: string, body?: any) {
+      if (method === "GET" && requestPath.includes("/pulls?")) return [pull];
+      if (method === "GET" && requestPath.includes("/issues/12/comments?")) return comments;
+      if (method === "GET" && requestPath.includes("/issues?")) return [];
+      if (method === "GET" && requestPath.includes(`/commits/${head}/check-runs?check_name=DarkFactory%20Autoreview`)) return { check_runs: [{
+        id: 812,
+        name: "DarkFactory Autoreview",
+        app: { id: 15368 },
+        head_sha: head,
+        status: "completed",
+        conclusion: "failure",
+        check_suite: { id: 9_112 }
+      }] };
+      if (method === "GET" && requestPath.includes("/actions/runs?event=pull_request_target&check_suite_id=9112")) return { workflow_runs: [{
+        id: 5_012,
+        check_suite_id: 9_112,
+        event: "pull_request_target",
+        head_sha: head,
+        head_branch: "feature/clean-red",
+        path: ".github/workflows/darkfactory-autoreview.yml",
+        pull_requests: [{ number: 12, head: { sha: head, ref: "feature/clean-red" }, base: { sha: base, ref: "dev" } }],
+        status: "completed",
+        conclusion: "failure",
+        run_attempt: 1,
+        created_at: "2026-07-16T11:00:00Z",
+        html_url: "https://github.com/marius-patrik/DarkFactory/actions/runs/5012",
+        rerun_url: "https://api.github.com/repos/marius-patrik/DarkFactory/actions/runs/5012/rerun"
+      }] };
+      if (method === "GET" && requestPath === "/repos/marius-patrik/DarkFactory/pulls/12") return pull;
+      if (method === "POST" && requestPath.endsWith("/issues/12/comments")) {
+        const comment = { id: 121, user: { login: "darkfactory-agent[bot]", type: "Bot" }, created_at: "2026-07-16T12:00:00Z", body: body.body };
+        comments.push(comment);
+        mutations.push({ method, path: requestPath, body });
+        return comment;
+      }
+      if (method === "POST" && requestPath.endsWith("/actions/runs/5012/rerun")) {
+        mutations.push({ method, path: requestPath, body });
+        return {};
+      }
+      throw new Error(`unexpected ${method} ${requestPath}`);
+    }
+  };
+  recoveryModule.configureAutoreviewRecoveryRuntime({
+    gh,
+    ledgerGh: gh,
+    controlRepo: { owner: "marius-patrik", repo: "DarkFactory" },
+    controlRevision: "3".repeat(40),
+    controlMetadata: { archived: false, disabled: false },
+    activeRepositories: [],
+    dataRepositories: [],
+    now: Date.parse("2026-07-16T12:00:00Z"),
+    async writeLedger() {}
+  });
+
+  const result = await recoveryModule.recoverAutoreviews({ kind: "pull_request", maxDispatches: 2, trigger: "test" });
+  assert.equal(result.status, "complete");
+  assert.equal(result.dispatched[0].status, "rerun-requested");
+  assert.equal(result.dispatched[0].recoveryReason, "successful-comment-with-red-gate");
+  assert.deepEqual(mutations.filter((call) => call.path.endsWith("/rerun")).map((call) => call.path), [
+    "/repos/marius-patrik/DarkFactory/actions/runs/5012/rerun"
+  ]);
+  assert.equal(mutations.some((call) => call.path.endsWith("/dispatches")), false);
+});
+
+test("Autoreview recovery suppresses a trusted pending PR gate without rerunning or dispatching", async () => {
+  const base = "4".repeat(40);
+  const head = "5".repeat(40);
+  const pull = {
+    number: 15,
+    state: "open",
+    draft: false,
+    base: { sha: base, ref: "main" },
+    head: { sha: head, ref: "feature/pending", repo: { full_name: "marius-patrik/DarkFactory" } }
+  };
+  const mutations: string[] = [];
+  const gh = {
+    async request(method: string, requestPath: string) {
+      if (method === "GET" && requestPath.includes("/pulls?")) return [pull];
+      if (method === "GET" && requestPath.includes("/issues/15/comments?")) return [];
+      if (method === "GET" && requestPath.includes(`/commits/${head}/check-runs?check_name=DarkFactory%20Autoreview`)) return { check_runs: [{
+        id: 815,
+        name: "DarkFactory Autoreview",
+        app: { id: 15368 },
+        head_sha: head,
+        status: "in_progress",
+        conclusion: null,
+        check_suite: { id: 9_115 }
+      }] };
+      if (method === "GET" && requestPath.includes("/issues?")) return [];
+      mutations.push(`${method} ${requestPath}`);
+      throw new Error(`unexpected ${method} ${requestPath}`);
+    }
+  };
+  recoveryModule.configureAutoreviewRecoveryRuntime({
+    gh,
+    ledgerGh: gh,
+    controlRepo: { owner: "marius-patrik", repo: "DarkFactory" },
+    controlRevision: "6".repeat(40),
+    controlMetadata: { archived: false, disabled: false },
+    activeRepositories: [],
+    dataRepositories: [],
+    now: Date.parse("2026-07-16T12:00:00Z"),
+    async writeLedger() {}
+  });
+
+  const result = await recoveryModule.recoverAutoreviews({ kind: "pull_request", maxDispatches: 2, trigger: "test" });
+  assert.equal(result.candidates, 0);
+  assert.deepEqual(mutations, []);
+});
+
+test("Autoreview recovery fails closed with owner evidence for missing, ambiguous, and non-rerunnable exact PR runs", async () => {
+  const pulls = [16, 17, 18].map((number, index) => ({
+    number,
+    state: "open",
+    draft: false,
+    base: { sha: String(number - 10).repeat(40), ref: "main" },
+    head: { sha: ["9", "a", "b"][index].repeat(40), ref: `feature/fail-closed-${number}`, repo: { full_name: "marius-patrik/DarkFactory" } }
+  }));
+  const exactRun = (pull: any, id: number, suite: number, overrides: Record<string, any> = {}) => ({
+    id,
+    check_suite_id: suite,
+    event: "pull_request_target",
+    head_sha: pull.head.sha,
+    head_branch: pull.head.ref,
+    path: ".github/workflows/darkfactory-autoreview.yml",
+    pull_requests: [{ number: pull.number, head: { sha: pull.head.sha, ref: pull.head.ref }, base: { sha: pull.base.sha, ref: pull.base.ref } }],
+    status: "completed",
+    conclusion: "failure",
+    run_attempt: 1,
+    created_at: "2026-07-16T11:00:00Z",
+    html_url: `https://github.com/marius-patrik/DarkFactory/actions/runs/${id}`,
+    rerun_url: `https://api.github.com/repos/marius-patrik/DarkFactory/actions/runs/${id}/rerun`,
+    ...overrides
+  });
+  const ledgers: Array<{ kind: string; payload: any }> = [];
+  const mutations: string[] = [];
+  const gh = {
+    async request(method: string, requestPath: string) {
+      if (method === "GET" && requestPath.includes("/pulls?")) return pulls;
+      if (method === "GET" && /\/issues\/(?:16|17|18)\/comments\?/.test(requestPath)) return [];
+      if (method === "GET" && requestPath.includes("/issues?")) return [];
+      const checkMatch = /\/commits\/([0-9a-f]+)\/check-runs\?/.exec(requestPath);
+      if (method === "GET" && checkMatch) {
+        const pull = pulls.find((entry) => entry.head.sha === checkMatch[1]);
+        if (!pull) throw new Error(`unknown check head ${checkMatch[1]}`);
+        return { check_runs: [{
+          id: 800 + pull.number,
+          name: "DarkFactory Autoreview",
+          app: { id: 15368 },
+          head_sha: pull.head.sha,
+          status: "completed",
+          conclusion: "failure",
+          check_suite: { id: 9_100 + pull.number }
+        }] };
+      }
+      const runMatch = /check_suite_id=(\d+)/.exec(requestPath);
+      if (method === "GET" && runMatch) {
+        const suite = Number(runMatch[1]);
+        const pull = pulls.find((entry) => 9_100 + entry.number === suite)!;
+        if (pull.number === 16) return { workflow_runs: [exactRun(pull, 5_016, suite, {
+          pull_requests: [{
+            number: pull.number,
+            head: { sha: pull.head.sha, ref: pull.head.ref },
+            base: { sha: "0".repeat(40), ref: pull.base.ref }
+          }]
+        })] };
+        if (pull.number === 17) return { workflow_runs: [exactRun(pull, 5_017, suite), exactRun(pull, 6_017, suite)] };
+        return { workflow_runs: [exactRun(pull, 5_018, suite, { rerun_url: null })] };
+      }
+      const pullMatch = /\/pulls\/(16|17|18)$/.exec(requestPath);
+      if (method === "GET" && pullMatch) return pulls.find((entry) => entry.number === Number(pullMatch[1]));
+      mutations.push(`${method} ${requestPath}`);
+      throw new Error(`unexpected ${method} ${requestPath}`);
+    }
+  };
+  recoveryModule.configureAutoreviewRecoveryRuntime({
+    gh,
+    ledgerGh: gh,
+    controlRepo: { owner: "marius-patrik", repo: "DarkFactory" },
+    controlRevision: "c".repeat(40),
+    controlMetadata: { archived: false, disabled: false },
+    activeRepositories: [],
+    dataRepositories: [],
+    now: Date.parse("2026-07-16T12:00:00Z"),
+    async writeLedger(kind: string, _target: string, payload: any) { ledgers.push({ kind, payload }); }
+  });
+
+  const result = await recoveryModule.recoverAutoreviews({ kind: "pull_request", maxDispatches: 4, trigger: "test" });
+  assert.equal(result.status, "owner-required");
+  assert.deepEqual(result.dispatched.map((entry: any) => [entry.number, entry.status, entry.recoveryReason]), [
+    [16, "owner-required", "exact-pull-request-target-run-missing"],
+    [17, "owner-required", "exact-pull-request-target-run-ambiguous"],
+    [18, "owner-required", "exact-pull-request-target-run-not-rerunnable"]
+  ]);
+  assert.deepEqual(result.dispatched[0].workflowRun.observedRunIds, [5_016]);
+  assert.deepEqual(result.dispatched[1].workflowRun.runIds, [5_017, 6_017]);
+  assert.equal(result.dispatched[2].workflowRun.rerunUrl, null);
+  assert.equal(ledgers.filter((entry) => entry.kind === "autoreview-recovery-owner-required").length, 3);
+  assert.equal(ledgers.every((entry) => entry.kind !== "autoreview-recovery-dispatch" || entry.payload.status !== "dispatched"), true);
+  assert.deepEqual(mutations, []);
 });
 
 test("Autoreview result classification admits only exact trusted clean or owner-override verdicts", () => {

@@ -21,6 +21,8 @@ const TRUSTED_GATE_APP_ID = 15368;
 const SHA = /^[0-9a-f]{40}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PENDING_MAX_AGE_MS = 3 * 60 * 60 * 1_000;
+const WORKFLOW_RERUN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
+const FAILED_GATE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
 const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DATA_POLICY_PATH = path.join(CONTROL_ROOT, ".darkfactory", "data-repository-policy.json");
 const PENDING_MARKER = "<!-- darkfactory:clean-autoreview";
@@ -68,6 +70,7 @@ async function main() {
     trigger: process.env.DF_TRIGGER?.trim() || "manual"
   });
   console.log(JSON.stringify(result, null, 2));
+  if (result.status === "owner-required") process.exitCode = 1;
 }
 
 export async function listRecoveryRepositories({ repository = "" } = {}) {
@@ -113,7 +116,8 @@ export async function recoverAutoreviews({ kind = "all", repository = "", maxDis
     if (kind === "all" || kind === "pull_request") candidates.push(...await collectPullCandidates(parsed));
     if (kind === "all" || kind === "issue") candidates.push(...await collectIssueCandidates(parsed));
   }
-  candidates.sort((left, right) => left.repository.localeCompare(right.repository)
+  candidates.sort((left, right) => Number(left.recoveryAction === "owner-required") - Number(right.recoveryAction === "owner-required")
+    || left.repository.localeCompare(right.repository)
     || left.kind.localeCompare(right.kind)
     || left.number - right.number);
   const selected = candidates.slice(0, maxDispatches);
@@ -129,9 +133,11 @@ export async function recoverAutoreviews({ kind = "all", repository = "", maxDis
   });
   const dispatched = [];
   for (const candidate of selected) dispatched.push(await dispatchCandidate(candidate, { trigger, controlRevision }));
+  const ownerRequired = candidates.some((candidate) => candidate.recoveryAction === "owner-required")
+    || dispatched.some((entry) => entry.status === "owner-required");
   const result = {
     schemaVersion: 1,
-    status: "complete",
+    status: ownerRequired ? "owner-required" : "complete",
     kind,
     controlRevision,
     repositories: repositories.map((entry) => entry.repository),
@@ -151,22 +157,172 @@ async function collectPullCandidates(repository) {
     const baseSha = String(pull.base.sha || "");
     const headSha = String(pull.head.sha || "");
     if (!SHA.test(baseSha) || !SHA.test(headSha) || !Number.isSafeInteger(pull.number) || pull.number < 1) continue;
-    const version = `${baseSha}:${headSha}`;
-    const comments = await listAll(`/repos/${repoName(repository)}/issues/${pull.number}/comments?per_page=100`);
-    const completion = classifyExactAutoreviewResult(comments, version);
-    if (isSuccessfulCompletion(completion) || hasFreshPending(comments, "pull-request", pull.number, version)) continue;
-    const checks = await gh.request("GET", `/repos/${repoName(repository)}/commits/${headSha}/check-runs?per_page=100`);
-    if (Array.isArray(checks?.check_runs) && checks.check_runs.some((check) => check?.name === "DarkFactory Autoreview"
-      && check?.app?.id === TRUSTED_GATE_APP_ID && check?.head_sha === headSha && check?.status !== "completed")) continue;
-    candidates.push({
-      kind: "pull_request",
-      repository: repoName(repository),
-      number: pull.number,
-      version,
-      recoveryReason: completion === "blocked" ? "blocked-result" : "missing-or-stale-result"
-    });
+    const candidate = await observePullRecoveryCandidate(repository, pull);
+    if (candidate) candidates.push(candidate);
   }
   return candidates;
+}
+
+async function observePullRecoveryCandidate(repository, pull, admittedCommentId = null) {
+  const baseSha = String(pull?.base?.sha || "");
+  const headSha = String(pull?.head?.sha || "");
+  const version = `${baseSha}:${headSha}`;
+  const comments = await listAll(`/repos/${repoName(repository)}/issues/${pull.number}/comments?per_page=100`);
+  const pendingComments = admittedCommentId === null
+    ? comments
+    : comments.filter((comment) => comment?.id !== admittedCommentId);
+  if (hasFreshPending(pendingComments, "pull-request", pull.number, version)) return null;
+
+  const completion = classifyExactAutoreviewResult(comments, version);
+  const checks = await gh.request(
+    "GET",
+    `/repos/${repoName(repository)}/commits/${headSha}/check-runs?check_name=${encodeURIComponent("DarkFactory Autoreview")}&filter=latest&per_page=100`
+  );
+  const gate = currentTrustedPullGate(checks, headSha);
+  if (gate.state === "pending") return null;
+  if (gate.state === "green" && isSuccessfulCompletion(completion)) return null;
+
+  const base = {
+    kind: "pull_request",
+    repository: repoName(repository),
+    number: pull.number,
+    version,
+    completion,
+    gate: gate.evidence
+  };
+  if (gate.state !== "red") {
+    return {
+      ...base,
+      recoveryAction: "owner-required",
+      recoveryReason: gate.state === "green"
+        ? "green-gate-without-exact-successful-comment"
+        : `trusted-current-gate-${gate.state}`
+    };
+  }
+
+  const run = await resolveExactPullRequestTargetRun(repository, pull, gate.checkRun);
+  if (run.status !== "rerunnable") {
+    return {
+      ...base,
+      recoveryAction: "owner-required",
+      recoveryReason: run.reason,
+      workflowRun: run.evidence
+    };
+  }
+  return {
+    ...base,
+    recoveryAction: "rerun-pull-request-target",
+    recoveryReason: completion === "clean" || completion === "owner_override"
+      ? "successful-comment-with-red-gate"
+      : completion === "blocked" ? "blocked-result" : "missing-or-stale-result",
+    workflowRun: run.evidence
+  };
+}
+
+function currentTrustedPullGate(payload, headSha) {
+  if (!isRecord(payload) || !Array.isArray(payload.check_runs)) {
+    return { state: "unobservable", evidence: { state: "unobservable" }, checkRun: null };
+  }
+  const candidates = payload.check_runs.filter((check) => isRecord(check)
+    && check.name === "DarkFactory Autoreview"
+    && check.app?.id === TRUSTED_GATE_APP_ID
+    && check.head_sha === headSha);
+  if (candidates.length === 0) return { state: "missing", evidence: { state: "missing" }, checkRun: null };
+  if (candidates.some((check) => !Number.isSafeInteger(check.id) || check.id < 1)) {
+    return { state: "ambiguous", evidence: { state: "ambiguous", count: candidates.length }, checkRun: null };
+  }
+  candidates.sort((left, right) => right.id - left.id);
+  if (candidates.length > 1 && candidates[0].id === candidates[1].id) {
+    return { state: "ambiguous", evidence: { state: "ambiguous", count: candidates.length }, checkRun: null };
+  }
+  const checkRun = candidates[0];
+  const evidence = {
+    state: checkRun.status !== "completed" ? "pending" : checkRun.conclusion === "success" ? "green" : "red",
+    id: checkRun.id,
+    headSha: checkRun.head_sha,
+    status: checkRun.status,
+    conclusion: checkRun.conclusion ?? null,
+    checkSuiteId: Number.isSafeInteger(checkRun.check_suite?.id) ? checkRun.check_suite.id : null,
+    url: typeof checkRun.html_url === "string" ? checkRun.html_url : null
+  };
+  if (checkRun.status !== "completed") return { state: "pending", evidence, checkRun };
+  if (checkRun.conclusion === "success") return { state: "green", evidence, checkRun };
+  if (!FAILED_GATE_CONCLUSIONS.has(checkRun.conclusion)) return { state: "unrerunnable", evidence, checkRun };
+  return { state: "red", evidence, checkRun };
+}
+
+async function resolveExactPullRequestTargetRun(repository, pull, checkRun) {
+  const checkSuiteId = checkRun?.check_suite?.id;
+  if (!Number.isSafeInteger(checkSuiteId) || checkSuiteId < 1) {
+    return { status: "owner-required", reason: "failed-gate-check-suite-missing", evidence: null };
+  }
+  const runs = await listWorkflowRuns(
+    `/repos/${repoName(repository)}/actions/runs?event=pull_request_target&check_suite_id=${checkSuiteId}&per_page=100`
+  );
+  const exact = runs.filter((run) => exactPullRequestTargetRun(run, pull, checkSuiteId));
+  if (exact.length === 0) {
+    return {
+      status: "owner-required",
+      reason: "exact-pull-request-target-run-missing",
+      evidence: {
+        checkSuiteId,
+        observedRunCount: runs.length,
+        observedRunIds: runs.filter((run) => Number.isSafeInteger(run?.id)).slice(0, 100).map((run) => run.id)
+      }
+    };
+  }
+  if (exact.length !== 1) {
+    return {
+      status: "owner-required",
+      reason: "exact-pull-request-target-run-ambiguous",
+      evidence: { checkSuiteId, count: exact.length, runIds: exact.map((run) => run.id) }
+    };
+  }
+  const run = exact[0];
+  const evidence = {
+    id: run.id,
+    checkSuiteId,
+    runAttempt: run.run_attempt,
+    status: run.status,
+    conclusion: run.conclusion,
+    event: run.event,
+    headSha: run.head_sha,
+    headBranch: run.head_branch,
+    path: run.path,
+    url: typeof run.html_url === "string" ? run.html_url : null,
+    rerunUrl: typeof run.rerun_url === "string" ? run.rerun_url : null,
+    createdAt: run.created_at
+  };
+  const createdAt = Date.parse(run.created_at || "");
+  const age = Number(runtimeOptions.now || Date.now()) - createdAt;
+  const rerunSuffix = `/repos/${repoName(repository)}/actions/runs/${run.id}/rerun`;
+  if (run.status !== "completed"
+    || !FAILED_GATE_CONCLUSIONS.has(run.conclusion)
+    || typeof run.rerun_url !== "string"
+    || !run.rerun_url.endsWith(rerunSuffix)
+    || !Number.isFinite(createdAt)
+    || age < -300_000
+    || age > WORKFLOW_RERUN_MAX_AGE_MS) {
+    return { status: "owner-required", reason: "exact-pull-request-target-run-not-rerunnable", evidence };
+  }
+  return { status: "rerunnable", reason: null, evidence };
+}
+
+function exactPullRequestTargetRun(run, pull, checkSuiteId) {
+  if (!isRecord(run)
+    || !Number.isSafeInteger(run.id)
+    || run.id < 1
+    || run.check_suite_id !== checkSuiteId
+    || run.event !== "pull_request_target"
+    || run.head_sha !== pull.head.sha
+    || run.head_branch !== pull.head.ref
+    || run.path !== ".github/workflows/darkfactory-autoreview.yml") return false;
+  if (!Array.isArray(run.pull_requests)) return false;
+  return run.pull_requests.some((candidate) => candidate?.number === pull.number
+    && candidate?.head?.sha === pull.head.sha
+    && candidate?.head?.ref === pull.head.ref
+    && candidate?.base?.sha === pull.base.sha
+    && candidate?.base?.ref === pull.base.ref);
 }
 
 async function collectIssueCandidates(repository) {
@@ -186,6 +342,8 @@ async function collectIssueCandidates(repository) {
       repository: repoName(repository),
       number: issue.number,
       version,
+      completion,
+      recoveryAction: "workflow-dispatch",
       recoveryReason: isSuccessfulCompletion(completion)
         ? "reviewed-label-repair"
         : completion === "blocked" ? "blocked-result" : "missing-or-stale-result"
@@ -195,7 +353,114 @@ async function collectIssueCandidates(repository) {
 }
 
 async function dispatchCandidate(candidate, context) {
-  if (await assertCandidateCurrent(candidate)) {
+  if (candidate.kind === "pull_request") return await recoverPullCandidate(candidate, context);
+  return await dispatchIssueCandidate(candidate, context);
+}
+
+async function recoverPullCandidate(candidate, context) {
+  let observed = await reobservePullCandidate(candidate);
+  if (observed === null) {
+    const result = { ...publicCandidate(candidate), status: "current", workflow: AUTOREVIEW_WORKFLOW };
+    await recordLedger("autoreview-recovery-dispatch", candidate.repository, result);
+    return result;
+  }
+  if (observed.recoveryAction === "owner-required") return await recordOwnerRequired(observed, context);
+  assertSamePullRecovery(candidate, observed);
+
+  await recordLedger("autoreview-recovery-admission", candidate.repository, {
+    status: "admitted",
+    ...publicCandidate(observed),
+    trigger: context.trigger,
+    control_revision: context.controlRevision,
+    workflow: AUTOREVIEW_WORKFLOW
+  });
+  const marker = renderPendingMarker(observed, "pending", "Exact pull-request gate rerun admitted from trusted DarkFactory main.");
+  const comment = await gh.request("POST", `/repos/${candidate.repository}/issues/${candidate.number}/comments`, { body: marker });
+  let rerunRequested = false;
+  try {
+    if (!Number.isSafeInteger(comment?.id)) throw new Error(`Recovery pending marker for ${candidate.repository}#${candidate.number} has no exact comment identity`);
+    observed = await reobservePullCandidate(candidate, comment.id);
+    if (observed === null) {
+      await gh.request("PATCH", `/repos/${candidate.repository}/issues/comments/${comment.id}`, {
+        body: renderPendingMarker(candidate, "current", "The exact trusted pull-request gate became current before its rerun was requested.")
+      });
+      const result = { ...publicCandidate(candidate), status: "current", workflow: AUTOREVIEW_WORKFLOW, pendingComment: comment?.html_url || null };
+      await recordLedger("autoreview-recovery-dispatch", candidate.repository, result);
+      return result;
+    }
+    if (observed.recoveryAction === "owner-required") {
+      await gh.request("PATCH", `/repos/${candidate.repository}/issues/comments/${comment.id}`, {
+        body: renderPendingMarker(candidate, "owner-required", "The exact pull-request gate could not be rerun safely; owner action is required.")
+      });
+      return await recordOwnerRequired(observed, context, comment?.html_url || null);
+    }
+    assertSamePullRecovery(candidate, observed);
+    await gh.request("POST", `/repos/${candidate.repository}/actions/runs/${observed.workflowRun.id}/rerun`);
+    rerunRequested = true;
+    const result = {
+      ...publicCandidate(observed),
+      status: "rerun-requested",
+      workflow: AUTOREVIEW_WORKFLOW,
+      pendingComment: comment?.html_url || null
+    };
+    await recordLedger("autoreview-recovery-dispatch", candidate.repository, result);
+    return result;
+  } catch (error) {
+    if (!rerunRequested && Number.isSafeInteger(comment?.id)) {
+      await gh.request("PATCH", `/repos/${candidate.repository}/issues/comments/${comment.id}`, {
+        body: renderPendingMarker(candidate, "failed", "Pull-request gate rerun failed closed; no target content was executed or mutated.")
+      }).catch(() => {});
+    }
+    await recordLedger("autoreview-recovery-dispatch", candidate.repository, {
+      ...publicCandidate(observed || candidate),
+      status: "failed",
+      workflow: AUTOREVIEW_WORKFLOW,
+      reason: String(error?.message || error),
+      rerunRequested
+    }).catch(() => {});
+    throw error;
+  }
+}
+
+async function reobservePullCandidate(candidate, admittedCommentId = null) {
+  const pull = await gh.request("GET", `/repos/${candidate.repository}/pulls/${candidate.number}`);
+  if (pull?.state !== "open"
+    || pull?.draft === true
+    || pull?.head?.repo?.full_name?.toLowerCase() !== candidate.repository.toLowerCase()
+    || `${pull?.base?.sha || ""}:${pull?.head?.sha || ""}` !== candidate.version) {
+    throw new Error(`Pull request ${candidate.repository}#${candidate.number} changed before recovery rerun`);
+  }
+  return await observePullRecoveryCandidate(parseRepo(candidate.repository), pull, admittedCommentId);
+}
+
+function assertSamePullRecovery(admitted, observed) {
+  if (observed.recoveryAction !== "rerun-pull-request-target"
+    || observed.version !== admitted.version
+    || observed.gate?.id !== admitted.gate?.id
+    || observed.gate?.checkSuiteId !== admitted.gate?.checkSuiteId
+    || observed.workflowRun?.id !== admitted.workflowRun?.id
+    || observed.workflowRun?.checkSuiteId !== admitted.workflowRun?.checkSuiteId) {
+    throw new Error(`Pull request ${admitted.repository}#${admitted.number} changed its exact gate recovery identity before rerun`);
+  }
+}
+
+async function recordOwnerRequired(candidate, context, pendingComment = null) {
+  const result = {
+    ...publicCandidate(candidate),
+    status: "owner-required",
+    workflow: AUTOREVIEW_WORKFLOW,
+    ...(pendingComment ? { pendingComment } : {})
+  };
+  await recordLedger("autoreview-recovery-owner-required", candidate.repository, {
+    ...result,
+    trigger: context.trigger,
+    control_revision: context.controlRevision
+  });
+  return result;
+}
+
+async function dispatchIssueCandidate(candidate, context) {
+  if (await assertIssueCandidateCurrent(candidate)) {
     const result = { ...publicCandidate(candidate), status: "current", workflow: AUTOREVIEW_WORKFLOW };
     await recordLedger("autoreview-recovery-dispatch", candidate.repository, result);
     return result;
@@ -211,7 +476,7 @@ async function dispatchCandidate(candidate, context) {
   const comment = await gh.request("POST", `/repos/${candidate.repository}/issues/${candidate.number}/comments`, { body: marker });
   try {
     if (!Number.isSafeInteger(comment?.id)) throw new Error(`Recovery pending marker for ${candidate.repository}#${candidate.number} has no exact comment identity`);
-    if (await assertCandidateCurrent(candidate, comment.id)) {
+    if (await assertIssueCandidateCurrent(candidate, comment.id)) {
       await gh.request("PATCH", `/repos/${candidate.repository}/issues/comments/${comment.id}`, {
         body: renderPendingMarker(candidate, "current", "Exact successful completion became current before recovery dispatch.")
       });
@@ -239,23 +504,8 @@ async function dispatchCandidate(candidate, context) {
   }
 }
 
-async function assertCandidateCurrent(candidate, admittedCommentId = null) {
+async function assertIssueCandidateCurrent(candidate, admittedCommentId = null) {
   const repository = parseRepo(candidate.repository);
-  if (candidate.kind === "pull_request") {
-    const pull = await gh.request("GET", `/repos/${candidate.repository}/pulls/${candidate.number}`);
-    if (pull?.state !== "open" || pull?.draft === true || pull?.head?.repo?.full_name?.toLowerCase() !== candidate.repository.toLowerCase()
-      || `${pull?.base?.sha || ""}:${pull?.head?.sha || ""}` !== candidate.version) {
-      throw new Error(`Pull request ${candidate.repository}#${candidate.number} changed before recovery dispatch`);
-    }
-    const comments = await listAll(`/repos/${repoName(repository)}/issues/${candidate.number}/comments?per_page=100`);
-    if (assertNoConcurrentResult(candidate, comments, admittedCommentId)) return true;
-    const checks = await gh.request("GET", `/repos/${repoName(repository)}/commits/${pull.head.sha}/check-runs?per_page=100`);
-    if (Array.isArray(checks?.check_runs) && checks.check_runs.some((check) => check?.name === "DarkFactory Autoreview"
-      && check?.app?.id === TRUSTED_GATE_APP_ID && check?.head_sha === pull.head.sha && check?.status !== "completed")) {
-      throw new Error(`Pull request ${candidate.repository}#${candidate.number} acquired a trusted pending Autoreview check before recovery dispatch`);
-    }
-    return false;
-  }
   const issue = await gh.request("GET", `/repos/${candidate.repository}/issues/${candidate.number}`);
   const comments = await listAll(`/repos/${repoName(repository)}/issues/${candidate.number}/comments?per_page=100`);
   if (issue?.state !== "open" || issue?.pull_request) {
@@ -316,6 +566,10 @@ function publicCandidate(candidate) {
     repository: candidate.repository,
     number: candidate.number,
     version: candidate.version,
+    completion: candidate.completion,
+    recoveryAction: candidate.recoveryAction,
+    gate: candidate.gate,
+    workflowRun: candidate.workflowRun,
     recoveryReason: candidate.recoveryReason
   };
 }
@@ -336,6 +590,21 @@ async function listAll(requestPath) {
     if (items.length < 100) return output;
   }
   throw new Error(`GitHub pagination exceeded its bounded inventory for ${requestPath}`);
+}
+
+async function listWorkflowRuns(requestPath) {
+  const output = [];
+  for (let page = 1; page <= 100; page += 1) {
+    const separator = requestPath.includes("?") ? "&" : "?";
+    const pagePath = /(?:^|[?&])page=/.test(requestPath) ? requestPath : `${requestPath}${separator}page=${page}`;
+    const payload = await gh.request("GET", pagePath);
+    if (!isRecord(payload) || !Array.isArray(payload.workflow_runs)) {
+      throw new Error(`GitHub returned a malformed workflow-run response for ${requestPath}`);
+    }
+    output.push(...payload.workflow_runs);
+    if (payload.workflow_runs.length < 100) return output;
+  }
+  throw new Error(`GitHub workflow-run pagination exceeded its bounded inventory for ${requestPath}`);
 }
 
 function loadDataRepositoryNames() {
