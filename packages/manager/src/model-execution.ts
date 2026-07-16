@@ -155,14 +155,6 @@ function containsPath(root: string, candidate: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function samePhysicalPath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === "win32"
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
 function requiredAbsolutePath(value: string, label: string): string {
   if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
     throw new Error(`${label} must be an absolute path`);
@@ -316,6 +308,7 @@ class ReceiptReservation {
 
   private constructor(
     private readonly root: string,
+    private readonly publicationRoot: string,
     private readonly components: readonly string[],
     private proof: AnchoredFileProof,
   ) {}
@@ -323,11 +316,16 @@ class ReceiptReservation {
   static async create(
     receiptPath: string,
     workdir: string,
+    publicationRoot: string,
     pending: AgentExecutionReceipt,
   ): Promise<ReceiptReservation> {
     const requestedWorkdir = requiredAbsolutePath(workdir, "execution workdir");
     const canonicalWorkdir = await realpath(requestedWorkdir).catch(() => null);
     if (!canonicalWorkdir) throw new Error("execution workdir is unavailable");
+    const canonicalPublicationRoot = await realpath(publicationRoot).catch(() => null);
+    if (!canonicalPublicationRoot) {
+      throw new Error("execution receipt publication state is unavailable");
+    }
     const target = requiredAbsolutePath(receiptPath, "execution receipt path");
     const lexicallyInside = containsPath(requestedWorkdir, target) && target !== requestedWorkdir;
     const parent = path.dirname(target);
@@ -355,21 +353,28 @@ class ReceiptReservation {
       proof = await runAnchoredFileAuthority({
         operation: "create",
         root: canonicalWorkdir,
+        publicationRoot: canonicalPublicationRoot,
         components,
         content: Buffer.from(receiptText(pending), "utf8"),
       });
     } catch {
       throw new Error("execution receipt path must be a new file");
     }
-    return new ReceiptReservation(canonicalWorkdir, components, proof);
+    return new ReceiptReservation(
+      canonicalWorkdir,
+      canonicalPublicationRoot,
+      components,
+      proof,
+    );
   }
 
   async commit(receipt: AgentExecutionReceipt): Promise<void> {
     if (this.closed) throw new Error("execution receipt reservation is closed");
     try {
       this.proof = await runAnchoredFileAuthority({
-        operation: "replace",
+        operation: "publish",
         root: this.root,
+        publicationRoot: this.publicationRoot,
         components: this.components,
         content: Buffer.from(receiptText(receipt), "utf8"),
         expected: this.proof,
@@ -468,7 +473,12 @@ export async function executeModelRequest(
 
   const provider = TIER_ROUTES[tier].provider;
   const pending = blockedReceipt(tier, effort, null, null, "execution_pending");
-  const reservation = await ReceiptReservation.create(input.receiptPath, workdir, pending);
+  const reservation = await ReceiptReservation.create(
+    input.receiptPath,
+    workdir,
+    state.sessionsDir,
+    pending,
+  );
   let finalReceipt = pending;
   let sessionId: string | null = null;
   let content = "";
@@ -628,13 +638,9 @@ async function assertPhysicalPromptPath(target: string): Promise<void> {
     ) {
       throw new Error("prompt file must be a physical regular file");
     }
-    const physical = await realpath(cursor).catch(() => null);
-    if (!physical || !samePhysicalPath(cursor, physical)) {
-      // realpath equality rejects Windows junction/reparse aliases as well as
-      // POSIX linked ancestors; lstat alone covers only the final entry on
-      // some platforms.
-      throw new Error("prompt file must be a physical regular file");
-    }
+    // Walking and lstat'ing every lexical component rejects POSIX links and
+    // Windows junction/reparse ancestors while accepting a native DOS 8.3
+    // spelling, which is an alias for the same entry rather than a reparse.
   }
 }
 

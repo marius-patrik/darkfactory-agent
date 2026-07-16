@@ -297,14 +297,19 @@ canonical worktree for `workspace-write`; the latter also requires explicit
 temporary-directory exclusions and an empty extra `writable_roots` list.
 
 `--receipt` must name an absolute, nonexistent file inside the physical
-worktree. The manager reserves it with a blocked `execution_pending` receipt
-before provider work begins through the same anchored authority used for Kimi
-writes. Each update must reproduce the physical root and receipt identities and
-the exact prior-content hash before it replaces the receipt with the final
-route, provider version, attempt, usage, outcome, and sanitized block reason.
-Parent or ancestor swaps are rejected before creation or truncation. Provider
-errors and prompt content never enter receipts or blocked CLI output; a route,
-doctor, policy, usage, or provider failure remains blocked.
+worktree. The manager first durably stages the complete blocked
+`execution_pending` receipt in canonical manager state, which must be on the
+same volume and physically disjoint from the provider-writable worktree, then
+atomically admits that new file before provider work begins. Final publication
+must reproduce the physical worktree root, pending receipt identity, and exact
+prior-content hash, durably stage the complete final receipt under the same
+manager-only authority, then atomically replace the pending path. The staged
+file's new identity becomes the final proof, so an observer can see only a
+complete pending or complete final route, provider version, attempt, usage,
+outcome, and sanitized block reason. Parent, ancestor, overlapping-authority,
+and cross-volume publication drift fail closed. Provider errors and prompt
+content never enter receipts or blocked CLI output; a route, doctor, policy,
+usage, or provider failure remains blocked.
 
 `agents route probe` is the read-only, zero-token readiness check for the same
 canonical route boundary. With no flags it checks DarkFactory's default

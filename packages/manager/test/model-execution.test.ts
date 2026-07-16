@@ -24,9 +24,11 @@ afterEach(async () => {
 });
 
 async function fixture(): Promise<{ root: string; state: SharedState; receiptDir: string }> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agents-model-execution-"));
-  roots.push(root);
-  const state = sharedStateAt(root, path.join(root, ".agents"), path.join(root, "user"));
+  const sandbox = await mkdtemp(path.join(os.tmpdir(), "agents-model-execution-"));
+  roots.push(sandbox);
+  const root = path.join(sandbox, "worktree");
+  await mkdir(root);
+  const state = sharedStateAt(root, path.join(sandbox, ".agents"), path.join(sandbox, "user"));
   await ensureSharedState(state);
   await writeSessionConfig(state, {
     schemaVersion: 1,
