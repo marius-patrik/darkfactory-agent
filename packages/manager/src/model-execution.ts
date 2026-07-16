@@ -205,8 +205,16 @@ function zeroUsage(): AgentExecutionReceipt["usage"] {
 }
 
 function normalizedUsage(usage: TurnResult["usage"]): AgentExecutionReceipt["usage"] | null {
-  const inputTokens = usage?.tokensIn ?? 0;
-  const outputTokens = usage?.tokensOut ?? 0;
+  if (
+    !usage ||
+    usage.tokensIn === undefined ||
+    usage.tokensOut === undefined ||
+    usage.totalTokens === undefined
+  ) {
+    return null;
+  }
+  const inputTokens = usage.tokensIn;
+  const outputTokens = usage.tokensOut;
   if (
     !Number.isSafeInteger(inputTokens) ||
     inputTokens < 0 ||
@@ -217,7 +225,7 @@ function normalizedUsage(usage: TurnResult["usage"]): AgentExecutionReceipt["usa
   }
   const totalTokens = inputTokens + outputTokens;
   if (!Number.isSafeInteger(totalTokens)) return null;
-  if (usage?.totalTokens !== undefined && usage.totalTokens !== totalTokens) return null;
+  if (!Number.isSafeInteger(usage.totalTokens) || usage.totalTokens !== totalTokens) return null;
   return { inputTokens, outputTokens, totalTokens };
 }
 

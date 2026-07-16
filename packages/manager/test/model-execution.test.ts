@@ -89,7 +89,9 @@ function successfulDependencies(
           result: {
             content: options.content ?? "ok",
             role: "assistant",
-            usage: options.usage ?? { tokensIn: 11, tokensOut: 7, totalTokens: 18 },
+            usage: Object.prototype.hasOwnProperty.call(options, "usage")
+              ? options.usage
+              : { tokensIn: 11, tokensOut: 7, totalTokens: 18 },
             error: options.error,
             ...(route.provider === "agy"
               ? {
@@ -361,6 +363,22 @@ describe("canonical model execution route and receipt", () => {
     );
     expect(malformed.ok).toBe(false);
     expect(malformed.receipt.blockReason).toBe("usage_malformed");
+
+    const missing = await executeModelRequest(
+      state,
+      request(root, receiptDir, "medium", "low"),
+      successfulDependencies([], { usage: undefined }),
+    );
+    expect(missing.ok).toBe(false);
+    expect(missing.receipt.blockReason).toBe("usage_malformed");
+
+    const partial = await executeModelRequest(
+      state,
+      request(root, receiptDir, "medium", "high"),
+      successfulDependencies([], { usage: { tokensIn: 3, tokensOut: 4 } }),
+    );
+    expect(partial.ok).toBe(false);
+    expect(partial.receipt.blockReason).toBe("usage_malformed");
 
     const failedInput = request(root, receiptDir, "max", "high");
     const failed = await executeModelRequest(state, failedInput, {
