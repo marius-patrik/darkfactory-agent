@@ -10,10 +10,10 @@ import {
   type DoctorReport
 } from "../src/operator.js";
 
-function report(findings: DoctorReport["findings"]): DoctorReport {
+function report(findings: DoctorReport["findings"], repository = "marius-patrik/example"): DoctorReport {
   return {
     schema_version: 2,
-    target_repository: "marius-patrik/example",
+    target_repository: repository,
     lifecycle: "active",
     source_refs: { main: "main-sha", dev: "dev-sha" },
     findings
@@ -56,6 +56,40 @@ test("setup routes all machine-runtime deltas to the blocked machine-wiring boun
     supported: action.supported
   })), [{ stage: "machine-wiring", operation: "converge-machine-runtime", supported: false }]);
   assert.deepEqual(plan.residue.map((item) => [item.findingId, item.repairClass]), [["provider-route-probe-unavailable", "blocked"]]);
+});
+
+test("setup blocks code-repository convergence for the exact canonical main-only data repositories", () => {
+  for (const repository of ["marius-patrik/Andromeda-data", "MARIUS-PATRIK/DARKFACTORY-DATA"]) {
+    const plan = planSetupConvergence([report([{
+      id: "protection-main-admin-bypass",
+      category: "branch protection",
+      message: "unsafe main-only posture",
+      severity: "critical",
+      repair_class: "auto"
+    }], repository)]);
+
+    assert.deepEqual(plan.actions.map((action) => ({
+      operation: action.operation,
+      supported: action.supported
+    })), [{ operation: "main-only-data-boundary", supported: false }]);
+    assert.deepEqual(plan.residue.map((item) => [item.findingId, item.repairClass]), [["protection-main-admin-bypass", "blocked"]]);
+  }
+});
+
+test("setup does not infer main-only data policy from a repository-name suffix", () => {
+  const plan = planSetupConvergence([report([{
+    id: "protection-main-strict-missing",
+    category: "branch protection",
+    message: "normal code repository drift",
+    severity: "critical",
+    repair_class: "auto"
+  }], "marius-patrik/product-data")]);
+
+  assert.deepEqual(plan.actions.map((action) => ({
+    operation: action.operation,
+    supported: action.supported
+  })), [{ operation: "converge-settings", supported: true }]);
+  assert.deepEqual(plan.residue, []);
 });
 
 test("clean plan deletes only exact independently preserved branch heads", () => {

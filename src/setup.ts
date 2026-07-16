@@ -1,4 +1,5 @@
 import type { OperatorGitHubRequester, RepositoryRef } from "./clean-evidence.js";
+import { isMainOnlyDataRepository } from "./operator.js";
 
 export interface LabelDefinition {
   name: string;
@@ -29,6 +30,12 @@ export async function convergeRepositorySettings(
   labels: LabelDefinition[],
   managedWorkflowPaths: string[]
 ): Promise<SetupReceipt[]> {
+  if (isMainOnlyDataRepository(`${repository.owner}/${repository.repo}`)) {
+    throw new SetupOwnerActionRequired(
+      "main-only-data-boundary",
+      "Canonical private main-only data repositories cannot use code-repository setup: no dev branch, automerge, label, workflow, Autoreview, or code-gate mutation is permitted. Resolve any residue through an owner-reviewed data-policy operation and its documented compensating control."
+    );
+  }
   const receipts: SetupReceipt[] = [];
   const metadata = record((await github.request("GET /repos/{owner}/{repo}", { ...repository })).data, "repository metadata");
   if (metadata.archived === true || metadata.disabled === true) {

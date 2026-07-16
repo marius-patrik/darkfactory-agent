@@ -413,10 +413,11 @@ async function executeSetupPlan(
       receipts.push({ action: "lifecycle", target: report.target_repository, status: "owner-required", detail: `Repository lifecycle is ${report.lifecycle}; setup refuses it.` });
       continue;
     }
+    const repositoryActions = plan.actions.filter((action) => action.repository === report.target_repository && action.supported);
+    if (repositoryActions.length === 0) continue;
     const [owner, repo] = splitRepository(report.target_repository);
     const octokit = await getInstallationOctokit(app, owner);
     const github = createOperatorRequester(octokit);
-    const repositoryActions = plan.actions.filter((action) => action.repository === report.target_repository && action.supported);
     const activeStage = repositoryActions[0]?.stage;
     // Execute one proven dependency stage per observation. Later stages must
     // see a fresh doctor snapshot after this stage's synchronous postcondition

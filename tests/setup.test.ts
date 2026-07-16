@@ -23,6 +23,26 @@ test("setup settings convergence is a proven no-op when repository state is heal
   assert.equal(calls.some((call) => /^(POST|PATCH|PUT|DELETE) /.test(call.route)), false);
 });
 
+test("setup rejects code-repository convergence for main-only data before any GitHub call", async () => {
+  for (const dataRepo of [
+    { owner: "marius-patrik", repo: "Andromeda-data" },
+    { owner: "MARIUS-PATRIK", repo: "DARKFACTORY-DATA" }
+  ]) {
+    const calls: Array<{ route: string; parameters: Record<string, unknown> }> = [];
+    const github = requester(calls, (route) => {
+      throw new Error(`main-only data boundary leaked into ${route}`);
+    });
+
+    await assert.rejects(
+      () => convergeRepositorySettings(github, dataRepo, labels, workflows),
+      (error: unknown) => error instanceof SetupOwnerActionRequired
+        && error.action === "main-only-data-boundary"
+        && /no dev branch, automerge, label, workflow, Autoreview, or code-gate mutation/.test(error.message)
+    );
+    assert.deepEqual(calls, []);
+  }
+});
+
 test("setup settings convergence repairs only deterministic settings and preserves safe protection fields", async () => {
   const calls: Array<{ route: string; parameters: Record<string, unknown> }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });

@@ -15,6 +15,15 @@ export const SETUP_STAGE_ORDER = [
 export type RepairClass = "auto" | "pr" | "owner" | "blocked";
 export type SetupStage = (typeof SETUP_STAGE_ORDER)[number];
 
+const MAIN_ONLY_DATA_REPOSITORIES = new Set([
+  "marius-patrik/andromeda-data",
+  "marius-patrik/darkfactory-data"
+]);
+
+export function isMainOnlyDataRepository(repository: string): boolean {
+  return MAIN_ONLY_DATA_REPOSITORIES.has(repository.toLowerCase());
+}
+
 export interface DoctorFinding {
   id: string;
   category: string;
@@ -71,7 +80,7 @@ export function planSetupConvergence(reports: DoctorReport[]): SetupPlan {
         continue;
       }
 
-      const mapping = setupOperation(finding);
+      const mapping = setupOperation(report.target_repository, finding);
       actions.push({
         id: `${report.target_repository}:${finding.id}`,
         repository: report.target_repository,
@@ -101,9 +110,17 @@ export function planSetupConvergence(reports: DoctorReport[]): SetupPlan {
   return { schemaVersion: 1, planId: `setup-${evidenceHash.slice(0, 20)}`, evidenceHash, actions, residue };
 }
 
-function setupOperation(finding: DoctorFinding): Pick<SetupAction, "stage" | "operation" | "supported" | "reason"> {
+function setupOperation(repository: string, finding: DoctorFinding): Pick<SetupAction, "stage" | "operation" | "supported" | "reason"> {
   const id = finding.id.toLowerCase();
   const category = finding.category.toLowerCase();
+  if (isMainOnlyDataRepository(repository)) {
+    return {
+      stage: "settings-enforcement",
+      operation: "main-only-data-boundary",
+      supported: false,
+      reason: "Canonical private main-only data repositories never enter code-repository setup; unsafe residue requires owner action or its documented compensating control."
+    };
+  }
   if (category === "machine runtime" || category === "runner health" || id.startsWith("canonical-launcher") || id.includes("agents-home")) {
     return { stage: "machine-wiring", operation: "converge-machine-runtime", supported: false, reason: "Canonical Agent OS must expose a trusted machine-runtime repair executor before setup may mutate launcher, route, state, or runner registration." };
   }
