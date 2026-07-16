@@ -66,6 +66,11 @@ const REDACTED = "<redacted>";
 const RUNNER_RECORD_KEY = "runner";
 const RUNNER_START_OBSERVATION_TIMEOUT_MS = 15_000;
 const RUNNER_START_OBSERVATION_INTERVAL_MS = 100;
+// Pinned runner v2.335.1 retries a retained server-session conflict every
+// 30 seconds for up to four minutes. Keep remote readiness separate from the
+// fast local ownership proof and leave bounded transport/observation margin.
+const RUNNER_READINESS_OBSERVATION_TIMEOUT_MS = 5 * 60_000;
+const RUNNER_READINESS_OBSERVATION_INTERVAL_MS = 5_000;
 const RUNNER_TERMINATION_GRACE_MS = 2_500;
 
 export interface RunnerRecord {
@@ -237,6 +242,9 @@ export interface RunnerDeps {
   /** Test-only bounded observation controls; production uses the constants below. */
   startObservationTimeoutMs?: number;
   startObservationIntervalMs?: number;
+  /** Test-only remote readiness controls; start overrides remain a compatibility fallback. */
+  readinessObservationTimeoutMs?: number;
+  readinessObservationIntervalMs?: number;
 }
 
 let injectedDeps: RunnerDeps | null = null;
@@ -259,6 +267,8 @@ interface ResolvedDeps {
   readCredential: (state: SharedState, name: string) => Promise<string>;
   startObservationTimeoutMs: number;
   startObservationIntervalMs: number;
+  readinessObservationTimeoutMs: number;
+  readinessObservationIntervalMs: number;
 }
 
 function resolveDeps(overrides: RunnerDeps = {}): ResolvedDeps {
@@ -273,6 +283,14 @@ function resolveDeps(overrides: RunnerDeps = {}): ResolvedDeps {
     readCredential: merged.readCredential ?? ((state, name) => readSecret(state, name)),
     startObservationTimeoutMs: merged.startObservationTimeoutMs ?? RUNNER_START_OBSERVATION_TIMEOUT_MS,
     startObservationIntervalMs: merged.startObservationIntervalMs ?? RUNNER_START_OBSERVATION_INTERVAL_MS,
+    readinessObservationTimeoutMs:
+      merged.readinessObservationTimeoutMs ??
+      merged.startObservationTimeoutMs ??
+      RUNNER_READINESS_OBSERVATION_TIMEOUT_MS,
+    readinessObservationIntervalMs:
+      merged.readinessObservationIntervalMs ??
+      merged.startObservationIntervalMs ??
+      RUNNER_READINESS_OBSERVATION_INTERVAL_MS,
   };
 }
 
@@ -1736,6 +1754,14 @@ function requireValidRunnerProcesses(instances: RunnerProcess[]): void {
   }
 }
 
+function sameRunnerProcess(left: RunnerProcess, right: RunnerProcess): boolean {
+  return (
+    left.pid === right.pid &&
+    left.executablePath.toLowerCase() === right.executablePath.toLowerCase() &&
+    left.startedAt === right.startedAt
+  );
+}
+
 /** Reconcile duplicate local runner processes, keeping the earliest creation identity. */
 async function reconcileProcesses(
   host: RunnerHost,
@@ -1819,21 +1845,63 @@ async function waitForStartedRunner(
   }
 }
 
+/**
+ * Establish one exact local Listener under the short startup horizon. When a
+ * process was retained across preflight, its identity is already authoritative
+ * and disappearance or replacement is a decisive failure rather than a reason
+ * to bind readiness to a later process.
+ */
+async function waitForRunnerProcess(
+  host: RunnerHost,
+  installDir: string,
+  expected: RunnerProcess | null,
+  timeoutMs: number,
+  intervalMs: number,
+): Promise<RunnerProcess> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const observed = await host.runningInstances(installDir);
+    requireValidRunnerProcesses(observed);
+    if (expected !== null) {
+      if (observed.length !== 1 || !sameRunnerProcess(observed[0]!, expected)) {
+        throw new Error("runner process changed during startup observation");
+      }
+      return observed[0]!;
+    }
+    if (observed.length > 1) {
+      throw new Error("runner process changed during startup observation");
+    }
+    if (observed.length === 1) return observed[0]!;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  } while (Date.now() < deadline);
+  throw new Error("runner host start postcondition timed out before its process became observable");
+}
+
 async function waitForRunnerReady(
   host: RunnerHost,
   github: RunnerGitHub,
   installDir: string,
   exactRunnerId: number,
+  expectedProcess: RunnerProcess,
+  requireFreshOnlineTransition: boolean,
   timeoutMs: number,
   intervalMs: number,
 ): Promise<{ process: RunnerProcess; registration: RunnerRegistration }> {
   const deadline = Date.now() + timeoutMs;
+  // When no local Listener exists but GitHub still says online, that remote
+  // truth can belong only to the terminated process's retained session. Do
+  // not bind a newly observed PID to it; require the provider to expose the
+  // stale session's offline edge before accepting the new online edge.
+  let observedOffline = !requireFreshOnlineTransition;
   do {
     const [processes, registrations] = await Promise.all([
       host.runningInstances(installDir),
       github.listRunners(RUNNER_REPOSITORY),
     ]);
     requireValidRunnerProcesses(processes);
+    if (processes.length !== 1 || !sameRunnerProcess(processes[0]!, expectedProcess)) {
+      throw new Error("runner process changed during startup observation");
+    }
     const sameName = registrations.filter((registration) => registration.name === RUNNER_NAME);
     const exact = sameName.find((registration) => registration.id === exactRunnerId) ?? null;
     if (
@@ -1843,20 +1911,17 @@ async function waitForRunnerReady(
     ) {
       throw new Error("GitHub runner registration changed during startup observation");
     }
-    const process = processes.length === 1 ? processes[0]! : null;
-    if (process !== null && exact.status === "online") {
+    if (exact.status === "offline") observedOffline = true;
+    if (exact.status === "online" && observedOffline) {
       // Sandwich the control-plane observation between two exact local reads.
       // A Listener that exits or is replaced while GitHub is queried cannot
       // satisfy the final conjunction.
       const after = await host.runningInstances(installDir);
       requireValidRunnerProcesses(after);
-      const sameProcess = after.length === 1 && after.some(
-        (instance) =>
-          instance.pid === process.pid &&
-          instance.executablePath.toLowerCase() === process.executablePath.toLowerCase() &&
-          instance.startedAt === process.startedAt,
-      );
-      if (sameProcess) return { process, registration: exact };
+      if (after.length !== 1 || !sameRunnerProcess(after[0]!, expectedProcess)) {
+        throw new Error("runner process changed during startup observation");
+      }
+      return { process: after[0]!, registration: exact };
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   } while (Date.now() < deadline);
@@ -1871,6 +1936,8 @@ async function finalizeRunnerReadiness(
   github: RunnerGitHub,
   result: RunnerActionResult,
   exactRunnerId: number | null,
+  expectedProcess: RunnerProcess | null,
+  requireFreshOnlineTransition: boolean,
   redact: (text: string) => string,
 ): Promise<RunnerActionResult> {
   if (!result.ok) return result;
@@ -1884,13 +1951,22 @@ async function finalizeRunnerReadiness(
     }, redact);
   }
   try {
+    const process = await waitForRunnerProcess(
+      deps.host,
+      runnerInstallDir(state),
+      expectedProcess,
+      deps.startObservationTimeoutMs,
+      deps.startObservationIntervalMs,
+    );
     await waitForRunnerReady(
       deps.host,
       github,
       runnerInstallDir(state),
       exactRunnerId,
-      deps.startObservationTimeoutMs,
-      deps.startObservationIntervalMs,
+      process,
+      requireFreshOnlineTransition,
+      deps.readinessObservationTimeoutMs,
+      deps.readinessObservationIntervalMs,
     );
     return result;
   } catch (error) {
@@ -1939,6 +2015,8 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
   const sensitive: Array<string | null> = [];
   const redact = makeRedactor(sensitive);
   let readinessRunnerId: number | null = null;
+  let readinessProcess: RunnerProcess | null = null;
+  let readinessRequiresFreshOnlineTransition = false;
   const mutation = await executeRunnerMutation(state, "install", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const doctor = await deps.doctor(state);
@@ -1958,6 +2036,7 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
     requireRunnerBinding(observation.configured, observation.config, RUNNER_REPOSITORY);
     if (isInstalledAndHealthy(observation, spec)) {
       readinessRunnerId = observation.config!.agentId;
+      readinessProcess = observation.processes[0]!;
       return {
         ok: true,
         action: "install",
@@ -2074,7 +2153,9 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
     markMutationBoundary();
     await writeRunnerRecord(state, record);
     changes.push("wrote canonical runner record");
+    readinessProcess = keptProcess;
     if (keptProcess === null) {
+      readinessRequiresFreshOnlineTransition = registration.status === "online";
       markMutationBoundary();
       await deps.scheduler.start(spec);
       changes.push("started scheduled task");
@@ -2090,7 +2171,16 @@ export async function installRunner(state: SharedState, overrides: RunnerDeps = 
       },
     };
   });
-  return finalizeRunnerReadiness(state, deps, github, mutation, readinessRunnerId, redact);
+  return finalizeRunnerReadiness(
+    state,
+    deps,
+    github,
+    mutation,
+    readinessRunnerId,
+    readinessProcess,
+    readinessRequiresFreshOnlineTransition,
+    redact,
+  );
 }
 
 export async function enableRunner(state: SharedState, overrides: RunnerDeps = {}): Promise<RunnerActionResult> {
@@ -2098,6 +2188,8 @@ export async function enableRunner(state: SharedState, overrides: RunnerDeps = {
   const github = resolveGitHub(state, deps, overrides);
   const redact = makeRedactor([]);
   let readinessRunnerId: number | null = null;
+  let readinessProcess: RunnerProcess | null = null;
+  let readinessRequiresFreshOnlineTransition = false;
   const mutation = await executeRunnerMutation(state, "enable", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const observation = await observeRunner(state, deps, github);
@@ -2137,6 +2229,7 @@ export async function enableRunner(state: SharedState, overrides: RunnerDeps = {
     if (!registration.kept) throw new Error("exact GitHub runner registration is missing; run `agents runner repair`");
     readinessRunnerId = registration.kept.id;
     const processes = await reconcileProcesses(deps.host, observation.processes, markMutationBoundary);
+    readinessProcess = processes.kept;
     const changes: string[] = [];
     if (registration.removed.length > 0) changes.push(`removed duplicate registrations ${registration.removed.join(",")}`);
     if (processes.stopped.length > 0) changes.push(`stopped duplicate processes ${processes.stopped.join(",")}`);
@@ -2158,6 +2251,7 @@ export async function enableRunner(state: SharedState, overrides: RunnerDeps = {
       changes.push("updated runner record");
     }
     if (processes.kept === null) {
+      readinessRequiresFreshOnlineTransition = registration.kept.status === "online";
       markMutationBoundary();
       await deps.scheduler.start(spec);
       changes.push("started scheduled task");
@@ -2170,7 +2264,16 @@ export async function enableRunner(state: SharedState, overrides: RunnerDeps = {
       details: { task: RUNNER_SCHEDULED_TASK, changes },
     };
   });
-  return finalizeRunnerReadiness(state, deps, github, mutation, readinessRunnerId, redact);
+  return finalizeRunnerReadiness(
+    state,
+    deps,
+    github,
+    mutation,
+    readinessRunnerId,
+    readinessProcess,
+    readinessRequiresFreshOnlineTransition,
+    redact,
+  );
 }
 
 export async function disableRunner(state: SharedState, overrides: RunnerDeps = {}): Promise<RunnerActionResult> {
@@ -2226,6 +2329,8 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
   const sensitive: Array<string | null> = [];
   const redact = makeRedactor(sensitive);
   let readinessRunnerId: number | null = null;
+  let readinessProcess: RunnerProcess | null = null;
+  let readinessRequiresFreshOnlineTransition = false;
   const mutation = await executeRunnerMutation(state, "repair", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const doctor = await deps.doctor(state);
@@ -2363,6 +2468,7 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
     record.enabled = true;
     const recordChanged = existing === null || JSON.stringify(record) !== originalRecord;
     const shouldStart = keptProcess === null;
+    readinessProcess = keptProcess;
     if (recordChanged || changed.length > 0 || shouldStart) {
       record.lastRepairedAt = deps.now().toISOString();
       markMutationBoundary();
@@ -2370,6 +2476,7 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
       changed.push("wrote canonical runner record");
     }
     if (shouldStart) {
+      readinessRequiresFreshOnlineTransition = registration.status === "online";
       markMutationBoundary();
       await deps.scheduler.start(spec);
       changed.push("started scheduled task");
@@ -2382,7 +2489,16 @@ export async function repairRunner(state: SharedState, overrides: RunnerDeps = {
       details: { runnerId: record.runnerId, repairs: changed },
     };
   });
-  return finalizeRunnerReadiness(state, deps, github, mutation, readinessRunnerId, redact);
+  return finalizeRunnerReadiness(
+    state,
+    deps,
+    github,
+    mutation,
+    readinessRunnerId,
+    readinessProcess,
+    readinessRequiresFreshOnlineTransition,
+    redact,
+  );
 }
 
 /**
@@ -2397,6 +2513,8 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
   const redact = makeRedactor([]);
   let runHandle: RunnerRunHandle | null = null;
   let readinessRunnerId: number | null = null;
+  let readinessProcess: RunnerProcess | null = null;
+  let readinessRequiresFreshOnlineTransition = false;
   const preflight = await executeRunnerMutation(state, "run", redact, async (markMutationBoundary) => {
     requireWindows(deps);
     const observation = await observeRunner(state, deps, github);
@@ -2439,6 +2557,7 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
     readinessRunnerId = registration.kept.id;
     const processes = await reconcileProcesses(deps.host, observation.processes, markMutationBoundary);
     if (processes.kept !== null) {
+      readinessProcess = processes.kept;
       return {
         ok: true,
         action: "run",
@@ -2452,6 +2571,7 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
         },
       };
     }
+    readinessRequiresFreshOnlineTransition = registration.kept.status === "online";
     const env = {
       ...canonicalChildEnvironment(),
       AGENTS_HOME: state.stateDir,
@@ -2468,6 +2588,7 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
       deps.startObservationTimeoutMs,
       deps.startObservationIntervalMs,
     );
+    readinessProcess = started.process;
     return {
       ok: true,
       action: "run",
@@ -2487,13 +2608,22 @@ export async function runRunner(state: SharedState, overrides: RunnerDeps = {}):
   let ready: Awaited<ReturnType<typeof waitForRunnerReady>>;
   try {
     if (readinessRunnerId === null) throw new Error("runner readiness identity was not retained across the mutation boundary");
+    const process = await waitForRunnerProcess(
+      deps.host,
+      runnerInstallDir(state),
+      readinessProcess,
+      deps.startObservationTimeoutMs,
+      deps.startObservationIntervalMs,
+    );
     ready = await waitForRunnerReady(
       deps.host,
       github,
       runnerInstallDir(state),
       readinessRunnerId,
-      deps.startObservationTimeoutMs,
-      deps.startObservationIntervalMs,
+      process,
+      readinessRequiresFreshOnlineTransition,
+      deps.readinessObservationTimeoutMs,
+      deps.readinessObservationIntervalMs,
     );
   } catch (error) {
     if (completedHandle !== null) {

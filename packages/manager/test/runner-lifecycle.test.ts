@@ -191,6 +191,9 @@ function makeKit(options: {
       const task = tasks.get(identity.name);
       if (task) task.state = "Running";
       if (task && hostState.instances.length === 0) hostState.instances.push(runnerProcess(6000));
+      for (const runner of serverRunners) {
+        if (runner.name === RUNNER_NAME) runner.status = "online";
+      }
     },
   };
 
@@ -251,7 +254,7 @@ function makeKit(options: {
         id: runnerId,
         name: configureOptions.name,
         os: "windows",
-        status: "online",
+        status: "offline",
         busy: false,
         labels: [...configureOptions.labels],
       });
@@ -270,6 +273,11 @@ function makeKit(options: {
       for (const instance of instances) {
         const index = hostState.instances.findIndex((candidate) => candidate.pid === instance.pid);
         if (index >= 0) hostState.instances.splice(index, 1);
+      }
+      if (hostState.instances.length === 0) {
+        for (const runner of serverRunners) {
+          if (runner.name === RUNNER_NAME) runner.status = "offline";
+        }
       }
     },
     async run() {
@@ -673,6 +681,7 @@ describe("runner enable and disable", () => {
       runnerProcess(900, { startedAt: "2026-07-14T09:00:00.000Z" }),
       runnerProcess(1, { startedAt: "2026-07-14T10:00:00.000Z" }),
     ];
+    kit.serverRunners[0]!.status = "online";
     kit.githubCalls.length = 0;
     kit.hostCalls.length = 0;
     kit.schedulerCalls.length = 0;
@@ -948,6 +957,250 @@ describe("runner repair", () => {
 });
 
 describe("runner lifecycle start postconditions", () => {
+  test("success: a new task Listener can reconnect beyond the local-start horizon", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    expect((await disableRunner(state, kit.deps)).ok).toBe(true);
+    const baseScheduler = kit.deps.scheduler!;
+    const baseGitHub = kit.deps.github!;
+    let started = false;
+    let readinessReads = 0;
+    const scheduler: RunnerScheduler = {
+      ...baseScheduler,
+      async start(identity) {
+        await baseScheduler.start(identity);
+        kit.serverRunners[0]!.status = "offline";
+        started = true;
+      },
+    };
+    const github: RunnerGitHub = {
+      ...baseGitHub,
+      async listRunners(repo) {
+        const rows = await baseGitHub.listRunners(repo);
+        if (!started) return rows;
+        readinessReads += 1;
+        const status = readinessReads < 5 ? "offline" : "online";
+        return rows.map((runner) => ({ ...runner, status }));
+      },
+    };
+    kit.githubCalls.length = 0;
+    kit.hostCalls.length = 0;
+    kit.schedulerCalls.length = 0;
+
+    const result = await enableRunner(state, {
+      ...kit.deps,
+      scheduler,
+      github,
+      startObservationTimeoutMs: 3,
+      startObservationIntervalMs: 1,
+      readinessObservationTimeoutMs: 100,
+      readinessObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.changed).toBe(true);
+    expect(readinessReads).toBe(5);
+    expect(kit.schedulerCalls.filter((call) => call === `start:${RUNNER_SCHEDULED_TASK}`)).toHaveLength(1);
+    expect(kit.hostCalls).toEqual([]);
+    expect(kit.githubCalls.every((call) => call === "listRunners")).toBe(true);
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
+  });
+
+  test("success: repeated enable waits for a reconnecting Listener beyond the local-start horizon", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.serverRunners[0]!.status = "offline";
+    const baseGitHub = kit.deps.github!;
+    let listReads = 0;
+    let readinessReads = 0;
+    const github: RunnerGitHub = {
+      ...baseGitHub,
+      async listRunners(repo) {
+        const rows = await baseGitHub.listRunners(repo);
+        listReads += 1;
+        if (listReads === 1) return rows.map((runner) => ({ ...runner, status: "offline" }));
+        readinessReads += 1;
+        const status = readinessReads < 5 ? "offline" : "online";
+        return rows.map((runner) => ({ ...runner, status }));
+      },
+    };
+    kit.githubCalls.length = 0;
+    kit.hostCalls.length = 0;
+    kit.schedulerCalls.length = 0;
+
+    const result = await enableRunner(state, {
+      ...kit.deps,
+      github,
+      startObservationTimeoutMs: 3,
+      startObservationIntervalMs: 1,
+      readinessObservationTimeoutMs: 100,
+      readinessObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.changed).toBe(false);
+    expect(readinessReads).toBe(5);
+    expect(kit.schedulerCalls).toEqual([]);
+    expect(kit.hostCalls).toEqual([]);
+    expect(kit.githubCalls.every((call) => call === "listRunners")).toBe(true);
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
+  });
+
+  test("edge-input: a new Listener cannot inherit stale online truth from the terminated session", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    expect((await disableRunner(state, kit.deps)).ok).toBe(true);
+    kit.serverRunners[0]!.status = "online";
+    const baseScheduler = kit.deps.scheduler!;
+    const baseGitHub = kit.deps.github!;
+    let started = false;
+    let readinessReads = 0;
+    const scheduler: RunnerScheduler = {
+      ...baseScheduler,
+      async start(identity) {
+        await baseScheduler.start(identity);
+        started = true;
+      },
+    };
+    const github: RunnerGitHub = {
+      ...baseGitHub,
+      async listRunners(repo) {
+        const rows = await baseGitHub.listRunners(repo);
+        if (!started) return rows.map((runner) => ({ ...runner, status: "online" }));
+        readinessReads += 1;
+        const status = readinessReads === 1 ? "online" : readinessReads === 2 ? "offline" : "online";
+        return rows.map((runner) => ({ ...runner, status }));
+      },
+    };
+    kit.githubCalls.length = 0;
+    kit.hostCalls.length = 0;
+    kit.schedulerCalls.length = 0;
+
+    const result = await enableRunner(state, {
+      ...kit.deps,
+      scheduler,
+      github,
+      readinessObservationTimeoutMs: 100,
+      readinessObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.changed).toBe(true);
+    expect(readinessReads).toBe(3);
+    expect(kit.schedulerCalls.filter((call) => call === `start:${RUNNER_SCHEDULED_TASK}`)).toHaveLength(1);
+    expect(kit.hostCalls).toEqual([]);
+    expect(kit.githubCalls.every((call) => call === "listRunners")).toBe(true);
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
+  });
+
+  test("denied-failure: remote readiness stays bounded without restart or re-registration", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    expect((await disableRunner(state, kit.deps)).ok).toBe(true);
+    const baseScheduler = kit.deps.scheduler!;
+    const baseGitHub = kit.deps.github!;
+    let started = false;
+    let readinessReads = 0;
+    const scheduler: RunnerScheduler = {
+      ...baseScheduler,
+      async start(identity) {
+        await baseScheduler.start(identity);
+        started = true;
+      },
+    };
+    const github: RunnerGitHub = {
+      ...baseGitHub,
+      async listRunners(repo) {
+        const rows = await baseGitHub.listRunners(repo);
+        if (!started) return rows;
+        readinessReads += 1;
+        return rows.map((runner) => ({ ...runner, status: "offline" }));
+      },
+    };
+    kit.githubCalls.length = 0;
+    kit.hostCalls.length = 0;
+    kit.schedulerCalls.length = 0;
+
+    const result = await enableRunner(state, {
+      ...kit.deps,
+      scheduler,
+      github,
+      startObservationTimeoutMs: 3,
+      startObservationIntervalMs: 1,
+      readinessObservationTimeoutMs: 20,
+      readinessObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(true);
+    expect(result.details.partialMutation).toBe(true);
+    expect(result.issues).toEqual([
+      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+    ]);
+    expect(readinessReads).toBeGreaterThan(1);
+    expect(kit.schedulerCalls.filter((call) => call === `start:${RUNNER_SCHEDULED_TASK}`)).toHaveLength(1);
+    expect(kit.hostCalls).toEqual([]);
+    expect(kit.githubCalls.every((call) => call === "listRunners")).toBe(true);
+    expect(kit.hostState.instances).toEqual([runnerProcess(6000)]);
+  });
+
+  test("denied-failure: readiness never transfers from Listener A to replacement Listener B", async () => {
+    const { state } = await freshState();
+    const kit = makeKit();
+    expect((await installRunner(state, kit.deps)).ok).toBe(true);
+    kit.serverRunners[0]!.status = "offline";
+    const first = runnerProcess(6000);
+    const replacement = runnerProcess(6001);
+    const baseHost = kit.deps.host!;
+    const baseGitHub = kit.deps.github!;
+    let hostReads = 0;
+    let githubReads = 0;
+    const host: RunnerHost = {
+      ...baseHost,
+      async runningInstances() {
+        hostReads += 1;
+        return hostReads < 4 ? [{ ...first }] : [{ ...replacement }];
+      },
+    };
+    const github: RunnerGitHub = {
+      ...baseGitHub,
+      async listRunners(repo) {
+        const rows = await baseGitHub.listRunners(repo);
+        githubReads += 1;
+        const status = githubReads < 3 ? "offline" : "online";
+        return rows.map((runner) => ({ ...runner, status }));
+      },
+    };
+    kit.githubCalls.length = 0;
+    kit.hostCalls.length = 0;
+    kit.schedulerCalls.length = 0;
+
+    const result = await enableRunner(state, {
+      ...kit.deps,
+      host,
+      github,
+      startObservationTimeoutMs: 20,
+      startObservationIntervalMs: 1,
+      readinessObservationTimeoutMs: 100,
+      readinessObservationIntervalMs: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(false);
+    expect(result.issues).toEqual(["runner process changed during startup observation"]);
+    expect(hostReads).toBe(4);
+    expect(githubReads).toBe(3);
+    expect(kit.schedulerCalls).toEqual([]);
+    expect(kit.hostCalls).toEqual([]);
+    expect(kit.githubCalls.every((call) => call === "listRunners")).toBe(true);
+    expect(kit.hostState.instances).toEqual([first]);
+    expect(kit.serverRunners).toHaveLength(1);
+  });
+
   test("install, enable, and repair never trust stale Task Scheduler Running state without a Listener", async () => {
     for (const action of ["install", "enable", "repair"] as const) {
       const { state } = await freshState();
@@ -971,20 +1224,25 @@ describe("runner lifecycle start postconditions", () => {
         scheduler,
         startObservationTimeoutMs: 20,
         startObservationIntervalMs: 2,
+        readinessObservationTimeoutMs: 500,
+        readinessObservationIntervalMs: 20,
       };
 
+      const startedAt = Date.now();
       const result = action === "install"
         ? await installRunner(state, deps)
         : action === "enable"
           ? await enableRunner(state, deps)
           : await repairRunner(state, deps);
+      const elapsedMs = Date.now() - startedAt;
 
       expect(result.ok, action).toBe(false);
       expect(result.changed, action).toBe(true);
       expect(result.details.partialMutation, action).toBe(true);
       expect(result.issues, action).toEqual([
-        "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+        "runner host start postcondition timed out before its process became observable",
       ]);
+      expect(elapsedMs, action).toBeLessThan(300);
       expect(kit.schedulerCalls, action).toEqual([`start:${RUNNER_SCHEDULED_TASK}`]);
       expect(kit.hostState.instances, action).toEqual([]);
     }
@@ -1065,7 +1323,7 @@ describe("runner lifecycle start postconditions", () => {
     expect(result.ok).toBe(false);
     expect(result.changed).toBe(true);
     expect(result.issues).toEqual([
-      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+      "runner process changed during startup observation",
     ]);
   });
 
@@ -1096,7 +1354,7 @@ describe("runner lifecycle start postconditions", () => {
     expect(result.ok).toBe(false);
     expect(result.changed).toBe(false);
     expect(result.issues).toEqual([
-      "runner readiness postcondition timed out before one exact Listener and its sole registration were online",
+      "runner process changed during startup observation",
     ]);
     expect(stopCalls).toBe(0);
   });
@@ -1108,6 +1366,7 @@ describe("runner lifecycle start postconditions", () => {
     expect((await disableRunner(state, kit.deps)).ok).toBe(true);
     let childPromise: Promise<Awaited<ReturnType<typeof runRunner>>> | null = null;
     let deps!: RunnerDeps;
+    const baseHost = kit.deps.host!;
     const scheduler: RunnerScheduler = {
       ...kit.deps.scheduler!,
       async start(identity) {
@@ -1119,6 +1378,14 @@ describe("runner lifecycle start postconditions", () => {
     deps = {
       ...kit.deps,
       scheduler,
+      host: {
+        ...baseHost,
+        async run(dir, env) {
+          const handle = await baseHost.run(dir, env);
+          kit.serverRunners[0]!.status = "online";
+          return handle;
+        },
+      },
       startObservationTimeoutMs: 500,
       startObservationIntervalMs: 2,
     };
@@ -4191,9 +4458,18 @@ describe("runner run (supervised host)", () => {
     const kit = makeKit();
     expect((await installRunner(state, kit.deps)).ok).toBe(true);
     kit.hostState.instances = [];
+    kit.serverRunners[0]!.status = "offline";
     kit.hostCalls.length = 0;
+    const baseHost = kit.deps.host!;
+    const deps = withHostOverrides(kit, {
+      async run(dir, env) {
+        const handle = await baseHost.run(dir, env);
+        kit.serverRunners[0]!.status = "online";
+        return handle;
+      },
+    });
 
-    const result = await runRunner(state, kit.deps);
+    const result = await runRunner(state, deps);
 
     expect(result).toMatchObject({ ok: true, action: "run", changed: true, details: { exitCode: 0 } });
     expect(kit.hostCalls).toEqual(["run"]);
@@ -4205,6 +4481,7 @@ describe("runner run (supervised host)", () => {
     const kit = makeKit();
     expect((await installRunner(state, kit.deps)).ok).toBe(true);
     kit.hostState.instances = [];
+    kit.serverRunners[0]!.status = "offline";
     const process = runnerProcess(7331);
     let timer: ReturnType<typeof setTimeout> | null = null;
     let terminateCalls = 0;
@@ -4330,41 +4607,47 @@ describe("runner run (supervised host)", () => {
     const kit = makeKit();
     expect((await installRunner(state, kit.deps)).ok).toBe(true);
     kit.hostState.instances = [];
+    kit.serverRunners[0]!.status = "offline";
     let runCalls = 0;
     let releaseRun!: () => void;
     const runGate = new Promise<void>((resolve) => {
       releaseRun = resolve;
     });
-    const deps = withHostOverrides(kit, {
-      run: async (): Promise<RunnerRunHandle> => {
-        runCalls += 1;
-        const process = runnerProcess(7000 + runCalls);
-        // Model the Listener becoming observable shortly after spawn. The
-        // lifecycle lock must remain held until that exact identity is seen.
-        await Bun.sleep(30);
-        kit.hostState.instances.push(process);
-        return {
-          process,
-          exited: runGate.then(() => {
-            kit.hostState.instances = kit.hostState.instances.filter(
-              (candidate) =>
-                candidate.pid !== process.pid ||
-                candidate.executablePath.toLowerCase() !== process.executablePath.toLowerCase() ||
-                candidate.startedAt !== process.startedAt,
-            );
-            return 0;
-          }),
-          async terminate() {
-            kit.hostState.instances = kit.hostState.instances.filter(
-              (candidate) =>
-                candidate.pid !== process.pid ||
-                candidate.executablePath.toLowerCase() !== process.executablePath.toLowerCase() ||
-                candidate.startedAt !== process.startedAt,
-            );
-          },
-        };
-      },
-    });
+    const deps: RunnerDeps = {
+      ...withHostOverrides(kit, {
+        run: async (): Promise<RunnerRunHandle> => {
+          runCalls += 1;
+          const process = runnerProcess(7000 + runCalls);
+          // Model the Listener becoming observable shortly after spawn. The
+          // lifecycle lock must remain held until that exact identity is seen.
+          await Bun.sleep(30);
+          kit.hostState.instances.push(process);
+          kit.serverRunners[0]!.status = "online";
+          return {
+            process,
+            exited: runGate.then(() => {
+              kit.hostState.instances = kit.hostState.instances.filter(
+                (candidate) =>
+                  candidate.pid !== process.pid ||
+                  candidate.executablePath.toLowerCase() !== process.executablePath.toLowerCase() ||
+                  candidate.startedAt !== process.startedAt,
+              );
+              return 0;
+            }),
+            async terminate() {
+              kit.hostState.instances = kit.hostState.instances.filter(
+                (candidate) =>
+                  candidate.pid !== process.pid ||
+                  candidate.executablePath.toLowerCase() !== process.executablePath.toLowerCase() ||
+                  candidate.startedAt !== process.startedAt,
+              );
+            },
+          };
+        },
+      }),
+      readinessObservationTimeoutMs: 500,
+      readinessObservationIntervalMs: 2,
+    };
 
     const firstPromise = runRunner(state, deps);
     for (let attempt = 0; attempt < 100 && runCalls === 0; attempt += 1) await Bun.sleep(5);
