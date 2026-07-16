@@ -814,7 +814,8 @@ test("submodule gitlink admission accepts both REST representations and rejects 
   const cases = [
     ["current file representation", { type: "file", sha, submodule_git_url: "git://github.com/marius-patrik/Child.git" }, false],
     ["legacy submodule representation", { type: "submodule", sha }, false],
-    ["plain file", { type: "file", sha }, true]
+    ["plain file", { type: "file", sha }, true],
+    ["malformed submodule sha", { type: "submodule", sha: "not-a-commit" }, true]
   ] as const;
 
   for (const [label, response, missing] of cases) {
@@ -1050,6 +1051,7 @@ test("report mode routes issue writes to target authority and contents writes on
   assert.ok(admission.planned_actions.some((action: { action: string }) => action.action === "retire-legacy-audit-issues"));
   assert.ok(admission.actions.some((action: { action: string; state: string }) => action.action === "retire-legacy-audit-issues" && action.state === "admitted"));
   assert.ok(completion.actions.some((action: { action: string }) => action.action === "create-repair-issue"));
+  assert.equal(completion.publication_status, "complete");
 });
 
 test("ledger failure leaves legacy aggregate audit issues untouched", async () => {
@@ -1148,6 +1150,51 @@ test("completion ledger records legacy retirement after admitted issue mutations
   assert.equal(report.actions.at(-1).action, "write-doctor-ledger");
 });
 
+test("partial completion ledger records confirmed issue mutations before a later write fails", async () => {
+  let creates = 0;
+  const failureSentinel = "SECOND_MUTATION_FAILURE_SENTINEL";
+  const { gh: targetGh } = mockGh((method, requestPath) => {
+    if (method === "GET" && requestPath.includes("/labels?")) {
+      return doctor.DOCTOR_REPORT_LABEL_NAMES.map((name) => ({ name }));
+    }
+    if (method === "GET" && requestPath.includes("issues?state=all")) return [];
+    if (method === "POST" && requestPath === "/repos/marius-patrik/DarkFactory/issues") {
+      creates += 1;
+      if (creates === 1) return { number: 71, html_url: "https://example.test/71" };
+      throw Object.assign(new Error(failureSentinel), { status: 500 });
+    }
+    throw new Error(`unexpected ${method} ${requestPath}`);
+  });
+  const { gh: ledgerGh, calls: ledgerCalls } = mockGh((method) => {
+    if (method === "GET") throw notFound();
+    if (method === "PUT") return {};
+    throw new Error(`unexpected ledger method ${method}`);
+  });
+  const report = {
+    mode: "report",
+    trigger: "test",
+    source_refs: {},
+    findings: [
+      doctor.doctorFinding("first-confirmed", "health", "first"),
+      doctor.doctorFinding("second-fails", "health", "second")
+    ],
+    observations: [],
+    actions: [],
+    token_usage: { model_calls: 0 }
+  };
+
+  await assert.rejects(() => doctor.publishDoctorReport(targetGh, ledgerGh, repo, report), new RegExp(failureSentinel));
+
+  const writes = ledgerCalls.filter((call) => call.method === "PUT");
+  assert.equal(writes.length, 2);
+  const ledgers = writes.map((call) => JSON.parse(Buffer.from((call.body as { content: string }).content, "base64").toString("utf8")));
+  const completion = ledgers.find((ledger) => ledger.phase === "completion");
+  assert.equal(completion.publication_status, "partial");
+  assert.ok(completion.actions.some((action: { action: string; finding?: string }) => action.action === "create-repair-issue" && action.finding === "first-confirmed"));
+  assert.equal(completion.actions.some((action: { finding?: string }) => action.finding === "second-fails"), false);
+  assert.doesNotMatch(JSON.stringify(completion), new RegExp(failureSentinel));
+});
+
 test("report issue reconciliation is marker-idempotent and closes resolved findings", async () => {
   const current = doctor.doctorFinding("current-drift", "branch policy", "current");
   const existing = { number: 7, state: "open", body: "<!-- df-doctor:marius-patrik-darkfactory:current-drift -->", user: { login: "mp-agents[bot]" }, html_url: "https://example.test/7" };
@@ -1219,7 +1266,7 @@ test("live DarkFactory App actor creates, updates, then closes one stable issue 
   assert.equal(issues.length, 1);
 
   const closed = await doctor.reconcileDoctorIssues(gh, repo, []);
-  assert.deepEqual(closed.map((action) => action.action), ["close-resolved-repair-issue"]);
+  assert.deepEqual(closed.map((action) => action.action), ["comment-resolved-repair-issue", "close-resolved-repair-issue"]);
   assert.equal(issues[0].state, "closed");
   assert.equal(calls.filter((call) => call.method === "POST" && call.path === "/repos/marius-patrik/DarkFactory/issues").length, 1);
 });

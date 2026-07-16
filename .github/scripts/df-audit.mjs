@@ -220,9 +220,31 @@ export async function publishDoctorReport(github, ledgerGithub, repository, repo
   const issues = await listDoctorIssues(github, repository, "all");
   const plannedActions = planDoctorReportActions(report.findings);
   report.actions.push(await writeDoctorLedger(ledgerGithub, repository, report, { phase: "admission", plannedActions }));
-  report.actions.push(...await reconcileDoctorIssues(github, repository, report.findings, issues));
-  report.actions.push(...await retireLegacyAuditIssues(github, repository, issues));
-  report.actions.push(await writeDoctorLedger(ledgerGithub, repository, report, { phase: "completion", plannedActions }));
+  let mutationError = null;
+  try {
+    await reconcileDoctorIssues(github, repository, report.findings, issues, report.actions);
+    await retireLegacyAuditIssues(github, repository, issues, report.actions);
+  } catch (error) {
+    mutationError = error;
+  }
+
+  let completionError = null;
+  try {
+    report.actions.push(await writeDoctorLedger(ledgerGithub, repository, report, {
+      phase: "completion",
+      plannedActions,
+      publicationStatus: mutationError ? "partial" : "complete"
+    }));
+  } catch (error) {
+    completionError = error;
+  }
+  if (mutationError) {
+    if (completionError) {
+      throw new Error("Repository-doctor target publication failed and its completion ledger could not be written.", { cause: mutationError });
+    }
+    throw mutationError;
+  }
+  if (completionError) throw completionError;
   return report;
 }
 
@@ -1452,8 +1474,9 @@ function isTrustedDoctorActor(issue) {
   return DOCTOR_ISSUE_AUTHORS.has(issue?.user?.login || issue?.author?.login || "");
 }
 
-export async function reconcileDoctorIssues(github, repository, findings, enumeratedIssues) {
-  const actions = [];
+export async function reconcileDoctorIssues(github, repository, findings, enumeratedIssues, recordedActions = []) {
+  const actions = recordedActions;
+  if (!Array.isArray(actions)) throw new Error("Repository-doctor action recorder must be an array.");
   const issues = enumeratedIssues || await listDoctorIssues(github, repository, "all");
   const prefix = `df-doctor:${slug(repoName(repository))}:`;
   const expected = new Set(findings.map((finding) => `${prefix}${finding.id}`));
@@ -1482,6 +1505,7 @@ export async function reconcileDoctorIssues(github, repository, findings, enumer
     for (const duplicate of matches.slice(1)) {
       if (duplicate.state === "open") {
         await github.request("POST", `/repos/${repoName(repository)}/issues/${duplicate.number}/comments`, { body: `Closing duplicate doctor marker; canonical issue is #${existing.number}.` });
+        actions.push({ action: "comment-duplicate-repair-issue", issue: issueRef(duplicate) });
         await github.request("PATCH", `/repos/${repoName(repository)}/issues/${duplicate.number}`, { state: "closed" });
         actions.push({ action: "close-duplicate-repair-issue", issue: issueRef(duplicate) });
       }
@@ -1492,6 +1516,7 @@ export async function reconcileDoctorIssues(github, repository, findings, enumer
     if (expected.has(marker)) continue;
     for (const issue of matches.filter((item) => item.state === "open")) {
       await github.request("POST", `/repos/${repoName(repository)}/issues/${issue.number}/comments`, { body: "Repository doctor no longer detects this stable finding ID." });
+      actions.push({ action: "comment-resolved-repair-issue", issue: issueRef(issue) });
       await github.request("PATCH", `/repos/${repoName(repository)}/issues/${issue.number}`, { state: "closed" });
       actions.push({ action: "close-resolved-repair-issue", issue: issueRef(issue) });
     }
@@ -1500,12 +1525,14 @@ export async function reconcileDoctorIssues(github, repository, findings, enumer
   return actions;
 }
 
-export async function retireLegacyAuditIssues(github, repository, enumeratedIssues) {
-  const actions = [];
+export async function retireLegacyAuditIssues(github, repository, enumeratedIssues, recordedActions = []) {
+  const actions = recordedActions;
+  if (!Array.isArray(actions)) throw new Error("Repository-doctor action recorder must be an array.");
   const issues = enumeratedIssues || await listDoctorIssues(github, repository, "all");
   const legacy = issues.filter((issue) => issue.state === "open" && isTrustedDoctorActor(issue) && findAuditMarker(issue.body || "") === `df-audit:${slug(repoName(repository))}`);
   for (const issue of legacy) {
     await github.request("POST", `/repos/${repoName(repository)}/issues/${issue.number}/comments`, { body: "Superseded by the per-finding repository doctor ([marius-patrik/DarkFactory#12](https://github.com/marius-patrik/DarkFactory/issues/12)); all replacement findings use stable `df-doctor:` markers." });
+    actions.push({ action: "comment-legacy-audit-issue", issue: issueRef(issue) });
     await github.request("PATCH", `/repos/${repoName(repository)}/issues/${issue.number}`, { state: "closed" });
     actions.push({ action: "close-legacy-audit-issue", issue: issueRef(issue) });
   }
@@ -1523,6 +1550,7 @@ async function writeDoctorLedger(ledgerGithub, repository, report, options) {
     source_refs: report.source_refs,
     findings: report.findings,
     observations: report.observations,
+    publication_status: phase === "admission" ? "admitted" : (options.publicationStatus || "complete"),
     actions: phase === "admission"
       ? options.plannedActions.map((action) => ({ ...action, state: "admitted" }))
       : report.actions,
@@ -1767,7 +1795,7 @@ async function getSubmoduleCommit(github, repository, submodulePath, branch) {
     const data = await github.request("GET", `/repos/${repoName(repository)}/contents/${encodePath(submodulePath)}?ref=${encodeURIComponent(branch)}`);
     const legacySubmodule = data?.type === "submodule";
     const currentSubmodule = data?.type === "file" && typeof data?.submodule_git_url === "string" && Boolean(data.submodule_git_url.trim());
-    return (legacySubmodule || currentSubmodule) && typeof data.sha === "string" ? data.sha : null;
+    return (legacySubmodule || currentSubmodule) && /^[0-9a-f]{40}$/i.test(data?.sha || "") ? data.sha : null;
   } catch (error) {
     if (error.status === 403 || error.status === 404) return null;
     throw error;
