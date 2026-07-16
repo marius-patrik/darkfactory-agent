@@ -96,6 +96,105 @@ test("managed registration refuses a green-looking review from the wrong App", a
   assert.equal(calls.includes("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"), false);
 });
 
+test("managed registration admits a complete stable multi-page check inventory", async () => {
+  const calls: string[] = [];
+  const result = await convergeManagedRegistration(fixtureGithub(calls, {
+    repositories: { "marius-patrik/Andromeda": { state: "active" } },
+    registrationCheckPage(page, headSha) {
+      if (page === 1) {
+        return {
+          total_count: 102,
+          check_runs: greenRegistrationChecks(headSha, 100, 100)
+        };
+      }
+      if (page === 2) {
+        return {
+          total_count: 102,
+          check_runs: requiredRegistrationChecks(headSha)
+        };
+      }
+      throw new Error(`unexpected registration check page ${page}`);
+    }
+  }), TARGET);
+
+  assert.equal(result.sourceActive, true);
+  assert.equal(calls.filter((route) => route === "GET /repos/{owner}/{repo}/commits/{ref}/check-runs").length, 4);
+  assert.equal(calls.includes("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"), true);
+});
+
+test("managed registration rejects a truncated check page before direct merge", async () => {
+  const calls: string[] = [];
+  await assert.rejects(
+    convergeManagedRegistration(fixtureGithub(calls, {
+      repositories: { "marius-patrik/Andromeda": { state: "active" } },
+      registrationCheckPage(page, headSha) {
+        assert.equal(page, 1);
+        return {
+          total_count: 3,
+          check_runs: requiredRegistrationChecks(headSha)
+        };
+      }
+    }), TARGET),
+    (error: unknown) => error instanceof ManagedRegistrationTrustViolation
+      && /inventory ended before its declared total/.test(error.message)
+  );
+  assert.equal(calls.includes("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"), false);
+});
+
+test("managed registration rejects check total drift during pagination", async () => {
+  const calls: string[] = [];
+  await assert.rejects(
+    convergeManagedRegistration(fixtureGithub(calls, {
+      repositories: { "marius-patrik/Andromeda": { state: "active" } },
+      registrationCheckPage(page, headSha) {
+        if (page === 1) {
+          return {
+            total_count: 101,
+            check_runs: [...requiredRegistrationChecks(headSha), ...greenRegistrationChecks(headSha, 98, 100)]
+          };
+        }
+        if (page === 2) {
+          return {
+            total_count: 102,
+            check_runs: greenRegistrationChecks(headSha, 1, 1_000)
+          };
+        }
+        throw new Error(`unexpected registration check page ${page}`);
+      }
+    }), TARGET),
+    (error: unknown) => error instanceof ManagedRegistrationTrustViolation
+      && /check total changed during pagination/.test(error.message)
+  );
+  assert.equal(calls.includes("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"), false);
+});
+
+test("managed registration rejects duplicate check ids across pages", async () => {
+  const calls: string[] = [];
+  await assert.rejects(
+    convergeManagedRegistration(fixtureGithub(calls, {
+      repositories: { "marius-patrik/Andromeda": { state: "active" } },
+      registrationCheckPage(page, headSha) {
+        if (page === 1) {
+          return {
+            total_count: 101,
+            check_runs: [...requiredRegistrationChecks(headSha), ...greenRegistrationChecks(headSha, 98, 100)]
+          };
+        }
+        if (page === 2) {
+          return {
+            total_count: 101,
+            check_runs: [greenRegistrationCheck(headSha, 10, "Validate")]
+          };
+        }
+        throw new Error(`unexpected registration check page ${page}`);
+      }
+    }), TARGET),
+    (error: unknown) => error instanceof ManagedRegistrationTrustViolation
+      && /duplicate check id/.test(error.message)
+  );
+  assert.equal(calls.includes("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"), false);
+});
+
 test("managed registration resumes branch-only partial mutations and creates the missing pull request", async () => {
   for (const [label, branchHead, branchContent] of [
     ["branch-created", MAIN_SHA, undefined],
@@ -295,6 +394,10 @@ interface FixtureOptions {
   driftBodyAfterRefUpdate?: boolean;
   registrationChecks?: "pending" | "green" | "red" | "wrong-app";
   registrationReviewCheck?: "DarkFactory Autoreview" | "Codex Review";
+  registrationCheckPage?: (page: number, headSha: string) => {
+    total_count: number;
+    check_runs: Record<string, unknown>[];
+  };
   onWrite?: (parameters: Record<string, unknown>) => void;
   onCreateCommit?: (parameters: Record<string, unknown>) => void;
   onUpdateRef?: (parameters: Record<string, unknown>) => void;
@@ -435,6 +538,9 @@ function fixtureGithub(calls: string[], options: FixtureOptions) {
         return { data: { author: { login: "darkfactory-agent[bot]", type: "Bot" } } };
       }
       if (route === "GET /repos/{owner}/{repo}/commits/{ref}/check-runs") {
+        if (options.registrationCheckPage) {
+          return { data: options.registrationCheckPage(Number(parameters.page), branchHead) };
+        }
         if (options.registrationChecks === undefined || options.registrationChecks === "pending") {
           return { data: { total_count: 0, check_runs: [] } };
         }
@@ -506,6 +612,32 @@ function fixtureGithub(calls: string[], options: FixtureOptions) {
       throw new Error(`unexpected route ${route}`);
     }
   };
+}
+
+function greenRegistrationCheck(headSha: string, id: number, name: string): Record<string, unknown> {
+  return {
+    id,
+    name,
+    head_sha: headSha,
+    status: "completed",
+    conclusion: "success",
+    app: { id: 15368 }
+  };
+}
+
+function greenRegistrationChecks(headSha: string, count: number, firstId: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, index) => greenRegistrationCheck(
+    headSha,
+    firstId + index,
+    `Supplemental ${firstId + index}`
+  ));
+}
+
+function requiredRegistrationChecks(headSha: string): Record<string, unknown>[] {
+  return [
+    greenRegistrationCheck(headSha, 10, "Validate"),
+    greenRegistrationCheck(headSha, 11, "DarkFactory Autoreview")
+  ];
 }
 
 function managedTargetEntry(): Record<string, unknown> {

@@ -437,6 +437,8 @@ async function readRegistrationCheckRuns(
   headSha: string
 ): Promise<RegistrationCheckRun[]> {
   const checks: RegistrationCheckRun[] = [];
+  const seenIds = new Set<number>();
+  let expectedTotal: number | null = null;
   for (let page = 1; page <= 10; page += 1) {
     const payload = record((await github.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
       ...repository,
@@ -448,6 +450,15 @@ async function readRegistrationCheckRuns(
     const rawChecks = array(payload.check_runs, "managed registration check run list");
     if (!Number.isInteger(payload.total_count) || payload.total_count < 0) {
       throw new ManagedRegistrationTrustViolation("managed registration check total is malformed");
+    }
+    const pageTotal = Number(payload.total_count);
+    if (expectedTotal === null) {
+      expectedTotal = pageTotal;
+    } else if (pageTotal !== expectedTotal) {
+      throw new ManagedRegistrationTrustViolation("managed registration check total changed during pagination");
+    }
+    if (rawChecks.length > 100 || checks.length + rawChecks.length > expectedTotal) {
+      throw new ManagedRegistrationTrustViolation("managed registration check inventory exceeds its declared total");
     }
     for (const raw of rawChecks) {
       const check = record(raw, "managed registration check run");
@@ -463,9 +474,16 @@ async function readRegistrationCheckRuns(
       if (!Number.isInteger(normalized.id) || normalized.id <= 0 || normalized.headSha !== headSha) {
         throw new ManagedRegistrationTrustViolation("managed registration check identity is malformed or stale");
       }
+      if (seenIds.has(normalized.id)) {
+        throw new ManagedRegistrationTrustViolation("managed registration check inventory contains a duplicate check id");
+      }
+      seenIds.add(normalized.id);
       checks.push(normalized);
     }
-    if (rawChecks.length < 100 || checks.length >= payload.total_count) return checks;
+    if (checks.length === expectedTotal) return checks;
+    if (rawChecks.length < 100) {
+      throw new ManagedRegistrationTrustViolation("managed registration check inventory ended before its declared total");
+    }
   }
   throw new ManagedRegistrationTrustViolation("managed registration check inventory exceeded its bounded complete scan");
 }
