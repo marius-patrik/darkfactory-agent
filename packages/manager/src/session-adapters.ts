@@ -454,7 +454,7 @@ export function attestAgyNativeInvocation(launch: NativeCliLaunch): NativeInvoca
   };
 }
 
-/** Reconstruct Claude authority exclusively from its exact native flags and stdin transport. */
+/** Reconstruct Claude read-only authority exclusively from its exact native flags and stdin transport. */
 export function attestClaudeNativeInvocation(launch: NativeCliLaunch): NativeInvocationAttestation {
   const args = launch.providerArgs;
   if (!launch.stdinPiped || args[0] !== "--print" || args[1] !== "--model") {
@@ -476,7 +476,9 @@ export function attestClaudeNativeInvocation(launch: NativeCliLaunch): NativeInv
   }
   if (
     args[cursor] !== "--permission-mode" ||
+    args[cursor + 1] !== "plan" ||
     args[cursor + 2] !== "--tools" ||
+    args[cursor + 3] !== "Read,Glob,Grep" ||
     args[cursor + 4] !== "--no-session-persistence" ||
     args[cursor + 5] !== "--output-format" ||
     args[cursor + 6] !== "json" ||
@@ -484,16 +486,7 @@ export function attestClaudeNativeInvocation(launch: NativeCliLaunch): NativeInv
   ) {
     throw new Error("Claude native invocation receipt is malformed");
   }
-  const permissionMode = args[cursor + 1];
-  const tools = args[cursor + 3];
-  const executionPolicy =
-    permissionMode === "plan" && tools === "Read,Glob,Grep"
-      ? "read-only"
-      : permissionMode === "acceptEdits" && tools === "Read,Glob,Grep,Edit,Write"
-        ? "workspace-write"
-        : null;
-  if (!executionPolicy) throw new Error("Claude native invocation receipt is malformed");
-  return { executionPolicy, model, effort };
+  return { executionPolicy: "read-only", model, effort };
 }
 
 export function buildProviderArgs(
@@ -515,16 +508,17 @@ export function buildProviderArgs(
 
   switch (provider) {
     case "claude": {
-      const permissionMode = executionPolicy === "read-only" ? "plan" : "acceptEdits";
-      const tools = executionPolicy === "read-only" ? "Read,Glob,Grep" : "Read,Glob,Grep,Edit,Write";
+      if (executionPolicy === "workspace-write") {
+        throw new Error("Claude workspace-write is unsupported without a manager-owned physical containment boundary");
+      }
       return [
         "--print",
         ...modelArgs,
         ...effortArgs,
         "--permission-mode",
-        permissionMode,
+        "plan",
         "--tools",
-        tools,
+        "Read,Glob,Grep",
         "--no-session-persistence",
         "--output-format",
         "json",

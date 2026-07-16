@@ -78,12 +78,14 @@ model still matches the canonical model, and keep the same receipt. Missing,
 malformed, conflicting, or model-mismatched receipts fail before launch; an
 ACP resume failure never falls back to `session/new`. Read-only turns select
 Kimi's `plan` mode. Workspace-write turns select `manual` mode, advertise the
-ACP client filesystem boundary, and service bounded create/update operations
-through manager-owned, identity-pinned file handles. Provider-side pathname
-writes are never granted. The manager re-attests physical containment at open
-and mutation time; shell execution, delete/move operations, linked-path escapes,
-hard links, and all permission requests are denied. ACP control requests have a
-30-second deadline, prompts have a
+ACP client filesystem boundary, and service bounded replacement operations on
+existing regular files through manager-owned, identity-pinned file handles.
+New-file creation is denied before the OS opens a target, because portable
+pathname creation cannot prove parent identity atomically. Provider-side
+pathname writes are never granted. The manager re-attests physical containment
+at open and mutation time; shell execution, create/delete/move operations,
+linked-path escapes, hard links, and all permission requests are denied. ACP
+control requests have a 30-second deadline, prompts have a
 10-minute deadline, and process exit plus stderr draining use bounded one-second
 cleanup windows; an expired phase terminates the provider and records only a
 sanitized timeout failure.
@@ -264,6 +266,11 @@ to Codex with the Sol preset, and `max` to Claude with the Fable preset. The
 concrete model and pinned provider executable come only from canonical Agent OS
 state. A caller cannot override the provider, model, agent preset, executable,
 registry, fallback, or TUI.
+
+Claude's max route currently admits `read-only` only. Its pinned native CLI has
+no completed-turn or manager-owned physical-worktree containment proof for
+Edit/Write, so `max` plus `workspace-write` fails before provider spawn instead
+of claiming unsupported write authority.
 
 Model tier and model effort are independent axes. Every invocation must also
 declare either `read-only` or `workspace-write`; the provider adapter must attest

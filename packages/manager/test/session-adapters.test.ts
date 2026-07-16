@@ -212,22 +212,9 @@ describe("provider CLI session arguments", () => {
     ]);
     expect(codex.join(" ")).not.toContain(implementation.prompt);
 
-    const claude = buildProviderArgs("claude", "claude-fable-5", implementation, current);
-    expect(claude).toEqual([
-      "--print",
-      "--model",
-      "claude-fable-5",
-      "--effort",
-      "high",
-      "--permission-mode",
-      "acceptEdits",
-      "--tools",
-      "Read,Glob,Grep,Edit,Write",
-      "--no-session-persistence",
-      "--output-format",
-      "json",
-    ]);
-    expect(claude.join(" ")).not.toContain(implementation.prompt);
+    expect(() => buildProviderArgs("claude", "claude-fable-5", implementation, current)).toThrow(
+      "workspace-write is unsupported without a manager-owned physical containment boundary",
+    );
 
     const lowEffort = buildProviderArgs(
       "agy",
@@ -1164,6 +1151,34 @@ describe("provider-native execution-policy evidence", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("Claude workspace-write fails closed before a provider turn without physical containment", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-claude-workspace-denied-"));
+    const stateDir = path.join(root, ".agents");
+    const userHome = path.join(root, "user-home");
+    const restore = withDisposableHome(stateDir, userHome);
+    try {
+      const state = sharedStateAt(root, stateDir, userHome);
+      await seedCanonicalStartup(state, stateDir);
+      const binary = await fakeClaudeJsonBinary(stateDir);
+      const descriptor = await createSession(state, {
+        provider: "claude",
+        model: "claude-fable-5",
+        mode: "task",
+        workdir: root,
+      });
+      await expect(
+        runSessionTurn(state, claudeSessionAdapter(binary), descriptor, {
+          prompt: "Attempt a workspace write.",
+          effort: "high",
+          executionPolicy: "workspace-write",
+        }),
+      ).rejects.toThrow("workspace-write is unsupported without a manager-owned physical containment boundary");
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 interface FakeKimiAcpCapture {
@@ -1554,7 +1569,7 @@ describe("managed Kimi native continuation (issue #254)", () => {
     }
   }, 30_000);
 
-  test("workspace filesystem edge: manager-owned ACP write can create a new in-worktree file", async () => {
+  test("workspace filesystem denied: missing-target creation has no pre-attestation side effect", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-kimi-acp-escape-"));
     const stateDir = path.join(root, ".agents");
     const userHome = path.join(root, "user-home");
@@ -1573,14 +1588,15 @@ describe("managed Kimi native continuation (issue #254)", () => {
         mode: "task",
         workdir: root,
       });
-      const result = await runSessionTurn(state, kimiSessionAdapter(binary), descriptor, {
-        prompt: "Create a managed file.",
-        executionPolicy: "workspace-write",
-      });
-      expect(result.resolvedExecutionPolicy).toBe("workspace-write");
+      await expect(
+        runSessionTurn(state, kimiSessionAdapter(binary), descriptor, {
+          prompt: "Attempt to create a managed file.",
+          executionPolicy: "workspace-write",
+        }),
+      ).rejects.toThrow("outside managed containment");
       const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
       expect(captured.responses.find((response) => response.id === 901)).toMatchObject({ result: {} });
-      expect(await readFile(target, "utf8")).toBe("created safely\n");
+      expect(await stat(target).catch(() => null)).toBeNull();
     } finally {
       restore();
       await rm(root, { recursive: true, force: true });

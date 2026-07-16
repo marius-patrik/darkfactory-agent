@@ -514,6 +514,21 @@ export async function executeModelRequest(
       await reservation.commit(finalReceipt);
       return { ok: false, content, sessionId, receipt: finalReceipt };
     }
+    // The pinned Claude CLI proves max-tier read-only through its native plan
+    // flags, but exposes no completed-turn or manager-owned physical boundary
+    // for Edit/Write. Keep that capability explicit and fail before spawning a
+    // provider rather than converting requested write authority into a receipt.
+    if (route.provider === "claude" && executionPolicy === "workspace-write") {
+      finalReceipt = blockedReceipt(
+        tier,
+        effort,
+        route,
+        safeVersion,
+        "execution_policy_unsupported",
+      );
+      await reservation.commit(finalReceipt);
+      return { ok: false, content, sessionId, receipt: finalReceipt };
+    }
 
     let executed: { outcome: ManagedProviderOutcome; sessionId: string };
     try {

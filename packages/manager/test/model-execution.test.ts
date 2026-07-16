@@ -276,6 +276,21 @@ describe("canonical model execution route and receipt", () => {
     expect(result.receipt.blockReason).toBe("execution_policy_unsupported");
   });
 
+  test("Claude workspace-write is an explicit unsupported capability and never spawns max", async () => {
+    const { root, state, receiptDir } = await fixture();
+    const captured: Parameters<typeof successfulDependencies>[0] = [];
+    const result = await executeModelRequest(
+      state,
+      request(root, receiptDir, "max", "high", "workspace-write"),
+      successfulDependencies(captured),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.content).toBe("");
+    expect(result.sessionId).toBeNull();
+    expect(result.receipt.blockReason).toBe("execution_policy_unsupported");
+    expect(captured).toEqual([]);
+  });
+
   test("reserves a blocked receipt before any provider turn starts", async () => {
     const { root, state, receiptDir } = await fixture();
     const input = request(root, receiptDir, "high", "high", "workspace-write");

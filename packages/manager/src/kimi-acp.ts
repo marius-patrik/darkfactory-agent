@@ -240,7 +240,6 @@ interface WorkspaceFileLocation {
   lexicalRoot: string;
   lexicalTarget: string;
   physicalRoot: string;
-  exists: boolean;
 }
 
 interface FileIdentity {
@@ -263,7 +262,6 @@ function sameFile(left: FileIdentity, right: FileIdentity): boolean {
 async function workspaceFileLocation(
   workdir: string,
   candidate: string,
-  allowMissingTarget: boolean,
 ): Promise<WorkspaceFileLocation | null> {
   if (!path.isAbsolute(candidate) || candidate.includes("\0")) return null;
   const lexicalRoot = path.resolve(workdir);
@@ -285,10 +283,7 @@ async function workspaceFileLocation(
       throw error;
     });
     const isTarget = index === components.length - 1;
-    if (!info) {
-      if (!isTarget || !allowMissingTarget) return null;
-      return { lexicalRoot, lexicalTarget, physicalRoot, exists: false };
-    }
+    if (!info) return null;
     if (info.isSymbolicLink()) return null;
     if (isTarget) {
       if (!info.isFile() || info.nlink !== 1) return null;
@@ -298,21 +293,21 @@ async function workspaceFileLocation(
     const physical = await realpath(cursor).catch(() => null);
     if (!physical || !containsPath(physicalRoot, physical)) return null;
   }
-  return { lexicalRoot, lexicalTarget, physicalRoot, exists: true };
+  return { lexicalRoot, lexicalTarget, physicalRoot };
 }
 
 async function openWorkspaceFile(
   workdir: string,
   candidate: string,
-  options: { write: boolean; create: boolean },
+  options: { write: boolean },
 ): Promise<FileHandle> {
-  const location = await workspaceFileLocation(workdir, candidate, options.create);
+  const location = await workspaceFileLocation(workdir, candidate);
   if (!location) throw new KimiContinuityError("Kimi ACP filesystem request escaped managed containment");
-  const handle = await open(
-    location.lexicalTarget,
-    location.exists ? (options.write ? "r+" : "r") : "wx+",
-    0o600,
-  );
+  // Existing files only: opening a missing target by pathname could create an
+  // unauthorized file if a parent were swapped after admission but before the
+  // OS resolves open(). Existing-file open has no mutation side effect; the
+  // physical post-open checks below run before any truncate/write.
+  const handle = await open(location.lexicalTarget, options.write ? "r+" : "r");
   try {
     // Mutation happens only through this pinned handle. Re-admit the physical
     // file after open and compare the named entry to close pathname TOCTOU: a
@@ -357,7 +352,7 @@ async function readWorkspaceTextFile(
   ) {
     throw new KimiContinuityError("Kimi ACP filesystem request is malformed");
   }
-  const handle = await openWorkspaceFile(workdir, params.path, { write: false, create: false });
+  const handle = await openWorkspaceFile(workdir, params.path, { write: false });
   try {
     const info = await handle.stat({ bigint: true });
     if (info.size > BigInt(MAX_ACP_INPUT_LINE_CHARS)) {
@@ -391,7 +386,7 @@ async function writeWorkspaceTextFile(
   ) {
     throw new KimiContinuityError("Kimi ACP filesystem request is not authorized");
   }
-  const handle = await openWorkspaceFile(workdir, params.path, { write: true, create: true });
+  const handle = await openWorkspaceFile(workdir, params.path, { write: true });
   try {
     await handle.truncate(0);
     await handle.writeFile(params.content, "utf8");
