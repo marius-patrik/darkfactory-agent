@@ -293,5 +293,46 @@ export async function pinAdapter(
 
   const registration = await inspectProviderExecutable(id, binary, version);
   await writeProviderRegistration(state, registration);
+  await writeGlobalWrapper(state, id, binary);
   return registration;
+}
+
+async function writeGlobalWrapper(state: SharedState, id: CliId, binary: string) {
+  const binDir = path.join(state.stateDir, "bin");
+  if (!fs.existsSync(binDir)) {
+    await fs.promises.mkdir(binDir, { recursive: true });
+  }
+
+  if (process.platform === "win32") {
+    const agentsScript = path.join(binDir, "agents.ps1");
+    const wrapperPath = path.join(binDir, `${id}.ps1`);
+    const wrapperContent = [
+      `$ErrorActionPreference = 'Stop'`,
+      `$envOutput = & "${agentsScript}" cli env ${id}`,
+      `foreach ($line in $envOutput) {`,
+      `    if ($line -match '^([^=]+)=(.*)$') {`,
+      `        [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")`,
+      `    }`,
+      `}`,
+      `$binary = "${binary}"`,
+      `if (Test-Path $binary) {`,
+      `    & $binary @args`,
+      `    exit $LASTEXITCODE`,
+      `} else {`,
+      `    Write-Error "Pinned executable not found: $binary"`,
+      `    exit 1`,
+      `}`,
+    ].join("\r\n");
+    await fs.promises.writeFile(wrapperPath, wrapperContent, "utf8");
+  } else {
+    const agentsScript = path.join(binDir, "agents");
+    const wrapperPath = path.join(binDir, id);
+    const wrapperContent = [
+      `#!/usr/bin/env bash`,
+      `set -e`,
+      `eval "$("${agentsScript}" cli env ${id} | while read line; do echo "export $line"; done)"`,
+      `exec "${binary}" "$@"`,
+    ].join("\n");
+    await fs.promises.writeFile(wrapperPath, wrapperContent, { encoding: "utf8", mode: 0o755 });
+  }
 }
