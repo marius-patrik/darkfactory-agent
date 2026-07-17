@@ -215,6 +215,13 @@ describe("route probe CLI regression triplet", () => {
             capabilityTier: "high",
             reason: "provider_unavailable",
           },
+          {
+            candidateIndex: 2,
+            provider: "claude",
+            agentPreset: "Fable",
+            capabilityTier: "max",
+            reason: "model_missing",
+          },
         ],
       });
       expect(await pathExists(kimiHome)).toBe(false);

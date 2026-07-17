@@ -327,6 +327,7 @@ describe("model execution CLI prompt boundary", () => {
     expect(receipt.routing.primary).toMatchObject({ provider: "codex", model: "gpt-5.6-sol" });
     expect(receipt.routing.skipped).toEqual([
       expect.objectContaining({ provider: "codex", reason: "provider_unpinned" }),
+      expect.objectContaining({ provider: "claude", reason: "model_missing" }),
     ]);
     expect(receipt.resolved).toMatchObject({ provider: "unresolved", model: "unresolved" });
     expect(receipt.outcome).toBe("blocked");
@@ -503,6 +504,7 @@ describe("model execution CLI prompt boundary", () => {
     expect(receipt.routing.skipped.map(({ provider, reason }) => ({ provider, reason }))).toEqual([
       { provider: "kimi", reason: "provider_decommissioned" },
       { provider: "codex", reason: "provider_unpinned" },
+      { provider: "claude", reason: "model_missing" },
     ]);
     expect(receipt.resolved).toMatchObject({ provider: "unresolved", model: "unresolved" });
     expect(receipt.outcome).toBe("blocked");

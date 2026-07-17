@@ -255,7 +255,7 @@ describe("route resolution matrix", () => {
       await writeSessionConfig(state, {
         schemaVersion: 1,
         routePolicyVersion: "agent-os-tier-routes-v1",
-        providerModels: { kimi: ["kimi-standard"], codex: ["codex-reasoning"] },
+        providerModels: { kimi: ["kimi-standard"], codex: ["codex-reasoning"], claude: ["claude-reasoning"] },
       });
       const report = await runOrderedRouteProbe(
         state,
@@ -274,6 +274,7 @@ describe("route resolution matrix", () => {
       expect(report.routing.skipped.map(({ provider, reason }) => ({ provider, reason }))).toEqual([
         { provider: "kimi", reason: "provider_unpinned" },
         { provider: "codex", reason: "provider_unpinned" },
+        { provider: "claude", reason: "provider_unpinned" },
       ]);
     });
   });
@@ -298,6 +299,7 @@ describe("route resolution matrix", () => {
       expect(report.routing.skipped.map(({ provider, reason }) => ({ provider, reason }))).toEqual([
         { provider: "kimi", reason: "config_unavailable" },
         { provider: "codex", reason: "config_unavailable" },
+        { provider: "claude", reason: "config_unavailable" },
       ]);
     });
   });

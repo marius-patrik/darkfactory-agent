@@ -78,11 +78,15 @@ const AGENT_ROUTE_POLICY_VALUE: AgentRoutePolicy = {
       candidates: [
         { provider: "kimi", agentPreset: "Kimi", capabilityTier: "medium" },
         { provider: "codex", agentPreset: "Sol", capabilityTier: "high" },
+        { provider: "claude", agentPreset: "Fable", capabilityTier: "max" },
       ],
     },
     high: {
       capabilityFloor: "high",
-      candidates: [{ provider: "codex", agentPreset: "Sol", capabilityTier: "high" }],
+      candidates: [
+        { provider: "codex", agentPreset: "Sol", capabilityTier: "high" },
+        { provider: "claude", agentPreset: "Fable", capabilityTier: "max" },
+      ],
     },
     max: {
       capabilityFloor: "max",

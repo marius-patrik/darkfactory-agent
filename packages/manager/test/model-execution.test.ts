@@ -325,7 +325,7 @@ describe("canonical model execution route and receipt", () => {
 
     expect(result.ok).toBe(false);
     expect(result.sessionId).toBeNull();
-    expect(doctors).toEqual(["codex"]);
+    expect(doctors).toEqual(["codex", "claude"]);
     expect(executions).toBe(0);
     expect(result.receipt.blockReason).toBe("provider_unpinned");
     expect(result.receipt.resolved).toEqual({
@@ -337,6 +337,7 @@ describe("canonical model execution route and receipt", () => {
     expect(result.receipt.routing.skipped.map(({ provider, reason }) => ({ provider, reason }))).toEqual([
       { provider: "kimi", reason: "provider_decommissioned" },
       { provider: "codex", reason: "provider_unpinned" },
+      { provider: "claude", reason: "provider_unpinned" },
     ]);
   });
 
@@ -538,6 +539,13 @@ describe("canonical model execution route and receipt", () => {
         provider: "codex",
         model: "gpt-5.6-sol",
         agentPreset: "Sol",
+        providerVersion: "1.2.3",
+        reason: "provider_unverified",
+      },
+      {
+        provider: "claude",
+        model: "claude-fable-5",
+        agentPreset: "Fable",
         providerVersion: "1.2.3",
         reason: "provider_unverified",
       },
