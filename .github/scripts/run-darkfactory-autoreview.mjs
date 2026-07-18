@@ -187,6 +187,18 @@ function ensureContextBounded(value, policy) {
   return value;
 }
 
+export function serializeUntrustedContext(value) {
+  return JSON.stringify(value, null, 2).replaceAll("<", "\\u003c");
+}
+
+export function serializePullReviewContext(value, policy) {
+  return ensureContextBounded(serializeUntrustedContext(value), policy);
+}
+
+export function serializeIssueReviewContext(value, policy) {
+  return ensureContextBounded(serializeUntrustedContext(value), policy);
+}
+
 function htmlEscape(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -652,7 +664,7 @@ export async function createPullRequestTarget({
     );
     const baseGitlinks = exactGitlinkManifest(repoRoot, "refs/remotes/origin/df-base", token, hooksRoot);
     const headGitlinks = exactGitlinkManifest(repoRoot, "refs/remotes/origin/df-head", token, hooksRoot);
-    const reviewContext = ensureContextBounded(JSON.stringify({
+    const reviewContext = serializePullReviewContext({
       target: {
         kind: "pull_request",
         repository: repoName(repository),
@@ -666,7 +678,7 @@ export async function createPullRequestTarget({
       linkedIssues,
       diff: pullDiff(repoRoot, token, hooksRoot),
       reviewedFiles: changed.reviewedFiles
-    }, null, 2), policy);
+    }, policy);
     return {
       kind: "pull_request",
       repository: repoName(repository),
@@ -842,7 +854,7 @@ export async function createIssueTarget({
       const dependency = await gh.request("GET", `/repos/${repoName(repository)}/issues/${referenced}`);
       dependencies.push({ number: referenced, state: dependency.state, title: dependency.title || "", body: dependency.body || "" });
     }
-    const reviewContext = ensureContextBounded(JSON.stringify({
+    const reviewContext = serializeIssueReviewContext({
       target: {
         kind: "issue",
         repository: repoName(repository),
@@ -858,7 +870,7 @@ export async function createIssueTarget({
       comments: comments.map((comment) => ({ id: comment.id, authorAssociation: comment.author_association || "", body: comment.body || "", createdAt: comment.created_at })),
       referencedIssues: dependencies,
       openIssueIndex: issueIndex
-    }, null, 2), policy);
+    }, policy);
     return {
       kind: "issue",
       repository: repoName(repository),
