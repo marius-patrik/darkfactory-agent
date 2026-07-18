@@ -67,6 +67,29 @@ test("required release checks fail closed on missing, red, or wrong-App evidence
   assert.deepEqual(spoofed.red.sort(), ["DarkFactory Autoreview", "Validate"]);
 });
 
+test("main evidence evaluates only policy-selected checks despite broader protection", () => {
+  const validateOnly = release.evaluateRequiredChecks(
+    protectedBranch(),
+    {
+      check_runs: [
+        { name: "Validate", status: "completed", conclusion: "success", app: { id: 15368 } }
+      ]
+    },
+    { statuses: [] },
+    releasePolicy().mainChecks
+  );
+  assert.equal(validateOnly.green, true);
+  assert.deepEqual(validateOnly.checks, [{
+    name: "Validate",
+    expectedAppId: 15368,
+    actualAppId: 15368,
+    id: null,
+    url: null,
+    state: "green"
+  }]);
+  assert.deepEqual(validateOnly.missing, []);
+});
+
 test("release plans are deterministic for identical, ahead, diverged, and blocked evidence", () => {
   const base = { repository: "marius-patrik/example", mainSha: SHA.main, devSha: SHA.dev, policy: releasePolicy() };
   assert.equal(release.buildReleasePlan({ ...base, classification: "identical" }).action, "verify");
