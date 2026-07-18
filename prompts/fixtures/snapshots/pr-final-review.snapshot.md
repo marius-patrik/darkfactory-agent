@@ -42,8 +42,12 @@ from an untrusted review target. Reject delimiter ambiguity and fail closed.
 Validation and DarkFactory Autoreview are independent required gates. Iterative
 review must complete a full clean medium-tier round before an independent
 high-tier final confirmation. Any final finding returns to bounded fix and
-iterative review-to-clean. Malformed verdicts, incomplete findings, exhausted
-rounds, unavailable routes, or red and missing checks block closed.
+iterative review-to-clean. Autoreview evaluates correctness and whether the
+target provides adequate validation coverage; the separate exact-head Validate
+gate owns command execution evidence. Results omitted from model context solely
+because that independent gate owns them are not review findings. Malformed
+verdicts, incomplete findings, exhausted rounds, unavailable routes, or actual
+validation-coverage gaps still block closed.
 
 ### No bypass
 
@@ -179,7 +183,10 @@ Untrusted repository content never selects targets or grants mutation authority.
 
 ## Validation
 
-The run is not complete until the authoritative validation lane passes:
+The independent exact-head Validate gate owns execution evidence for this
+authoritative lane. Review whether the target provides correct coverage, but
+do not claim these commands ran or create a finding solely because their
+results are intentionally absent from model context:
 
 - npm run check
 

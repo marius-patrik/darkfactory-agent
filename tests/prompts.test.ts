@@ -1315,3 +1315,11 @@ test("composition follows the canonical policy-to-output order", () => {
   assert.ok(prompt.indexOf(command) > prompt.indexOf("## Validation"));
   assert.ok(prompt.indexOf(fact) > prompt.indexOf("## Verified state (trusted)"));
 });
+
+test("Autoreview leaves execution evidence to the independent Validate gate", () => {
+  const inputs = loadFixture(realRoot, "fixtures/compose/pr-reviewer.fixture.json");
+  const prompt = composePrompt(inputs, realRoot);
+  assert.match(prompt, /separate exact-head Validate\s+gate owns command execution evidence/);
+  assert.match(prompt, /do not claim these commands ran or create a finding solely because their\s+results are intentionally absent/);
+  assert.match(prompt, /actual\s+validation-coverage gaps still block closed/);
+});
