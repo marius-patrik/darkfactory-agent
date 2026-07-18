@@ -187,7 +187,15 @@ function ensureContextBounded(value, policy) {
 }
 
 export function serializeUntrustedContext(value) {
-  return JSON.stringify(value, null, 2).replaceAll("<", "\\u003c");
+  return Array.from(JSON.stringify(value, null, 2), (character) => {
+    if (!character.normalize("NFKC").includes("<")) return character;
+    const codePoint = character.codePointAt(0);
+    if (codePoint <= 0xffff) return `\\u${codePoint.toString(16).padStart(4, "0")}`;
+    const scalar = codePoint - 0x10000;
+    const high = 0xd800 + (scalar >> 10);
+    const low = 0xdc00 + (scalar & 0x3ff);
+    return `\\u${high.toString(16)}\\u${low.toString(16)}`;
+  }).join("");
 }
 
 export function serializePullReviewContext(value, policy) {
