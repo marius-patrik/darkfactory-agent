@@ -65,6 +65,70 @@ test("required release checks fail closed on missing, red, or wrong-App evidence
   const spoofed = release.evaluateRequiredChecks(protection, checkRuns("success", 1234), { statuses: [] }, releasePolicy().requiredChecks);
   assert.equal(spoofed.green, false);
   assert.deepEqual(spoofed.red.sort(), ["DarkFactory Autoreview", "Validate"]);
+
+  const externalProtection = structuredClone(protectedBranch());
+  externalProtection.required_status_checks.checks.push({ context: "Security Scan", app_id: 999 });
+  const externalRuns = checkRuns("success", 15368);
+  externalRuns.check_runs.push({
+    name: "Security Scan", status: "completed", conclusion: "success", app: { id: 999 }
+  });
+  const externalGreen = release.evaluateRequiredChecks(
+    externalProtection, externalRuns, { statuses: [] }, releasePolicy().requiredChecks
+  );
+  assert.equal(externalGreen.green, true);
+
+  const expectedExternalRun = externalRuns.check_runs.at(-1);
+  assert.ok(expectedExternalRun);
+  const wrongExternalRun = structuredClone(expectedExternalRun);
+  wrongExternalRun.app.id = 998;
+  for (const collision of [
+    [wrongExternalRun, expectedExternalRun],
+    [expectedExternalRun, wrongExternalRun]
+  ]) {
+    const collisionRuns = checkRuns("success", 15368);
+    collisionRuns.check_runs.push(...structuredClone(collision));
+    const collisionGreen = release.evaluateRequiredChecks(
+      externalProtection, collisionRuns, { statuses: [] }, releasePolicy().requiredChecks
+    );
+    assert.equal(collisionGreen.green, true);
+  }
+
+  const mismatchedExternalRuns = checkRuns("success", 15368);
+  mismatchedExternalRuns.check_runs.push(wrongExternalRun);
+  const externalMismatch = release.evaluateRequiredChecks(
+    externalProtection, mismatchedExternalRuns, { statuses: [] }, releasePolicy().requiredChecks
+  );
+  assert.equal(externalMismatch.green, false);
+  assert.deepEqual(externalMismatch.red, ["Security Scan"]);
+});
+
+test("main evidence evaluates only policy-selected checks despite broader protection", () => {
+  const observed = {
+    check_runs: [
+      { name: "Validate", status: "completed", conclusion: "success", app: { id: 15368 } }
+    ]
+  };
+  const protectedPull = release.evaluateRequiredChecks(
+    protectedBranch(), observed, { statuses: [] }, releasePolicy().mainChecks
+  );
+  assert.equal(protectedPull.green, false);
+  assert.deepEqual(protectedPull.missing, ["DarkFactory Autoreview"]);
+
+  const validateOnly = release.evaluatePolicySelectedChecks(
+    observed,
+    { statuses: [] },
+    releasePolicy().mainChecks
+  );
+  assert.equal(validateOnly.green, true);
+  assert.deepEqual(validateOnly.checks, [{
+    name: "Validate",
+    expectedAppId: 15368,
+    actualAppId: 15368,
+    id: null,
+    url: null,
+    state: "green"
+  }]);
+  assert.deepEqual(validateOnly.missing, []);
 });
 
 test("release plans are deterministic for identical, ahead, diverged, and blocked evidence", () => {
