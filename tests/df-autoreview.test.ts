@@ -30,6 +30,7 @@ const {
   parseChangedPaths,
   parseExactCommitRecord,
   parseGitTreeEntries,
+  runComposedTurn,
   serializeIssueReviewContext,
   serializePullReviewContext,
   trustedPullRevisionEvidence,
@@ -553,6 +554,74 @@ test("clean medium review is followed by an independent clean high confirmation"
     );
   }
   assert.equal(fixInputs.length, 0);
+});
+
+test("composed high review receives the exact trusted medium-clean fact only", async () => {
+  const snapshot = {
+    kind: "pull_request",
+    repository: "marius-patrik/DarkFactory",
+    number: 402,
+    version: "base:head",
+    defaultBranch: "main",
+    repositoryPaths: ["package.json", "src/index.ts", "tests/index.ts"],
+    author: "marius-patrik",
+    url: "https://github.com/marius-patrik/DarkFactory/pull/402",
+    title: "Bootstrap trusted medium-clean proof",
+    reviewContext: "Bounded bootstrap context.",
+    verifiedFacts: ["Exact fetched diff passed git diff --check."]
+  };
+  const request = { modelTier: "high", effort: "high", promptVersion: "darkfactory-autoreview-v1" };
+  const capturedIntents: any[] = [];
+  const modelTurnExecutor = async (input: any) => {
+    capturedIntents.push(input.intent);
+    return { output: clean(), receipt: receipt(input.request), prompt: prompt(input.request) };
+  };
+  const proof = {
+    schemaVersion: 1,
+    phase: "medium_review",
+    sequence: 3,
+    targetVersion: snapshot.version,
+    outcome: "clean"
+  };
+  const proofFacts = mediumCleanProofFact("high_review", snapshot, proof);
+
+  await runComposedTurn({
+    request: { ...request, modelTier: "medium" },
+    snapshot,
+    tempRoot: controlRoot,
+    turnName: "medium_review",
+    profile: "profile/pr-reviewer",
+    controlRevision: "a".repeat(40),
+    modelTurnExecutor
+  });
+  await runComposedTurn({
+    request,
+    snapshot,
+    tempRoot: controlRoot,
+    turnName: "high_review",
+    profile: "profile/pr-final-review",
+    additionalVerifiedFacts: proofFacts,
+    controlRevision: "a".repeat(40),
+    modelTurnExecutor
+  });
+
+  assert.equal(capturedIntents.length, 2);
+  assert.ok(!capturedIntents[0].verified.facts.includes(proofFacts[0]));
+  assert.ok(capturedIntents[1].verified.facts.includes(proofFacts[0]));
+  await assert.rejects(
+    runComposedTurn({
+      request,
+      snapshot,
+      tempRoot: controlRoot,
+      turnName: "high_review",
+      profile: "profile/pr-final-review",
+      additionalVerifiedFacts: [""],
+      controlRevision: "a".repeat(40),
+      modelTurnExecutor
+    }),
+    /Additional verified facts must be non-empty strings/
+  );
+  assert.equal(capturedIntents.length, 2, "malformed facts are rejected before model execution");
 });
 
 test("medium findings are losslessly carried into medium autofix before clean and high review", async () => {

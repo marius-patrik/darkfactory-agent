@@ -98,7 +98,8 @@ export async function runComposedTurn({
   findings = [],
   additionalVerifiedFacts = [],
   controlRevision = "",
-  environment = process.env
+  environment = process.env,
+  modelTurnExecutor = executeModelTurn
 }) {
   const [owner, repo] = snapshot.repository.split("/");
   const exactControlRevision = controlRevision || environment.DF_CONTROL_REVISION?.trim() || "";
@@ -118,7 +119,7 @@ export async function runComposedTurn({
   }
   let turn;
   try {
-    turn = await executeModelTurn(
+    turn = await modelTurnExecutor(
       {
         intent: {
           runId: `autoreview-${workItemKind}-${snapshot.number}-${seamTurnName}-${versionDigest}`,
