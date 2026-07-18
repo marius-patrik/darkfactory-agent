@@ -351,6 +351,19 @@ test("trusted revision evidence compacts bounded-depth octopus ancestry without 
   assert.match(evidence.facts[1], /boundedOut=true/);
   assert.ok(evidence.facts.every((fact: string) => Buffer.byteLength(fact, "utf8") <= 3500));
 
+  const malformedGit = (args: string[]) => {
+    if (args[0] === "rev-parse" && args[1] === "refs/remotes/origin/df-base") return base;
+    if (args[0] === "rev-parse" && args[1] === "refs/remotes/origin/df-head") return head;
+    if (args[0] === "rev-parse" && args[1].endsWith("^{tree}")) return "a".repeat(40);
+    if (args[0] === "merge-base") return base;
+    if (args[0] === "rev-list") return `${head} ${base} ${base}`;
+    throw new Error(`Unexpected git call: ${args.join(" ")}`);
+  };
+  assert.throws(
+    () => trustedPullRevisionEvidence("repo", "token", "hooks", [], malformedGit),
+    /invalid commit ancestry relationship/,
+  );
+
   let ordinaryGitCalls = 0;
   assert.equal(trustedPullRevisionEvidenceForPolicy(
     { engineAutomation: false },

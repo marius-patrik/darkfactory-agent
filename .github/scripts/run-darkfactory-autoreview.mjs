@@ -756,34 +756,29 @@ export function trustedPullRevisionEvidence(repoRoot, token, hooksRoot, changedP
   let reachedBase = false;
   let complete = false;
   let ancestryBoundedOut = false;
-  let ancestryFact = "bounded supplemental ancestry evidence unavailable";
-  try {
-    const ancestry = [];
-    const seen = new Set();
-    let cursor = head;
-    for (let depth = 0; cursor !== base && depth < FIRST_PARENT_PROOF_LIMIT; depth += 1) {
-      if (seen.has(cursor)) throw stableError("target_policy_blocked", "Git returned cyclic first-parent ancestry evidence");
-      seen.add(cursor);
-      const record = exactCommitRecord(repoRoot, cursor, token, hooksRoot, git);
-      if (record.commit !== cursor) throw stableError("target_policy_blocked", "Git ancestry record does not match the requested commit");
-      ancestry.push(record);
-      if (record.parents.length === 0) break;
-      cursor = record.parents[0];
-    }
-    reachedBase = cursor === base;
-    complete = reachedBase || ancestry.at(-1)?.parents.length === 0;
-    ancestryFact = ancestry.length === 0
-      ? "none (head equals base)"
-      : ancestry.map((record) => (
-        `commit=${record.commit},tree=${record.tree},parents=${record.parents.length > 0 ? record.parents.join(",") : "none"}`
-      )).join("; ");
-    if (Buffer.byteLength(ancestryFact, "utf8") > REVISION_FACT_BYTES) {
-      ancestryBoundedOut = true;
-      ancestryFact = "bounded supplemental ancestry evidence omitted because its serialized form exceeded the Autoreview fact limit";
-    }
-  } catch (error) {
-    if (error?.code !== "target_policy_blocked") throw error;
+  const ancestry = [];
+  const seen = new Set();
+  let cursor = head;
+  for (let depth = 0; cursor !== base && depth < FIRST_PARENT_PROOF_LIMIT; depth += 1) {
+    if (seen.has(cursor)) throw stableError("target_policy_blocked", "Git returned cyclic first-parent ancestry evidence");
+    seen.add(cursor);
+    const record = exactCommitRecord(repoRoot, cursor, token, hooksRoot, git);
+    if (record.commit !== cursor) throw stableError("target_policy_blocked", "Git ancestry record does not match the requested commit");
+    ancestry.push(record);
+    if (record.parents.length === 0) break;
+    cursor = record.parents[0];
+  }
+  reachedBase = cursor === base;
+  complete = reachedBase || ancestry.at(-1)?.parents.length === 0;
+  ancestryBoundedOut = !complete;
+  let ancestryFact = ancestry.length === 0
+    ? "none (head equals base)"
+    : ancestry.map((record) => (
+      `commit=${record.commit},tree=${record.tree},parents=${record.parents.length > 0 ? record.parents.join(",") : "none"}`
+    )).join("; ");
+  if (Buffer.byteLength(ancestryFact, "utf8") > REVISION_FACT_BYTES) {
     ancestryBoundedOut = true;
+    ancestryFact = "bounded supplemental ancestry evidence omitted because its serialized form exceeded the Autoreview fact limit";
   }
 
   const facts = [
