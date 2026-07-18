@@ -24,6 +24,15 @@ const DATA_REPOSITORIES = new Set([
 ]);
 const ACTIONS_APP_ID = 15368;
 const MAX_PAGINATION_PAGES = 100;
+const MAX_CHECK_RUNS = 2000;
+const MAX_COMMIT_STATUSES = 2000;
+const TRUSTED_POLICY_WORKFLOWS = Object.freeze({
+  "Validate": Object.freeze({ path: ".github/workflows/ci.yml", events: Object.freeze(["pull_request", "push"]) }),
+  "DarkFactory Autoreview": Object.freeze({
+    path: ".github/workflows/darkfactory-autoreview.yml",
+    events: Object.freeze(["pull_request_target", "workflow_dispatch"])
+  })
+});
 let gh;
 let ledgerGh;
 let controlRepo;
@@ -203,6 +212,83 @@ export function evaluatePolicySelectedChecks(checkRuns, statuses, policyChecks) 
       checks: policyChecks.map((context) => ({ context, app_id: ACTIONS_APP_ID }))
     }
   }, checkRuns, statuses, policyChecks);
+}
+
+export async function listCompleteCheckRuns(repository, sha) {
+  const checkRuns = [];
+  const seen = new Set();
+  let totalCount = null;
+  for (let page = 1; page <= MAX_PAGINATION_PAGES; page += 1) {
+    const payload = await gh.request(
+      "GET",
+      `/repos/${repoName(repository)}/commits/${sha}/check-runs?filter=latest&per_page=100&page=${page}`
+    );
+    if (!isRecord(payload)
+        || !Number.isSafeInteger(payload.total_count) || payload.total_count < 0 || payload.total_count > MAX_CHECK_RUNS
+        || !Array.isArray(payload.check_runs) || payload.check_runs.length > 100) {
+      throw new Error("release check-run inventory is malformed or exceeds the bounded limit");
+    }
+    totalCount ??= payload.total_count;
+    if (payload.total_count !== totalCount) throw new Error("release check-run inventory changed during pagination");
+    for (const run of payload.check_runs) {
+      if (!isRecord(run) || !Number.isSafeInteger(run.id) || run.id < 1 || seen.has(run.id)) {
+        throw new Error("release check-run inventory contains malformed or duplicate evidence");
+      }
+      seen.add(run.id);
+      checkRuns.push(run);
+    }
+    if (checkRuns.length > totalCount) throw new Error("release check-run inventory exceeds its declared total");
+    if (checkRuns.length === totalCount) return { total_count: totalCount, check_runs: checkRuns };
+    if (payload.check_runs.length < 100) throw new Error("release check-run inventory is truncated");
+  }
+  throw new Error("release check-run inventory exceeded the bounded page limit");
+}
+
+export async function listCompleteCommitStatuses(repository, sha) {
+  const statuses = [];
+  const seen = new Set();
+  let totalCount = null;
+  for (let page = 1; page <= MAX_PAGINATION_PAGES; page += 1) {
+    const payload = await gh.request(
+      "GET",
+      `/repos/${repoName(repository)}/commits/${sha}/status?per_page=100&page=${page}`
+    );
+    if (!isRecord(payload)
+        || !Number.isSafeInteger(payload.total_count) || payload.total_count < 0 || payload.total_count > MAX_COMMIT_STATUSES
+        || !Array.isArray(payload.statuses) || payload.statuses.length > 100) {
+      throw new Error("release commit-status inventory is malformed or exceeds the bounded limit");
+    }
+    totalCount ??= payload.total_count;
+    if (payload.total_count !== totalCount) throw new Error("release commit-status inventory changed during pagination");
+    for (const status of payload.statuses) {
+      if (!isRecord(status) || !Number.isSafeInteger(status.id) || status.id < 1 || seen.has(status.id)) {
+        throw new Error("release commit-status inventory contains malformed or duplicate evidence");
+      }
+      seen.add(status.id);
+      statuses.push(status);
+    }
+    if (statuses.length > totalCount) throw new Error("release commit-status inventory exceeds its declared total");
+    if (statuses.length === totalCount) return { ...payload, total_count: totalCount, statuses };
+    if (payload.statuses.length < 100) throw new Error("release commit-status inventory is truncated");
+  }
+  throw new Error("release commit-status inventory exceeded the bounded page limit");
+}
+
+export async function bindTrustedPolicyCheckRuns(repository, sha, payload, policyChecks) {
+  if (!isRecord(payload) || !Array.isArray(payload.check_runs)) {
+    throw new Error("release check-run inventory is malformed");
+  }
+  const selected = new Set(policyChecks);
+  const bound = [];
+  for (const checkRun of payload.check_runs) {
+    if (!selected.has(checkRun?.name) || checkRun?.app?.id !== ACTIONS_APP_ID) {
+      bound.push(checkRun);
+      continue;
+    }
+    const binding = TRUSTED_POLICY_WORKFLOWS[checkRun.name];
+    if (binding && await isTrustedPolicyWorkflowRun(repository, sha, checkRun, binding)) bound.push(checkRun);
+  }
+  return { ...payload, check_runs: bound };
 }
 
 export async function observeReleaseState(repository) {
@@ -562,14 +648,64 @@ function requiredCheckBindings(protection) {
 }
 
 async function checksFor(repository, sha, protection, policy, options = {}) {
-  const [checkRuns, statuses] = await Promise.all([
-    gh.request("GET", `/repos/${repoName(repository)}/commits/${sha}/check-runs?per_page=100`),
-    gh.request("GET", `/repos/${repoName(repository)}/commits/${sha}/status`)
-  ]);
   const requiredChecks = options.requiredChecks || policy.requiredChecks;
+  const [rawCheckRuns, statuses] = await Promise.all([
+    listCompleteCheckRuns(repository, sha),
+    listCompleteCommitStatuses(repository, sha)
+  ]);
+  const checkRuns = await bindTrustedPolicyCheckRuns(repository, sha, rawCheckRuns, requiredChecks);
   return options.includeProtection === false
     ? evaluatePolicySelectedChecks(checkRuns, statuses, requiredChecks)
     : evaluateRequiredChecks(protection, checkRuns, statuses, requiredChecks);
+}
+
+async function isTrustedPolicyWorkflowRun(repository, sha, checkRun, binding) {
+  const suiteId = checkRun?.check_suite?.id;
+  if (!Number.isSafeInteger(suiteId) || suiteId < 1 || checkRun.head_sha !== sha) return false;
+  const runs = await listCompleteWorkflowRuns(repository, suiteId);
+  const exact = runs.filter((run) => isRecord(run)
+    && run.check_suite_id === suiteId
+    && run.head_sha === sha
+    && run.path === binding.path
+    && binding.events.includes(run.event)
+    && Number.isSafeInteger(run.id) && run.id > 0
+    && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
+  if (exact.length !== 1) return false;
+  const [run] = exact;
+  if (checkRun.status === "completed") {
+    return run.status === "completed" && run.conclusion === checkRun.conclusion;
+  }
+  return run.status !== "completed" && run.conclusion === null;
+}
+
+async function listCompleteWorkflowRuns(repository, suiteId) {
+  const runs = [];
+  const seen = new Set();
+  let totalCount = null;
+  for (let page = 1; page <= MAX_PAGINATION_PAGES; page += 1) {
+    const payload = await gh.request(
+      "GET",
+      `/repos/${repoName(repository)}/actions/runs?check_suite_id=${suiteId}&per_page=100&page=${page}`
+    );
+    if (!isRecord(payload)
+        || !Number.isSafeInteger(payload.total_count) || payload.total_count < 0 || payload.total_count > 100
+        || !Array.isArray(payload.workflow_runs) || payload.workflow_runs.length > 100) {
+      throw new Error("release workflow-run binding evidence is malformed or ambiguous");
+    }
+    totalCount ??= payload.total_count;
+    if (payload.total_count !== totalCount) throw new Error("release workflow-run binding changed during pagination");
+    for (const run of payload.workflow_runs) {
+      if (!isRecord(run) || !Number.isSafeInteger(run.id) || run.id < 1 || seen.has(run.id)) {
+        throw new Error("release workflow-run binding contains malformed or duplicate evidence");
+      }
+      seen.add(run.id);
+      runs.push(run);
+    }
+    if (runs.length > totalCount) throw new Error("release workflow-run binding exceeds its declared total");
+    if (runs.length === totalCount) return runs;
+    if (payload.workflow_runs.length < 100) throw new Error("release workflow-run binding evidence is truncated");
+  }
+  throw new Error("release workflow-run binding exceeded the bounded page limit");
 }
 
 async function assertRefsUnchanged(repository, mainSha, devSha) {
