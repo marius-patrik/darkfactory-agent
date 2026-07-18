@@ -1292,7 +1292,7 @@ function roundSummary(round) {
   };
 }
 
-export function resultComment(result) {
+function resultComment(result) {
   const lastReview = [...result.rounds].reverse().find((round) => round.verdict);
   const findings = lastReview?.verdict?.blockingFindings || [];
   const lines = [
