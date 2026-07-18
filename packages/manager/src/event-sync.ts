@@ -331,6 +331,8 @@ const PUBLIC_ABSOLUTE_PATH_LEAVES = new Set([
 // still enter the fail-closed path-token scanner.
 const PUBLIC_ABSOLUTE_PATH_LEAF_HASHES = new Set([
   "94e8c98f13c41e8698a9b48326297bc7c52fa290a2a2ab6ae1f9ce6b07eccf48",
+  // hygiene-run-20260717.md — canonical hygiene evidence under provenance/ (#294).
+  "a766731b018adc8a927e429e6b4c7fd5d9239e161708271ddae78008f071b013",
 ]);
 
 function isPublicOperationalIdentifier(candidate: string): boolean {

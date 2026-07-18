@@ -977,6 +977,7 @@ describe("encrypted cross-machine event exchange", () => {
         "Track https://github.com/marius-patrik/Andromeda/issues/245 as public issue metadata.",
         "Inspect C:\\Users\\patrik\\AppData\\Local\\Temp\\andromeda-253-kimi-blockers.txt.",
         "Inspect C:\\Users\\patrik\\AppData\\Local\\Temp\\andromeda-260-kimi-blockers.txt.",
+        "Record file:///C:/Users/patrik/.andromeda/provenance/hygiene-run-20260717.md as canonical hygiene evidence.",
         "Observe Microsoft.PowerShell.Cmdletization.GeneratedTypes.ScheduledTask.CimClassProperties as a public type.",
       ] as const;
       for (const [index, message] of messages.entries()) {
@@ -1142,6 +1143,8 @@ describe("encrypted cross-machine event exchange", () => {
         "C:\\Temp\\correct-horse-battery-1.txt",
         "C:\\Temp\\api-secret-value-123.txt",
         "C:\\Temp\\andromeda-260-kimi-blockers.txt-opaque",
+        "C:\\Temp\\hygiene-run-20260718.md",
+        "C:\\Temp\\hygiene-run-20260717.md-opaque",
         "token: `config.cmd-opaquevalue`",
         `token: ghr_FAKE_REGISTRATION_TOKEN_0123456789${opaque}`,
       ] as const;
