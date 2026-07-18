@@ -688,12 +688,36 @@ test("release-engine automation PRs are admitted on exact App provenance and own
     ...overrides
   });
 
-  // Trusted App + release/ or reconcile/ prefix: admitted without association or linked issue.
-  for (const branch of ["release/7c74aa97a986", "reconcile/87502d30-dd6ab2a6"]) {
-    const admitted = assertPullPolicy(enginePull(branch), repository);
-    assert.equal(admitted.branch, branch);
-    assert.deepEqual(admitted.linked, []);
+  // Trusted App release PRs must provide one bounded issue-context marker.
+  const release = assertPullPolicy(enginePull("release/7c74aa97a986", {
+    body: "<!-- darkfactory:release-issues 280,360,364 -->"
+  }), repository);
+  assert.deepEqual(release.linked, [280, 360, 364]);
+
+  // Reconciliation PRs remain admissible without execution issues or release context.
+  const reconcile = assertPullPolicy(enginePull("reconcile/87502d30-dd6ab2a6"), repository);
+  assert.deepEqual(reconcile.linked, []);
+  assert.throws(
+    () => assertPullPolicy(enginePull("release/7c74aa97a986"), repository),
+    /must declare its bounded release issue context/
+  );
+  for (const body of [
+    "<!-- darkfactory:release-issues 280,280 -->",
+    "<!-- darkfactory:release-issues 0 -->",
+    "<!-- darkfactory:release-issues 280 -->\n<!-- darkfactory:release-issues 360 -->"
+  ]) {
+    assert.throws(() => assertPullPolicy(enginePull("release/7c74aa97a986", { body }), repository), /release.issue|release-issues/i);
   }
+  assert.throws(
+    () => assertPullPolicy(enginePull("release/7c74aa97a986", {
+      body: `<!-- darkfactory:release-issues ${Array.from({ length: 51 }, (_, index) => index + 1).join(",")} -->`
+    }), repository),
+    /bounded contract/
+  );
+  assert.throws(
+    () => assertPullPolicy(enginePull("reconcile/87502d30-dd6ab2a6", { body: "<!-- darkfactory:release-issues 280 -->" }), repository),
+    /Only a release branch/
+  );
 
   // Same branch shape without the trusted App actor stays blocked.
   assert.throws(

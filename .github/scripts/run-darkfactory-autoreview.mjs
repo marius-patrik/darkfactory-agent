@@ -400,6 +400,23 @@ function gitRepositoryInventory(repoRoot, token, hooksRoot) {
   return paths;
 }
 
+export function releaseIssueNumbers(body) {
+  const markerLines = String(body || "").split(/\r?\n/)
+    .filter((line) => line.includes("darkfactory:release-issues"));
+  if (markerLines.length === 0) return [];
+  if (markerLines.length !== 1) throw stableError("target_policy_blocked", "Release pull request must contain exactly one release-issues marker");
+  const match = /^<!-- darkfactory:release-issues ([1-9]\d*(?:,[1-9]\d*)*) -->$/.exec(markerLines[0]);
+  if (!match) throw stableError("target_policy_blocked", "Release pull request contains a malformed release-issues marker");
+  const issues = match[1].split(",").map(Number);
+  if (issues.length > 50 || issues.some((number) => !Number.isSafeInteger(number) || number < 1)) {
+    throw stableError("target_policy_blocked", "Release issue context exceeds its bounded contract");
+  }
+  if (new Set(issues).size !== issues.length) {
+    throw stableError("target_policy_blocked", "Release pull request repeats a release issue");
+  }
+  return issues;
+}
+
 export function assertPullPolicy(pull, repository, expectations = {}) {
   if (!pull || pull.state !== "open" || pull.draft) throw stableError("target_policy_blocked", "Pull request must be open and ready for review");
   if (String(pull.head?.repo?.full_name || "").toLowerCase() !== repoName(repository).toLowerCase()) {
@@ -426,7 +443,15 @@ export function assertPullPolicy(pull, repository, expectations = {}) {
   if (!engineAutomation && !ALLOWED_ASSOCIATIONS.has(pull.author_association) && !workerMarker) {
     throw stableError("target_policy_blocked", "Pull request author provenance is not authorized for autofix");
   }
-  const linked = extractClosingIssueNumbers(pull.body || "", repository.repo);
+  let linked = extractClosingIssueNumbers(pull.body || "", repository.repo);
+  if (engineAutomation && branch.startsWith("release/")) {
+    linked = releaseIssueNumbers(pull.body || "");
+    if (linked.length === 0) {
+      throw stableError("target_policy_blocked", "Release pull request must declare its bounded release issue context");
+    }
+  } else if (engineAutomation && releaseIssueNumbers(pull.body || "").length > 0) {
+    throw stableError("target_policy_blocked", "Only a release branch may declare release issue context");
+  }
   if (!engineAutomation && linked.length === 0) {
     throw stableError("target_policy_blocked", "Pull request must link an execution issue");
   }
