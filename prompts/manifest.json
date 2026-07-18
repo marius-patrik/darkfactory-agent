@@ -1206,7 +1206,7 @@
       "snapshot": "fixtures/snapshots/implementer.snapshot.md",
       "version": "0.3.0",
       "checksum": "sha256:da6a9de9d6b53f95058fc48f93cc7842b5750a7c462fc7436d03de1a579d5529",
-      "snapshotChecksum": "sha256:564573602337a338ce5a3f2aec11bdebc10c774915ca75c02e5178ac9bd827c6",
+      "snapshotChecksum": "sha256:8e79e22fe866693c4dca22e14fedfbe35878c954fea6202839e07f2e1727532b",
       "covers": [
         "output/implementer",
         "overlay/agent-os-boundary",
@@ -1233,7 +1233,7 @@
       "snapshot": "fixtures/snapshots/issue-drafter.snapshot.md",
       "version": "0.2.0",
       "checksum": "sha256:5b830bd2586f13e4812f37bd26b1a83e5a5e35cd61c8e5181a246580b496dbf4",
-      "snapshotChecksum": "sha256:6b954054c66c19eab8cf7384c99ee0b1aa16f6ae8165ab00d7c8becf8a6b7f0d",
+      "snapshotChecksum": "sha256:4c09376447e0689cc4d71fc34b4636e9666d1d4c9e8c38f8e54475ad3dfb7cac",
       "covers": [
         "output/issue-drafter",
         "overlay/agent-os-boundary",
@@ -1418,7 +1418,7 @@
       "snapshot": "fixtures/snapshots/pointer-updater.snapshot.md",
       "version": "0.2.0",
       "checksum": "sha256:9ce4bae093fdd2e68dc22fc0982b4b7d71e3a309f91a65074deefaae6d68ee24",
-      "snapshotChecksum": "sha256:350dc56f6e0f5295f85ad4b35ae9bb90b14b768157370ba9f4748293500239fd",
+      "snapshotChecksum": "sha256:014c6b4d6b50837901f1d73eead2a752c866502f5d2c7bdb5feb92065a07ff3b",
       "covers": [
         "output/pointer-updater",
         "overlay/agent-os-boundary",
@@ -1465,7 +1465,7 @@
       "snapshot": "fixtures/snapshots/pr-fixer.snapshot.md",
       "version": "0.3.0",
       "checksum": "sha256:add53083ecf202affdd8b80690bbdf884d9218c4a596d769694bad5579c90052",
-      "snapshotChecksum": "sha256:3214f30da23315a3a754f80a4e4bb03cd432adfd777591944fae0e2377158898",
+      "snapshotChecksum": "sha256:32ed360a1bf4b96db1cfc6105634274e92c4dcbfdd6c02a3c943df551d76670c",
       "covers": [
         "output/pr-fixer",
         "overlay/agent-os-boundary",
@@ -1513,7 +1513,7 @@
       "snapshot": "fixtures/snapshots/releaser.snapshot.md",
       "version": "0.2.0",
       "checksum": "sha256:c02c71aa907e74fc8d4e559d624f838d4836f429738dd2f0d0581d540ab540e2",
-      "snapshotChecksum": "sha256:0b68c15eccf9351dce38faf8c2872d0554f3eb7df9ffe136893facc9c9326311",
+      "snapshotChecksum": "sha256:8727c2bad94d9c8e98d8d43a3593026a0f8b666f52f35500bcce245f2037b8da",
       "covers": [
         "output/releaser",
         "overlay/agent-os-boundary",
