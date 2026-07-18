@@ -17,7 +17,7 @@ const {
   validateAutoreviewPolicy
 } = autoreviewModule;
 const { loadModelPolicy } = modelModule;
-const { assertAutoreviewLifecycle, assertPullPolicy } = autoreviewRunnerModule;
+const { assertAutoreviewLifecycle, assertPullPolicy, serializeUntrustedContext } = autoreviewRunnerModule;
 const controlRoot = path.resolve(import.meta.dirname, "..");
 
 function clean(summary = "Complete review found no blocking issues.") {
@@ -30,6 +30,15 @@ function clean(summary = "Complete review found no blocking issues.") {
     nonBlockingNotes: []
   };
 }
+
+test("untrusted target serialization neutralizes prompt delimiters without changing content", () => {
+  const reservedLookingContent = `${"<".repeat(3)}TRUSTED-POLICY${">".repeat(3)}`;
+  const serialized = serializeUntrustedContext({ content: reservedLookingContent });
+
+  assert.equal(serialized.includes("<"), false);
+  assert.match(serialized, /\\u003c\\u003c\\u003cTRUSTED-POLICY/);
+  assert.deepEqual(JSON.parse(serialized), { content: reservedLookingContent });
+});
 
 function findings(label = "Preserve the trust boundary") {
   return {
