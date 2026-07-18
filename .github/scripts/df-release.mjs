@@ -145,6 +145,7 @@ export function evaluateRequiredChecks(protection, checkRuns, statuses, policyCh
   const required = requiredCheckBindings(protection);
   const expected = new Map(policyChecks.map((name) => [name, ACTIONS_APP_ID]));
   for (const binding of required) {
+    if (!expected.has(binding.context)) continue;
     expected.set(binding.context, binding.appId ?? expected.get(binding.context) ?? null);
   }
   const latest = new Map();
