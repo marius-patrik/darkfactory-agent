@@ -96,8 +96,10 @@ export async function runComposedTurn({
   turnName,
   profile,
   findings = [],
+  additionalVerifiedFacts = [],
   controlRevision = "",
-  environment = process.env
+  environment = process.env,
+  modelTurnExecutor = executeModelTurn
 }) {
   const [owner, repo] = snapshot.repository.split("/");
   const exactControlRevision = controlRevision || environment.DF_CONTROL_REVISION?.trim() || "";
@@ -112,9 +114,12 @@ export async function runComposedTurn({
   const contextComments = findings.length > 0
     ? [`Complete current findings: ${JSON.stringify(findings)}`]
     : [];
+  if (!Array.isArray(additionalVerifiedFacts) || additionalVerifiedFacts.some((fact) => typeof fact !== "string" || !fact.trim())) {
+    throw stableError("target_policy_blocked", "Additional verified facts must be non-empty strings");
+  }
   let turn;
   try {
-    turn = await executeModelTurn(
+    turn = await modelTurnExecutor(
       {
         intent: {
           runId: `autoreview-${workItemKind}-${snapshot.number}-${seamTurnName}-${versionDigest}`,
@@ -145,7 +150,8 @@ export async function runComposedTurn({
             facts: [
               `Target ${snapshot.kind} ${snapshot.number} is open at version ${snapshot.version}.`,
               `Repository default branch is ${snapshot.defaultBranch}.`,
-              ...(Array.isArray(snapshot.verifiedFacts) ? snapshot.verifiedFacts : [])
+              ...(Array.isArray(snapshot.verifiedFacts) ? snapshot.verifiedFacts : []),
+              ...additionalVerifiedFacts
             ]
           },
           effort: request.effort,
@@ -205,6 +211,24 @@ export function serializePullReviewContext(value, policy) {
 
 export function serializeIssueReviewContext(value, policy) {
   return ensureContextBounded(serializeUntrustedContext(value), policy);
+}
+
+export function mediumCleanProofFact(phase, snapshot, priorCleanRound) {
+  if (phase !== "high_review") return [];
+  if (
+    !priorCleanRound
+    || priorCleanRound.schemaVersion !== 1
+    || priorCleanRound.phase !== "medium_review"
+    || !Number.isSafeInteger(priorCleanRound.sequence)
+    || priorCleanRound.sequence < 1
+    || priorCleanRound.targetVersion !== snapshot.version
+    || priorCleanRound.outcome !== "clean"
+  ) {
+    throw stableError("target_policy_blocked", "High review requires exact trusted medium-clean protocol evidence");
+  }
+  return [
+    `Trusted protocol evidence: medium iterative review round ${priorCleanRound.sequence} completed clean for exact target version ${snapshot.version}, and its durable round receipt was recorded before this high review.`
+  ];
 }
 
 function htmlEscape(value) {
@@ -1430,7 +1454,7 @@ export async function executeAutoreview(environment = process.env) {
       policy,
       modelPolicy,
       target,
-      review: async ({ phase, request, snapshot, promptVersion }) => {
+      review: async ({ phase, request, snapshot, promptVersion, priorCleanRound }) => {
         const turn = await runComposedTurn({
           request,
           snapshot,
@@ -1439,6 +1463,7 @@ export async function executeAutoreview(environment = process.env) {
           profile: snapshot.kind === "pull_request"
             ? (phase === "high_review" ? "profile/pr-final-review" : "profile/pr-reviewer")
             : (phase === "high_review" ? "profile/issue-final-review" : "profile/issue-reviewer"),
+          additionalVerifiedFacts: mediumCleanProofFact(phase, snapshot, priorCleanRound),
           controlRevision,
           environment
         });
