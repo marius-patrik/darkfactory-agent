@@ -248,7 +248,11 @@ test("release check evidence is complete and bound to the exact trusted workflow
     repo(), SHA.main, { total_count: 1, check_runs: [custom] }, ["Artifact Scan"]
   );
   assert.equal(additional.check_runs[0].id, custom.id);
-  assert.equal(release.evaluatePolicySelectedChecks(additional, { statuses: [] }, ["Artifact Scan"]).green, true);
+  assert.equal(additional.check_runs[0]._trustedPolicyWorkflow, false);
+  assert.deepEqual(
+    release.evaluatePolicySelectedChecks(additional, { statuses: [] }, ["Artifact Scan"]).red,
+    ["Artifact Scan"]
+  );
 });
 
 test("release evidence inventories reject changing, duplicate, malformed, truncated, and oversized pages", async () => {

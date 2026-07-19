@@ -411,7 +411,7 @@ export async function bindTrustedPolicyCheckRuns(repository, sha, payload, polic
     }
     const binding = TRUSTED_POLICY_WORKFLOWS[checkRun.name];
     if (!binding) {
-      bound.push(checkRun);
+      bound.push({ ...checkRun, _trustedPolicyWorkflow: false });
       continue;
     }
     const trusted = await isTrustedPolicyWorkflowRun(
