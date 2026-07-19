@@ -41,6 +41,10 @@
         "typescript": "5.9.3",
       },
     },
+    "plugins/memory": {
+      "name": "@marius-patrik/andromeda-memory-plugin",
+      "version": "0.1.0",
+    },
   },
   "packages": {
     "@agent-os/shared-ts": ["@agent-os/shared-ts@workspace:packages/core/clients/shared-ts"],
@@ -72,6 +76,8 @@
     "@connectrpc/connect": ["@connectrpc/connect@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA=="],
 
     "@marius-patrik/andromeda-manager": ["@marius-patrik/andromeda-manager@workspace:packages/manager"],
+
+    "@marius-patrik/andromeda-memory-plugin": ["@marius-patrik/andromeda-memory-plugin@workspace:plugins/memory"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "findingId": "df-b0846321f0908c8fca1c",
+  "addressedFindingId": "df-3b9a30c2d01a3b17010d",
+  "repository": "marius-patrik/Andromeda",
+  "pullRequest": 306,
+  "reviewTarget": {
+    "base": {
+      "ref": "dev",
+      "commit": "2b78936e4b7099cc30998f08fcdf4d9a806a5e56"
+    },
+    "proposalBaseHead": {
+      "ref": "reconcile/cd511544-2b78936e",
+      "commit": "63e9883eea3625e8eb9fbf78749eab7aee137b9f"
+    },
+    "incorporatedMain": {
+      "ref": "main",
+      "commit": "cd511544eae8798c6d2a86ebb4c49dc7aac1e57d"
+    }
+  },
+  "trustBoundary": "This head-controlled artifact requests verification and is not evidence of its own claims.",
+  "requestedVerification": {
+    "mergeCommit": "0f866bca5710a8b67f2d15f6bfbe6531e6479b67",
+    "expectedHeadParent": "0f866bca5710a8b67f2d15f6bfbe6531e6479b67",
+    "expectedParents": [
+      "2b78936e4b7099cc30998f08fcdf4d9a806a5e56",
+      "cd511544eae8798c6d2a86ebb4c49dc7aac1e57d"
+    ],
+    "expectedMergeTree": "9f35135d4cadbc12e99b28c0c77869dbc9af33da",
+    "expectedBaseTree": "9f35135d4cadbc12e99b28c0c77869dbc9af33da",
+    "expectedBaseToMergeChangedPaths": []
+  },
+  "acceptance": {
+    "authority": "base-trusted exact-revision verifier",
+    "requiredChecks": [
+      "Verify the proposal base head has the merge commit as its direct parent.",
+      "Verify the merge commit has the reviewed dev and incorporated main commits as its two direct parents.",
+      "Verify the merge tree and reviewed dev tree are the stated identical tree.",
+      "Verify the complete reviewed-dev-to-merge diff has no changed paths."
+    ],
+    "selfAttestationAccepted": false,
+    "approvalAllowedOnlyAfterTrustedVerification": true
+  },
+  "followUpContract": {
+    "parent": "63e9883eea3625e8eb9fbf78749eab7aee137b9f",
+    "onlyChangedPath": "docs/reconciliation/release-da1e87b5dce0281c15c1.json"
+  }
+}

@@ -5,7 +5,8 @@
   "type": "module",
   "workspaces": [
     "packages/manager",
-    "packages/core/clients/*"
+    "packages/core/clients/*",
+    "plugins/memory"
   ],
   "bin": {
     "agents": "./packages/manager/src/cli.ts"
