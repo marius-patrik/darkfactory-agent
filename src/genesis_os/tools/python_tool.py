@@ -4,11 +4,15 @@ import ast
 import asyncio
 import json
 import os
-import resource
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+try:
+    import resource
+except ModuleNotFoundError:  # Windows
+    resource = None  # type: ignore[assignment]
 
 from genesis_os.tools.context import ToolContext
 from genesis_os.tools.spec import Capability, ToolSpec
@@ -59,6 +63,8 @@ def validate_python_source(source: str, capabilities: frozenset[Capability]) -> 
 
 
 def _limits(cpu_seconds: int, memory_bytes: int) -> None:
+    if resource is None:
+        return  # resource limits are unavailable on Windows
     resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
     resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
@@ -72,13 +78,17 @@ class PythonProcessTool:
 
     async def invoke(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
         runner = r"""
-import importlib.util, json, pathlib, resource, sys
-cpu_seconds = int(sys.argv[2])
-memory_bytes = int(sys.argv[3])
-resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
-resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
-resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
-resource.setrlimit(resource.RLIMIT_NPROC, (16, 16))
+import importlib.util, json, pathlib, sys
+try:
+    import resource
+    cpu_seconds = int(sys.argv[2])
+    memory_bytes = int(sys.argv[3])
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+    resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+    resource.setrlimit(resource.RLIMIT_NPROC, (16, 16))
+except ModuleNotFoundError:
+    pass
 source = pathlib.Path(sys.argv[1]).resolve()
 spec = importlib.util.spec_from_file_location("genesis_dynamic_tool", source)
 module = importlib.util.module_from_spec(spec)
