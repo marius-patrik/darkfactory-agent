@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "darkfactory",
+  "name": "DarkFactory",
+  "kind": "package",
+  "description": "Agent OS GitHub control-plane component and automation CLI.",
+  "entry": "node dist/cli.js",
+  "requires": {
+    "state": [
+      "secrets",
+      "data-repos",
+      "skills",
+      "plugins",
+      "hooks",
+      "credits"
+    ]
+  },
+  "provides": [
+    "cli:darkfactory"
+  ]
+}
