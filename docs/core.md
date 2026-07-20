@@ -9,21 +9,21 @@ Shared Agent OS contracts and generated client packages.
 - `clients/shared-ts/` holds generated TypeScript protobuf descriptors and shared client exports.
 - `clients/tui/` and `clients/web/` are placeholder client workspaces for the future TUI and web applications; they import `@agent-os/shared-ts` for types and service descriptors.
 - root `docs/contracts/` holds protocol, engine, execution-lane, and worker lifecycle contracts.
-- `packages/core/buf.gen.yaml` regenerates the in-repo Go and TypeScript stubs from this package boundary.
+- `src/migrate/core/buf.gen.yaml` regenerates the in-repo Go and TypeScript stubs from this package boundary.
 
 ## Package surface
 
 `agent-os-core` is a **contracts / shared-client package**, not a CLI or end-user
 application. It ships generated wire-contract stubs for downstream OS components:
 
-- **Go:** module `github.com/marius-patrik/agents-manager/packages/core/contracts-go`
-  - Messages: `agent_osv1 "github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1"`
-  - Connect services: `"github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1/agent_osv1connect"`
-  - Consumers: the Go services under `packages/inference/`.
+- **Go:** module `github.com/marius-patrik/agents-manager/src/migrate/core/contracts-go`
+  - Messages: `agent_osv1 "github.com/marius-patrik/agents-manager/src/migrate/core/contracts-go/gen/agent_os/v1"`
+  - Connect services: `"github.com/marius-patrik/agents-manager/src/migrate/core/contracts-go/gen/agent_os/v1/agent_osv1connect"`
+  - Consumers: the Go services under `src/migrate/inference/`.
 - **TypeScript:** workspace packages `@agent-os/shared-ts`, `@agent-os/tui`, `@agent-os/web`
   - Shared descriptors and types: `@agent-os/shared-ts/gen`
   - Consumers: the TUI and web clients (`clients/tui` and `clients/web` are placeholders).
-- **Python:** plain protobuf stubs generated to `packages/inference/python-agent/agent/gen`
+- **Python:** plain protobuf stubs generated to `src/migrate/inference/python-agent/agent/gen`
   - Bootstrap: `import agent.gen`
   - Messages: `from agent_os.v1 import session_frames_pb2, registry_pb2`
   - Consumer: the Agent OS inference Python agent.
@@ -35,7 +35,7 @@ directly.
 Run default in-repo codegen from the repository root:
 
 ```sh
-cd packages/core
+cd src/migrate/core
 bunx --bun @bufbuild/buf generate proto
 ```
 

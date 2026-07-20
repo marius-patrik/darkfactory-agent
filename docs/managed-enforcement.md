@@ -34,7 +34,7 @@ installation and validation. Python package operations use the `uv` CLI rather
 than `python -m uv`.
 
 The pre-convergence `go.work` exception is obsolete. The Go contract module is
-now inside this repository at `packages/core/contracts-go/go.mod`; validation no
+now inside this repository at `src/migrate/core/contracts-go/go.mod`; validation no
 longer depends on a sibling contracts checkout, and the monorepo has no root
 `go.work` file to conditionally discover.
 
@@ -55,9 +55,9 @@ exhausted budget fails closed. Provider routing and authentication remain owned
 by Agent OS, so the repository carries no provider-specific review credentials,
 container, schema, runner, fallback script, or routing policy.
 
-## Andromeda-data protection posture
+## private-data protection posture
 
-`marius-patrik/Andromeda-data` is a private repository. On 2026-07-13 the
+`marius-patrik/private-data` is a private repository. On 2026-07-13 the
 branch-protection API returned HTTP 403 with GitHub's plan decision:
 "Upgrade to GitHub Pro or make this repository public to enable this feature."
 Native required checks therefore cannot protect its `main` branch under the
@@ -65,8 +65,8 @@ current plan.
 
 The compensating control is admission enforcement in Andromeda, merged in
 [#190](https://github.com/marius-patrik/Andromeda/pull/190), together with the
-Andromeda-data contract merged in
-[Andromeda-data #1](https://github.com/marius-patrik/Andromeda-data/pull/1):
+private-data contract merged in
+[private-data #1](https://github.com/marius-patrik/private-data/pull/1):
 
 - mutable Agent OS state may be backed up only as authenticated encrypted event
   bundles under `backups/events/<machine>/<payload-hash>.bundle.json`;

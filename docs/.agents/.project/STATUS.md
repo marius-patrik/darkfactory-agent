@@ -1,28 +1,32 @@
 # Status
 
-- Andromeda v0.2.2 is released at `d7bafd4f660c275bb327b9dd97b371f26a48adc2` after PRs #169, #170, and #172 passed CI and automated review.
-- The complete Windows gate passes: manager tests, generated-code freshness, and seven provider-agnostic review enforcement regressions, with zero failures.
-- The last v0.2.2 cross-machine acceptance installed exact
-  `main@d7bafd4f660c` on Windows and Mac. Its encrypted 18-entry exchange was
-  idempotent in both directions, and both machines replayed the same nine
-  memory events at that acceptance boundary.
-- Windows now has four checksum-verified providers and green memory, session,
-  orchestrator, capability, registry, and sync-safety checks. Its installed
-  launcher/source-install binding is stale after repository convergence.
-- Post-acceptance provider-memory consolidation intentionally advances Windows
-  to 26 memory events. Mac parity was not asserted; the interrupted Mac tail is
-  parked.
-- `data/andromeda/context/TASK.md` is the canonical owner-facing task list. It
-  contains two ordered Planned rows and one final Parked row; the completed
-  memory backlog is removed.
-- Fable/Codex memory consolidation and Dream/Codex hygiene are complete: 27
-  immutable events replay to 27 verified records, with 20 active startup facts,
-  seven explicit supersessions, zero disputes/retractions/secrets, and projection
-  hash `86d1a15e55c1c3f679661c0c0dd03e73ecaeccb65c31ece49924dbe69333cc5f`.
-- Shared runtime identity, memory, sessions, orchestration, and providers live
-  inside the Andromeda-data checkout at `.agents`. Provider-local memories and
-  transcripts are cache or hash-addressed rollback evidence only. Git sync and
-  backup use authenticated encrypted canonical-event bundles; plaintext
-  credentials and runtime artifacts remain ignored.
-- Repairing the installed `agents` launcher/source-install binding belongs to
-  Planned 3 rather than this completed memory slice.
+- Andromeda v0.9.0 is released on `main`, with `dev` and `main` tree-identical.
+  The release carries the layout refactor and the template consolidation.
+- The repository is a single monorepo with no submodules. `.gitmodules` is
+  empty, and the repository contract fails closed if that changes without the
+  CI workflow initializing the declared set.
+- Durable state lives in the separate `private-data` repository, reached
+  through the Agent OS state lane. It is no longer a submodule of this
+  repository, and `context/TASK.md` there remains the owner-facing task board.
+- Target components are scaffolded and carry their contracts: `sdk`, `mcp`,
+  `server`, `clients/{cli,app,web}`, and `plugins`. They hold contract READMEs
+  rather than implementation; the fail-closed inventory requires that a
+  component gaining code also gains a test suite.
+- The previous implementation is carried under `src/migrate` — `manager`,
+  `core`, `harness`, `gateway`, `inference`, `memory`, `dream`, `experience`,
+  and the folded predecessors of the developmental runtime, the retired
+  gateway, the legacy manager, and the workspace substrate — frozen and mined
+  by reimplementation against the sdk.
+- `agents/darkfactory` carries the GitHub control-plane agent project, and
+  `templates/` carries the five folded template repositories.
+- Every folded repository was verified before its source was deleted. Where a
+  branch could not be merged into the fold, its commits are preserved as an
+  `archive/<repo>/<branch>` tag in this repository, so nothing was discarded.
+- The full CI gate passes: component suites on Linux and Windows, real-process
+  legs, product smokes, the fail-closed inventory, the repository contract, and
+  the DarkFactory managed setup check.
+- Provider route: canonical Claude is the working medium and high tier. Codex
+  is quota-limited, Kimi is decommissioned, and Agy is not an approved review
+  route. A complete Autoreview run needs a clean medium round and a high
+  confirmation round back to back, which a single-review provider pool cannot
+  satisfy in one pass.

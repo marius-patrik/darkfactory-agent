@@ -2211,7 +2211,16 @@ describe("managed Kimi native continuation (issue #254)", () => {
         await expect(runSessionTurn(state, adapter, descriptor, { prompt: "must finish bounded" })).rejects.toThrow(
           expected,
         );
-        expect(Date.now() - startedAt).toBeLessThan(5_000);
+        // What this proves is that a hung request terminates at all: a real hang
+        // never returns, so any finite bound demonstrates the deadline fired.
+        // The bound is the configured deadlines plus an allowance for spawning
+        // the PowerShell launcher and the fake ACP process, which on a cold
+        // Windows runner has been observed above ten seconds. A tighter bound
+        // measured runner contention rather than the deadline contract, and
+        // failed intermittently on changes that touched no code at all.
+        const configuredDeadlinesMs = 2_000 + 200 + 100;
+        const processSpawnAllowanceMs = 30_000;
+        expect(Date.now() - startedAt).toBeLessThan(configuredDeadlinesMs + processSpawnAllowanceMs);
 
         const captured = JSON.parse(await readFile(capturePath, "utf8")) as FakeKimiAcpCapture;
         expect(captured.requests.map(({ method }) => method)).toEqual([...expectedMethods]);

@@ -13,9 +13,9 @@ Agent OS remains one product inside or outside a container:
 
 - `agents-manager` owns state discovery, provider pinning, sessions, memory,
   capabilities, package registries, and lifecycle commands.
-- `packages/manager`, `packages/harness`, `packages/core`, `packages/gateway`,
-  and `packages/inference` are implementation components, not separate products.
-- `packages/darkfactory` is a GitHub control-plane package, not a second agent
+- `src/migrate/manager`, `src/migrate/harness`, `src/migrate/core`, `src/migrate/gateway`,
+  and `src/migrate/inference` are implementation components, not separate products.
+- `agents/darkfactory` is a GitHub control-plane package, not a second agent
   brain.
 - `packages/memory` is the cognitive memory-operations plugin; it reads and
   mutates memory only through manager-owned canonical contracts.
@@ -23,7 +23,7 @@ Agent OS remains one product inside or outside a container:
   `packages/singularity` and `packages/fabrica` are managed applications.
 - `data/andromeda` and `data/darkfactory` pin the separate Andromeda and
   DarkFactory data repositories for development.
-- Andromeda-data is checked out at `AGENTS_HOME`; it is the same physical root
+- private-data is checked out at `AGENTS_HOME`; it is the same physical root
   as `AGENTS_SYSTEM_DATA_ROOT`, not an alternate state authority.
 
 The container is replaceable compute. It must mount the one authoritative

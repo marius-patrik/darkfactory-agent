@@ -28,7 +28,7 @@ projected container paths.
 | `AGENTS_ROOT` | `/opt/agents-os` | Read-only distribution/package root |
 | `AGENTS_HOME` | `/agents/state` | The one canonical state root |
 | `AGENTS_USER_HOME` | `/home/agents` | Runtime account home, not state |
-| `AGENTS_SYSTEM_DATA_ROOT` | `/agents/state` | The same Andromeda-data checkout as `AGENTS_HOME` |
+| `AGENTS_SYSTEM_DATA_ROOT` | `/agents/state` | The same private-data checkout as `AGENTS_HOME` |
 | `AGENTS_WORKSPACE` | `/workspace/agents` | Private Agent OS runtime workspaces |
 | `AGENTS_CLIS` | `/agents/state/clis` | Opaque provider homes |
 | `AGENTS_IDENTITY` | `/agents/state/identity` | Single Rommie identity and worker roles |
@@ -88,7 +88,7 @@ identity, memory, or orchestration authority.
 - Container logs and event payloads must redact secret-bearing arguments and
   values.
 - Ordinary cross-machine exchange never includes the secret class.
-- The Andromeda-data Git history carries only authenticated encrypted event
+- The private-data Git history carries only authenticated encrypted event
   bundles under `backups/events/`; the local sync key is never committed.
 
 ## Removal and recovery

@@ -12,7 +12,7 @@ runtime state below `$AGENTS_HOME/runtime/inference`:
 
 Inference does not write the canonical Agent OS session, memory, capability,
 configuration, or credit stores. Its generated `common_pb2` module uses the
-canonical `agent_os.v1` protocol emitted from `packages/core/proto`.
+canonical `agent_os.v1` protocol emitted from `src/migrate/core/proto`.
 
 ## Contents
 
@@ -22,7 +22,7 @@ canonical `agent_os.v1` protocol emitted from `packages/core/proto`.
 ## Verify
 
 ```sh
-bun packages/inference/scripts/validate.mjs
+bun src/migrate/inference/scripts/validate.mjs
 ```
 
 That command runs ruff, mypy, pytest, the Python package build, generated

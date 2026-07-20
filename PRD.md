@@ -31,7 +31,7 @@ control" means autonomous orchestration operates exclusively through the GitHub
 control plane; the `agents` CLI remains the local operator surface.
 
 This PRD is the repository's specification source of truth. The owner-facing
-task board in the Andromeda-data authority at `context/TASK.md` remains the
+task board in the private-data authority at `context/TASK.md` remains the
 canonical authorization and sequencing surface; the consolidated program plan
 at `context/PLAN.md` records the detailed execution lanes and parked scopes
 under that board and supersedes neither the board nor repository-owned
@@ -46,7 +46,7 @@ until the owner reopens it.
 - **Andromeda** — repository. npm package surface stays `@marius-patrik/agents-manager` (recorded exception).
 - **agents** — CLI command.
 - **`~/.agents` / `AGENTS_HOME`** — only authoritative runtime state root; a
-  checkout of the Andromeda-data authority.
+  checkout of the private-data authority.
 - **`src/`** — implementation domains, each rooted as one direct child.
 - **`plugins/`** — authored repository-owned plugin capabilities; managed product
   repository gitlinks live under `src/`.
@@ -56,6 +56,22 @@ Historical product, repository, and layout names are evidence to migrate and
 retire. They are not supported aliases or compatibility contracts.
 
 ## System layering
+
+The target architecture, owner-specified 2026-07-20. One dependency rule holds
+it together: **everything is implemented through the sdk, and every call goes
+through the protocol layer.** A full personal deployment spans multiple
+machines, each joined as either a client or a server, never both.
+
+| Component | Role |
+| --- | --- |
+| `sdk` | The core package everything is implemented through: types, receipts, client bindings, the plugin contract. A pure library — no daemon, no state. |
+| `mcp` | The central protocol and orchestration layer, and the wrapper layer all calls pass through. Passive: not a separate process and requiring no daemon of its own. Carries MCP in both directions and is the integration point for standard agent harnesses and for behaviour composition. |
+| `server` | Per-machine deployment of the cluster system: hosts inference, runs agents, and exposes the system through the protocol. |
+| `clients/cli`, `clients/app`, `clients/web` | Clients only. They hold no business logic; anything a client needs must be reachable through the protocol. |
+| `plugins` | Capabilities loaded through the sdk plugin contract. |
+
+The components below are the previous implementation, carried under
+`src/migrate` and mined by reimplementation rather than extended in place.
 
 | Component | Role |
 | --- | --- |
@@ -465,27 +481,35 @@ tombstones, and produces identical projection hashes on participating machines.
 ## Repository layout
 
 ```text
-src/migrate/core/
-src/migrate/manager/
-src/migrate/harness/
-src/migrate/gateway/
-src/migrate/inference/
-agents/darkfactory/
-src/memory/
-agents/lifequest/
-agents/skyagent/
-src/migrate/singularity/
-src/fabrica/
-skills/
-hooks/
-roles/
-commands/
-persona.md
-data/andromeda/
-data/darkfactory/
+sdk/            core package everything is implemented through
+mcp/            protocol and orchestration surface, including MCP
+server/         per-machine cluster deployment
+clients/        cli, app, web
+plugins/        capabilities loaded through the sdk plugin contract
+agents/         agent projects, carried with their own identity
+templates/      folded template repositories
+src/migrate/    the previous implementation, frozen for migration
+skills/  hooks/  roles/  commands/  persona.md
+docs/    ci/     install/  scripts/  .github/  .darkfactory/
 ```
 
-No obsolete `os/` package topology is part of the final product.
+Two rules govern this layout.
+
+**Carried trees are not built.** `src/migrate/`, `agents/<project>/`, and
+`templates/<project>/` hold former standalone repositories folded in with their
+full history. They keep their own identity, versioning, and project docs, and
+nothing outside them may depend on them. Code leaves `src/migrate` by being
+reimplemented against the sdk — never by being re-imported, and never by being
+deleted. Repository-wide contracts that govern what is built and shipped
+(retired names, forbidden paths, nested package metadata, the single-product
+version) therefore do not apply inside carried trees, while every live surface
+remains fully scanned.
+
+**State is not a submodule.** Durable state lives in the separate `private-data`
+repository, reached through the Agent OS state lane rather than a gitlink. This
+repository declares no submodules; `.gitmodules` is empty and the repository
+contract fails closed if that changes without the workflow initializing the
+declared set.
 
 ## Installation and validation
 
@@ -523,7 +547,7 @@ release history), while release-backed distribution and the repaired global
 launcher remain active work (program lane 4 below, issue #217).
 
 The active program below is derived detail: authorization and high-level
-sequencing stay with the owner board (Andromeda-data `context/TASK.md`), and
+sequencing stay with the owner board (private-data `context/TASK.md`), and
 the lane breakdown lives in the program plan (`context/PLAN.md`):
 
 1. **Enforcement and CI truth** — managed enforcement baseline (delivered,

@@ -6,11 +6,11 @@ implementation and manifests, not nested repository policy or documentation.
 ## Authority
 
 Authority has two explicit dimensions. Current owner instruction is highest,
-and Andromeda-data `context/TASK.md` records authorization, high-level
+and private-data `context/TASK.md` records authorization, high-level
 sequencing, and parked scopes; no plan, PRD, issue, or supporting document can
 reopen a board-gated scope. Within authorized work, the program derivation
 chain recorded by [#219](https://github.com/marius-patrik/Andromeda/issues/219)
-is owner instruction → Andromeda-data `context/PLAN.md` → root
+is owner instruction → private-data `context/PLAN.md` → root
 [`PRD.md`](../PRD.md) → GitHub issues. The plan feeds the PRD, the PRD specifies
 the system, and issues implement it. The documents indexed here support those
 authorities; they do not replace them or authorize work.

@@ -2,14 +2,14 @@
 
 **Status:** active supporting reference. The root [PRD](../../PRD.md) owns
 product specification, and the protobuf module under
-[`packages/core/proto/agent_os/v1/`](../../packages/core/proto/agent_os/v1) is
+[`src/migrate/core/proto/agent_os/v1/`](../../src/migrate/core/proto/agent_os/v1) is
 the executable wire authority. This document maps that checked-in schema; its
 legacy section and decision labels are provenance, not a competing plan or
 authorization surface.
 
 > **The single most load-bearing artifact in the system.** Everything — gateway,
 > agent loop, TUI, web — builds against this. Source of truth = the protobuf
-> module under [`packages/core/proto/agent_os/v1/`](../../packages/core/proto/agent_os/v1); this doc is its map.
+> module under [`src/migrate/core/proto/agent_os/v1/`](../../src/migrate/core/proto/agent_os/v1); this doc is its map.
 >
 > **Transport (design §00 S3, LOCKED):** two layers, **one** protobuf schema:
 > 1. **Control plane = Connect (protobuf)** — unary RPCs, generated typed
@@ -129,16 +129,16 @@ One proto module -> language stubs via **buf remote plugins** (no local protoc
 needed). From the **repo root**:
 
 ```sh
-(cd packages/core && bunx --bun @bufbuild/buf generate proto)
-bunx --bun @bufbuild/buf lint packages/core/proto
+(cd src/migrate/core && bunx --bun @bufbuild/buf generate proto)
+bunx --bun @bufbuild/buf lint src/migrate/core/proto
 ```
 
 Default outputs (all committable, all in this repo):
 
 | Lang | Output | Plugins | Runtime dep |
 |------|--------|---------|-------------|
-| **Go** | `packages/core/contracts-go/gen` | `protocolbuffers/go` + `connectrpc/go` | `connectrpc.com/connect`, `google.golang.org/protobuf` (`go mod tidy`) |
-| **TS** | `packages/core/clients/shared-ts/src/gen` | `bufbuild/es` (protobuf-es v2) | `@bufbuild/protobuf`, `@connectrpc/connect` (`bun install`) |
+| **Go** | `src/migrate/core/contracts-go/gen` | `protocolbuffers/go` + `connectrpc/go` | `connectrpc.com/connect`, `google.golang.org/protobuf` (`go mod tidy`) |
+| **TS** | `src/migrate/core/clients/shared-ts/src/gen` | `bufbuild/es` (protobuf-es v2) | `@bufbuild/protobuf`, `@connectrpc/connect` (`bun install`) |
 
 - **Go:** Connect service stubs land in `gen/agent_os/v1/agent_osv1connect`; messages
   in `gen/agent_os/v1`. `go_package` is injected by buf managed mode.
@@ -149,9 +149,9 @@ Default outputs (all committable, all in this repo):
 - **Python:** plain protobuf `*_pb2.py` + `*_pb2.pyi` for the in-repository
   Agent OS inference consumer are generated with the opt-in template:
   ```sh
-  (cd packages/core && bunx --bun @bufbuild/buf generate proto --template buf.gen.python.yaml)
+  (cd src/migrate/core && bunx --bun @bufbuild/buf generate proto --template buf.gen.python.yaml)
   ```
-  That writes to `packages/inference/python-agent/agent/gen` and is run whenever the
+  That writes to `src/migrate/inference/python-agent/agent/gen` and is run whenever the
   in-repository Python consumer changes. Import as:
   ```python
   import agent.gen                      # puts the gen root on sys.path
@@ -168,20 +168,20 @@ validated separately from generated output.
 
 | File | Kind | Purpose |
 |------|------|---------|
-| `packages/inference/python-agent/agent/gen/__init__.py` | source | `sys.path` bootstrap so `from agent_os.v1 import ...` resolves after `import agent.gen` |
-| `packages/inference/python-agent/agent/gen/agent_os/__init__.py` | source | Python package marker for the `agent_os` namespace |
-| `packages/inference/python-agent/agent/gen/agent_os/v1/__init__.py` | source | Python package marker for the `agent_os.v1` namespace |
-| `packages/core/clients/shared-ts/src/gen/index.ts` | hand-authored | Re-export barrel so consumers import from `@agent-os/shared-ts/gen` |
-| `packages/inference/python-agent/agent/gen/agent_os/v1/*_pb2.py` | **buf-generated** | Protobuf message classes - regenerate, never hand-edit |
-| `packages/inference/python-agent/agent/gen/agent_os/v1/*_pb2.pyi` | **buf-generated** | Type stubs - regenerate, never hand-edit |
-| `packages/core/clients/shared-ts/src/gen/agent_os/v1/*_pb.ts` | **buf-generated** | protobuf-es v2 message + service descriptors — regenerate, never hand-edit |
-| `packages/core/contracts-go/gen/...` | **buf-generated** | Go message + Connect stubs - regenerate, never hand-edit |
+| `src/migrate/inference/python-agent/agent/gen/__init__.py` | source | `sys.path` bootstrap so `from agent_os.v1 import ...` resolves after `import agent.gen` |
+| `src/migrate/inference/python-agent/agent/gen/agent_os/__init__.py` | source | Python package marker for the `agent_os` namespace |
+| `src/migrate/inference/python-agent/agent/gen/agent_os/v1/__init__.py` | source | Python package marker for the `agent_os.v1` namespace |
+| `src/migrate/core/clients/shared-ts/src/gen/index.ts` | hand-authored | Re-export barrel so consumers import from `@agent-os/shared-ts/gen` |
+| `src/migrate/inference/python-agent/agent/gen/agent_os/v1/*_pb2.py` | **buf-generated** | Protobuf message classes - regenerate, never hand-edit |
+| `src/migrate/inference/python-agent/agent/gen/agent_os/v1/*_pb2.pyi` | **buf-generated** | Type stubs - regenerate, never hand-edit |
+| `src/migrate/core/clients/shared-ts/src/gen/agent_os/v1/*_pb.ts` | **buf-generated** | protobuf-es v2 message + service descriptors — regenerate, never hand-edit |
+| `src/migrate/core/contracts-go/gen/...` | **buf-generated** | Go message + Connect stubs - regenerate, never hand-edit |
 
 ### Python bindings
 
 The inference worker consumes the plain protobuf bindings below
-`packages/inference/python-agent/agent/gen`. The gateway consumes the generated
-protobuf and Connect bindings below `packages/gateway/agent_os/v1` and mounts
+`src/migrate/inference/python-agent/agent/gen`. The gateway consumes the generated
+protobuf and Connect bindings below `src/migrate/gateway/agent_os/v1` and mounts
 the implemented services described in [Gateway architecture](../gateway.md).
 
 ---
@@ -226,15 +226,15 @@ bun install
 bun run check
 
 # Refresh and validate the in-repository Python consumer:
-(cd packages/core && bunx --bun @bufbuild/buf generate proto --template buf.gen.python.yaml)
-(cd packages/inference/python-agent && uv sync && uv run python -c "import agent.gen; from agent_os.v1 import session_frames_pb2")
+(cd src/migrate/core && bunx --bun @bufbuild/buf generate proto --template buf.gen.python.yaml)
+(cd src/migrate/inference/python-agent && uv sync && uv run python -c "import agent.gen; from agent_os.v1 import session_frames_pb2")
 ```
 
 ---
 
 ## 8. Internal contract surface and in-repository consumers
 
-`packages/core` is an internal implementation subtree, not an independently
+`src/migrate/core` is an internal implementation subtree, not an independently
 published package or CLI. Its generated stubs are checked into this repository
 for Andromeda's in-repository consumers. The package names and import specifiers
 below are internal module identities; the JavaScript workspaces remain private,
@@ -243,12 +243,12 @@ surface.
 
 | Language | Internal path / module identity | Import example | In-repository consumer |
 |----------|---------------------------------|----------------|------------------------|
-| **Go** | `packages/core/contracts-go` | `agent_osv1 "github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1"` | Go services under `packages/inference/` |
-| **Go Connect** | `packages/core/contracts-go/gen/agent_os/v1/agent_osv1connect` | `import "github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1/agent_osv1connect"` | Go services that speak the Connect control plane |
-| **TypeScript** | private workspace `@agent-os/shared-ts` | `import { RegistryService } from "@agent-os/shared-ts/gen"` | `packages/core/clients/tui` and `packages/core/clients/web` |
-| **Python** | `agent.gen` bootstrap + `agent_os.v1` | `import agent.gen; from agent_os.v1 import session_frames_pb2, registry_pb2` | `packages/inference/python-agent` |
+| **Go** | `src/migrate/core/contracts-go` | `agent_osv1 "github.com/marius-patrik/agents-manager/src/migrate/core/contracts-go/gen/agent_os/v1"` | Go services under `src/migrate/inference/` |
+| **Go Connect** | `src/migrate/core/contracts-go/gen/agent_os/v1/agent_osv1connect` | `import "github.com/marius-patrik/agents-manager/src/migrate/core/contracts-go/gen/agent_os/v1/agent_osv1connect"` | Go services that speak the Connect control plane |
+| **TypeScript** | private workspace `@agent-os/shared-ts` | `import { RegistryService } from "@agent-os/shared-ts/gen"` | `src/migrate/core/clients/tui` and `src/migrate/core/clients/web` |
+| **Python** | `agent.gen` bootstrap + `agent_os.v1` | `import agent.gen; from agent_os.v1 import session_frames_pb2, registry_pb2` | `src/migrate/inference/python-agent` |
 
-`packages/core/clients/tui` and `packages/core/clients/web` are currently
+`src/migrate/core/clients/tui` and `src/migrate/core/clients/web` are currently
 private placeholder workspaces. They import the private `@agent-os/shared-ts`
 workspace and will host Andromeda's future in-repository TUI and web clients.
-There is no user-facing CLI or installer in `packages/core`.
+There is no user-facing CLI or installer in `src/migrate/core`.

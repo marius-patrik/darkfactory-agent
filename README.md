@@ -9,7 +9,7 @@ The accepted state contract is documented in
 [Canonical State and Memory v2](docs/state-memory-v2.md). Bootstrap, doctor,
 provider pinning, canonical memory, and managed sessions implement that
 contract directly; retired adoption and snapshot-sync commands do not exist.
-The live branch, review, managed-CI, and Andromeda-data compensating controls
+The live branch, review, managed-CI, and private-data compensating controls
 are recorded in [Managed Enforcement](docs/managed-enforcement.md).
 The complete component, platform, real-process, and product-smoke gate is
 recorded in [CI Validation](docs/ci-validation.md).
@@ -17,11 +17,11 @@ recorded in [CI Validation](docs/ci-validation.md).
 ## Authority and planning
 
 Authority has two explicit dimensions. Current owner instruction is highest,
-and the owner-facing Andromeda-data `context/TASK.md` board records work
+and the owner-facing private-data `context/TASK.md` board records work
 authorization, high-level sequencing, and parked scopes; no plan, PRD, or issue
 can reopen a board-gated scope. Within authorized work, the program derivation
 chain recorded by [#219](https://github.com/marius-patrik/Andromeda/issues/219)
-is owner instruction → Andromeda-data `context/PLAN.md` → root [PRD](PRD.md) →
+is owner instruction → private-data `context/PLAN.md` → root [PRD](PRD.md) →
 GitHub issues. The plan records the consolidated program and feeds the PRD; the
 PRD is the repository's system specification; issues are executable contracts
 that implement it.
@@ -168,28 +168,47 @@ older snapshot-sync or provider-adoption command to fall back to.
 
 ## Repository layout
 
-- `src/migrate/manager/src/` — `agents` CLI and Agent OS state/runtime logic;
-  see [manager documentation](docs/manager.md).
-- `src/migrate/core/` — shared contracts, schemas, and generated clients;
-  see [core documentation](docs/core.md).
-- `src/migrate/harness/` — managed runtime harness; see
-  [harness documentation](docs/harness.md).
-- `src/migrate/gateway/` — model gateway and provider routing; see
-  [gateway documentation](docs/gateway-runtime.md).
-- `src/migrate/inference/` — agent loop and inference runtime; see
-  [inference documentation](docs/inference.md).
-- `agents/darkfactory/`, `src/memory/`, `agents/lifequest/`, and
-  `agents/skyagent/` — managed product plugins.
-- `src/migrate/singularity/` and `src/fabrica/` — managed product applications.
-- `skills/`, `plugins/`, `hooks/`, `roles/`, and `commands/` — authored capability roots;
+### Target architecture
+
+- `sdk/` — the core package everything is implemented through.
+- `mcp/` — the protocol and orchestration layer every call passes through,
+  carrying MCP in both directions and integrating standard agent harnesses.
+- `server/` — per-machine deployment of the cluster system.
+- `clients/cli/`, `clients/app/`, `clients/web/` — clients only, holding no
+  business logic.
+- `plugins/` — capabilities loaded through the sdk plugin contract.
+
+### Carried trees
+
+These hold former standalone repositories, folded in with their full history.
+They keep their own identity and versioning, and nothing outside them may
+depend on them.
+
+- `src/migrate/` — the previous implementation, frozen and mined by
+  reimplementation against the sdk: `manager` (the `agents` CLI and state
+  runtime, see [manager](docs/manager.md)), `core`
+  ([contracts and generated clients](docs/core.md)), `harness`
+  ([managed runtime](docs/harness.md)), `gateway`
+  ([routing](docs/gateway-runtime.md)), `inference`
+  ([agent loop](docs/inference.md)), plus the folded predecessors: the memory
+  plugin, dream, experience, the developmental runtime, the retired gateway,
+  the legacy manager, and the workspace substrate.
+- `agents/darkfactory/` — the GitHub control-plane agent project.
+- `templates/` — the folded template repositories: `bot`, `cli`, `repo`,
+  `web`, and `darkfactory-templates`.
+
+### Authored roots
+
+- `skills/`, `hooks/`, `roles/`, and `commands/` — authored capability roots;
   `persona.md` is the authored identity persona.
-- `data/andromeda/` — the development pin for Andromeda-data; the live
-  Andromeda-data checkout is `$AGENTS_HOME` and is also
-  `AGENTS_SYSTEM_DATA_ROOT`.
-- `data/darkfactory/` — the development pin for DarkFactory's separate data
-  ledger.
-- `docs/` — the only repository documentation root, including component,
-  protocol, architecture, and specification material.
+- `docs/` — the documentation root, including component, protocol,
+  architecture, and specification material.
+- `scripts/` — repository automation and validators, including the DarkFactory
+  managed scripts.
+
+State is not a submodule: the live private-data checkout is `$AGENTS_HOME`,
+which is also `AGENTS_SYSTEM_DATA_ROOT`. This repository declares no
+submodules.
 
 ## Shared capability contract
 
