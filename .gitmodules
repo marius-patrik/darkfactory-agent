@@ -2,7 +2,3 @@
 	path = packages/migrate/singularity
 	url = https://github.com/marius-patrik/Singularity.git
 	branch = main
-[submodule "Andromeda-data"]
-	path = Andromeda-data
-	url = https://github.com/marius-patrik/Andromeda-data.git
-	branch = main

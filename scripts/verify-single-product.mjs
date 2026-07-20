@@ -16,7 +16,6 @@ const tracked = execFileSync("git", ["-C", root, "ls-files", "--cached", "--othe
 const issues = [];
 issues.push(...inventoryIssues(root));
 const requiredLayout = [
-  "Andromeda-data",
   "packages/migrate/core",
   "packages/migrate/gateway",
   "packages/migrate/harness",

@@ -22,7 +22,7 @@ function unique(values) {
 
 // Managed repositories live under data/ (state), packages/ (components), and
 // agents/ (agent projects built on packages/agent).
-const MANAGED_REPOSITORY_PREFIXES = ["Andromeda-data", "packages/"];
+const MANAGED_REPOSITORY_PREFIXES = ["packages/"];
 
 export function parseIndexedGitlinks(output) {
   return output
@@ -192,9 +192,9 @@ export function inventoryIssues(root = repositoryRoot) {
     }
   }
 
-  const allowedDataGitlinks = ["Andromeda-data"];
-  const declaredDataGitlinks = declaredGitlinks.filter((entry) => entry === "Andromeda-data" || entry.startsWith("data/")).sort();
-  const actualDataGitlinks = actualGitlinks.filter((entry) => entry.path === "Andromeda-data" || entry.path.startsWith("data/"));
+  const allowedDataGitlinks = [];
+  const declaredDataGitlinks = declaredGitlinks.filter((entry) => entry.startsWith("data/")).sort();
+  const actualDataGitlinks = actualGitlinks.filter((entry) => entry.path.startsWith("data/"));
   for (const declaredPath of declaredDataGitlinks) {
     if (!allowedDataGitlinks.includes(declaredPath)) issues.push(`data repository declaration is not allowlisted: ${declaredPath}`);
   }
