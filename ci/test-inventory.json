@@ -156,6 +156,7 @@
   "parkedApps": [],
   "scaffoldedComponents": [
     "sdk",
+    "sdk",
     "src/app",
     "src/cli",
     "src/mcp",
@@ -167,7 +168,6 @@
     "src/migrate/genesis-os",
     "src/migrate/llm-gateway",
     "src/migrate/singularity",
-    "src/sdk",
     "src/server"
   ]
 }
