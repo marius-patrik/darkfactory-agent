@@ -319,9 +319,9 @@ install_launcher() {
 }
 
 install_default_capabilities() {
-  local skill_root="$AGENTS_ROOT/skills"
-  local role_root="$AGENTS_ROOT/roles"
-  local command_root="$AGENTS_ROOT/commands"
+  local skill_root="$AGENTS_ROOT/agents/.global/skills"
+  local role_root="$AGENTS_ROOT/agents/.global/roles"
+  local command_root="$AGENTS_ROOT/agents/.global/commands"
   local persona="$AGENTS_ROOT/persona.md"
   local identity_bundle skill_path name
 
