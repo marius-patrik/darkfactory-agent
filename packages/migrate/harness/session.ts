@@ -17,8 +17,8 @@ import {
   withRenewableStateLock,
   type ActiveRenewableLock,
   type RenewableLockOptions,
-} from "../manager/src/state-lock";
-import { retryWindowsFileOperation, writeTextAtomic } from "../manager/src/state-v2";
+} from "../../clients/cli/manager/src/state-lock";
+import { retryWindowsFileOperation, writeTextAtomic } from "../../clients/cli/manager/src/state-v2";
 
 export interface SessionStateRoot {
   root: string;

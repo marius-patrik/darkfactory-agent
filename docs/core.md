@@ -8,7 +8,7 @@ Shared Agent OS contracts and generated client packages.
 - `contracts-go/` holds generated Go protobuf and Connect stubs.
 - `clients/shared-ts/` holds generated TypeScript protobuf descriptors and shared client exports.
 - `clients/tui/` and `clients/web/` are placeholder client workspaces for the future TUI and web applications; they import `@agent-os/shared-ts` for types and service descriptors.
-- root `docs/contracts/` holds protocol, engine, execution-lane, and worker lifecycle contracts.
+- root `packages/mcp/contracts/` holds protocol, engine, execution-lane, and worker lifecycle contracts.
 - `packages/migrate/core/buf.gen.yaml` regenerates the in-repo Go and TypeScript stubs from this package boundary.
 
 ## Package surface

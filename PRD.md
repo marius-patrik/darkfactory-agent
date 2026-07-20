@@ -76,11 +76,11 @@ The components below are the previous implementation, carried under
 | Component | Role |
 | --- | --- |
 | `packages/migrate/core` | Protobuf sources and generated Go, TypeScript, and Python contracts |
-| `packages/migrate/manager` | `agents` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
+| `packages/clients/cli/manager` | `agents` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
 | `packages/migrate/harness` | Canonical session event handling and tool execution today. Owner-ruled target (2026-07-13, #218): the operation engine owning orchestration, with the orchestrator runtime migrating from the manager |
 | `packages/migrate/gateway` | Local model registry, routing, health, quota, and transient control-plane relay; switcher control plane and cloud OAuth dispatch |
 | `packages/migrate/inference` | Gateway-backed Python agent loop, status, persistence, redaction, and package validation; engine discovery and serve profiles |
-| `packages/migrate/agents/darkfactory` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
+| `packages/darkfactory` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
 
 Binding architecture rule: the manager manages and the harness operates — as
 the owner-ruled target architecture. Local system management (state, installs,
@@ -375,7 +375,7 @@ strictly through them.
 
 - Every active component's full test suite runs in Validate on every PR:
   `src/{core,gateway,harness,inference,manager}` and
-  `packages/migrate/agents/darkfactory`; parked plugins and applications stay excluded.
+  `packages/darkfactory`; parked plugins and applications stay excluded.
 - Real-behavior legs, not only mocks: a real gateway process round-trip
   (plain and streaming) against an OpenAI-wire backend and an engine
   discovery→registration→routing pass; no hardcoded registry counts.

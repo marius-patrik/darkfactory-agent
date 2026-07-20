@@ -81,7 +81,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: stable
-          cache-dependency-path: packages/migrate/core/contracts-go/go.sum
+          cache-dependency-path: packages/sdk/contracts-go/go.sum
 
       - name: Set up uv
         if: contains(fromJSON('["gateway", "gateway-real", "engine-real", "inference"]'), matrix.suite)
@@ -91,7 +91,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run ${{ matrix.suite }} suite
-        run: node packages/scripts/run-ci-suite.mjs ${{ matrix.suite }}
+        run: node scripts/run-ci-suite.mjs ${{ matrix.suite }}
 
   repository-contract:
     name: Repository contract

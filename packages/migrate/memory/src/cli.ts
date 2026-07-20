@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { ensureSharedState, sharedStateFromEnv } from "../../manager/src/state";
+import { ensureSharedState, sharedStateFromEnv } from "../../../clients/cli/manager/src/state";
 import {
   applyMemoryCandidate,
   memoryPluginStatus,

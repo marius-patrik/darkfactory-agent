@@ -13,7 +13,7 @@ product, install, release, or state authority.
 | `tools.ts` | Tool-call parsing/execution and event-backed provider/model switching. |
 
 Managed provider processes are resolved and launched by
-`packages/migrate/manager/src`. Harness state is rooted only through the explicit
+`packages/clients/cli/manager/src`. Harness state is rooted only through the explicit
 Agent OS state descriptor below `AGENTS_HOME`; provider-native state remains
 under `AGENTS_HOME/clis/<provider>`.
 
@@ -36,9 +36,9 @@ From the repository root:
 
 ```sh
 bun run check
-bun test packages/migrate/manager/test/session.test.ts \
-  packages/migrate/manager/test/session-adapters.test.ts \
-  packages/migrate/manager/test/tui-tools.test.ts
+bun test packages/clients/cli/manager/test/session.test.ts \
+  packages/clients/cli/manager/test/session-adapters.test.ts \
+  packages/clients/cli/manager/test/tui-tools.test.ts
 ```
 
 See the [harness specification](specs/harness.md) for the behavioral boundary

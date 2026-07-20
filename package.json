@@ -4,22 +4,23 @@
   "description": "Authoritative Agent OS package surface for the unified `agents` CLI and the Andromeda system implementation.",
   "type": "module",
   "workspaces": [
-    "packages/migrate/manager",
-    "packages/clients/*"
+    "packages/clients/cli/manager",
+    "packages/clients/*",
+    "packages/sdk/shared-ts"
   ],
   "bin": {
-    "agents": "./packages/migrate/manager/src/cli.ts"
+    "agents": "./packages/clients/cli/manager/src/cli.ts"
   },
   "scripts": {
-    "agents": "bun packages/migrate/manager/src/cli.ts",
+    "agents": "bun packages/clients/cli/manager/src/cli.ts",
     "check": "bunx tsc --noEmit",
-    "test": "bun test packages/migrate/manager/test/*.test.ts",
-    "proto:check": "bun packages/scripts/verify-codegen.ts",
-    "layout:check": "node packages/scripts/verify-single-product.mjs",
-    "ci": "node packages/scripts/run-ci-suite.mjs all",
-    "test:compact": "pwsh -NoProfile -ExecutionPolicy Bypass -File packages/migrate/agents/.global/skills/compact/scripts/test_write_compaction_capsule.ps1",
-    "smoke:release": "bun packages/scripts/run-release-smoke.mjs",
-    "smoke:sync": "bun packages/scripts/run-sync-smoke.mjs"
+    "test": "bun test packages/clients/cli/manager/test/*.test.ts",
+    "proto:check": "bun scripts/verify-codegen.ts",
+    "layout:check": "node scripts/verify-single-product.mjs",
+    "ci": "node scripts/run-ci-suite.mjs all",
+    "test:compact": "pwsh -NoProfile -ExecutionPolicy Bypass -File packages/.global/skills/compact/scripts/test_write_compaction_capsule.ps1",
+    "smoke:release": "bun scripts/run-release-smoke.mjs",
+    "smoke:sync": "bun scripts/run-sync-smoke.mjs"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.71.0",

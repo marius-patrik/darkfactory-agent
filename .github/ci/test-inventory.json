@@ -13,7 +13,7 @@
         "packages/migrate/core/tests/ts-import-smoke.ts",
         "packages/migrate/core/tests/codegen-retry.test.ts",
         "packages/migrate/core/tests/python-import-smoke.py",
-        "packages/migrate/core/contracts-go/smoke_test.go",
+        "packages/sdk/contracts-go/smoke_test.go",
         "packages/migrate/core/scripts/python-smoke.mjs"
       ]
     },
@@ -38,9 +38,9 @@
       ],
       "requiredPaths": [
         "packages/migrate/harness/test/tools.test.ts",
-        "packages/migrate/manager/test/session.test.ts",
-        "packages/migrate/manager/test/session-adapters.test.ts",
-        "packages/migrate/manager/test/tui-tools.test.ts"
+        "packages/clients/cli/manager/test/session.test.ts",
+        "packages/clients/cli/manager/test/session-adapters.test.ts",
+        "packages/clients/cli/manager/test/tui-tools.test.ts"
       ]
     },
     {
@@ -58,16 +58,16 @@
     },
     {
       "id": "manager",
-      "path": "packages/migrate/manager",
+      "path": "packages/clients/cli/manager",
       "suite": "manager",
       "platforms": [
         "ubuntu-latest",
         "windows-latest"
       ],
       "requiredPaths": [
-        "packages/migrate/manager/test/state-doctor.test.ts",
-        "packages/migrate/manager/test/state-v2.test.ts",
-        "packages/migrate/manager/test/event-sync.test.ts"
+        "packages/clients/cli/manager/test/state-doctor.test.ts",
+        "packages/clients/cli/manager/test/state-v2.test.ts",
+        "packages/clients/cli/manager/test/event-sync.test.ts"
       ]
     },
     {
@@ -125,7 +125,7 @@
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/scripts/run-sync-smoke.mjs"
+        "scripts/run-sync-smoke.mjs"
       ]
     }
   ],
@@ -137,8 +137,8 @@
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/scripts/verify-test-inventory.mjs",
-        "packages/scripts/verify-test-inventory.test.mjs"
+        "scripts/verify-test-inventory.mjs",
+        "tests/verify-test-inventory.test.mjs"
       ]
     },
     {
@@ -148,32 +148,35 @@
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/scripts/managed-enforcement.test.mjs"
+        "tests/managed-enforcement.test.mjs"
       ]
     }
   ],
   "parkedPlugins": [],
   "parkedApps": [],
   "scaffoldedComponents": [
+    "packages",
+    "packages-manager-legacy",
+    "packages/.global",
+    "packages/.project",
     "packages/clients",
     "packages/clients/app",
     "packages/clients/cli",
-    "packages/clients/shared-ts",
+    "packages/clients/cli/manager",
     "packages/clients/web",
+    "packages/darkfactory",
+    "packages/mcp",
     "packages/migrate",
-    "packages/migrate/agents",
     "packages/migrate/agents-manager-legacy",
-    "packages/migrate/agents/.global",
-    "packages/migrate/agents/.project",
-    "packages/migrate/agents/darkfactory",
     "packages/migrate/dream",
     "packages/migrate/experience",
     "packages/migrate/genesis-os",
     "packages/migrate/llm-gateway",
     "packages/migrate/memory",
     "packages/migrate/singularity",
-    "packages/scripts",
     "packages/sdk",
+    "packages/sdk/contracts-go",
+    "packages/sdk/shared-ts",
     "packages/server",
     "templates",
     "templates/bot",

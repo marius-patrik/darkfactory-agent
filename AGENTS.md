@@ -2,11 +2,11 @@
 
 Load the project-local authority before non-trivial work:
 
-1. `packages/migrate/agents/.project/AGENTS.md`
-2. `packages/migrate/agents/.project/PROJECT.md`
-3. `packages/migrate/agents/.project/COMMANDS.md`
-4. `packages/migrate/agents/.project/STATUS.md`
-5. `packages/migrate/agents/.project/HANDOFF.md`
+1. `packages/.project/AGENTS.md`
+2. `packages/.project/PROJECT.md`
+3. `packages/.project/COMMANDS.md`
+4. `packages/.project/STATUS.md`
+5. `packages/.project/HANDOFF.md`
 
 Shared identity, memory, roles, and skills are installed once under
 `$AGENTS_HOME`; this repository does not carry a second global agent floor.
@@ -17,11 +17,11 @@ root-owned. Do not add `.agents`, `.darkfactory`, `docs/`, `AGENTS.md`,
 Managed repository gitlinks below `src/` retain their independently owned
 child policy and documentation; those child files do not become Andromeda
 authority. Andromeda component documentation belongs under root `docs/`, and
-component-specific validation commands belong in `packages/migrate/agents/.project/COMMANDS.md`.
+component-specific validation commands belong in `packages/.project/COMMANDS.md`.
 
 Component boundaries:
 
-- `packages/migrate/manager` owns the `agents` CLI, canonical state, installs,
+- `packages/clients/cli/manager` owns the `agents` CLI, canonical state, installs,
   credentials/secrets, providers, sessions, memory, packages, lifecycle
   management, and — until the #218 harness migration is implemented and
   accepted — orchestration.

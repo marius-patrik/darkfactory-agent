@@ -275,7 +275,7 @@ install_launcher() {
       write_ps_env AGENTS_CONFIG "$(native_path "$AGENTS_HOME/config.json")"
       write_ps_env AGENTS_SYSTEM_DATA_ROOT "$(native_path "$AGENTS_HOME")"
       write_ps_env AGENTS_BUN "$(native_path "$bun_bin")"
-      write_ps_env AGENTS_ENTRYPOINT "$(native_path "$AGENTS_ROOT/packages/migrate/manager/src/cli.ts")"
+      write_ps_env AGENTS_ENTRYPOINT "$(native_path "$AGENTS_ROOT/packages/clients/cli/manager/src/cli.ts")"
       printf '& $env:AGENTS_BUN $env:AGENTS_ENTRYPOINT @args\n'
       printf 'exit $LASTEXITCODE\n'
     } >"$temporary"
@@ -310,7 +310,7 @@ install_launcher() {
       write_export AGENTS_CONFIG "$AGENTS_HOME/config.json"
       write_export AGENTS_SYSTEM_DATA_ROOT "$AGENTS_HOME"
       write_export AGENTS_BUN "$bun_bin"
-      write_export AGENTS_ENTRYPOINT "$AGENTS_ROOT/packages/migrate/manager/src/cli.ts"
+      write_export AGENTS_ENTRYPOINT "$AGENTS_ROOT/packages/clients/cli/manager/src/cli.ts"
       echo 'exec "$AGENTS_BUN" "$AGENTS_ENTRYPOINT" "$@"'
     } >"$temporary"
   fi
@@ -319,9 +319,9 @@ install_launcher() {
 }
 
 install_default_capabilities() {
-  local skill_root="$AGENTS_ROOT/packages/migrate/agents/.global/skills"
-  local role_root="$AGENTS_ROOT/packages/migrate/agents/.global/roles"
-  local command_root="$AGENTS_ROOT/packages/migrate/agents/.global/commands"
+  local skill_root="$AGENTS_ROOT/packages/.global/skills"
+  local role_root="$AGENTS_ROOT/packages/.global/roles"
+  local command_root="$AGENTS_ROOT/packages/.global/commands"
   local persona="$AGENTS_ROOT/persona.md"
   local identity_bundle skill_path name
 

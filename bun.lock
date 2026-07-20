@@ -15,21 +15,9 @@
       "name": "@agent-os/tui",
       "version": "0.10.0",
     },
-    "packages/clients/shared-ts": {
-      "name": "@agent-os/shared-ts",
-      "version": "0.10.0",
-      "dependencies": {
-        "@bufbuild/protobuf": "2.12.1",
-        "@connectrpc/connect": "2.1.2",
-      },
-    },
-    "packages/clients/web": {
-      "name": "@agent-os/web",
-      "version": "0.10.0",
-    },
-    "packages/migrate/manager": {
+    "packages/clients/cli/manager": {
       "name": "@marius-patrik/andromeda-manager",
-      "version": "0.1.0",
+      "version": "0.10.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "0.23.0",
         "@bufbuild/protobuf": "2.12.1",
@@ -41,9 +29,21 @@
         "typescript": "5.9.3",
       },
     },
+    "packages/clients/web": {
+      "name": "@agent-os/web",
+      "version": "0.10.0",
+    },
+    "packages/sdk/shared-ts": {
+      "name": "@agent-os/shared-ts",
+      "version": "0.10.0",
+      "dependencies": {
+        "@bufbuild/protobuf": "2.12.1",
+        "@connectrpc/connect": "2.1.2",
+      },
+    },
   },
   "packages": {
-    "@agent-os/shared-ts": ["@agent-os/shared-ts@workspace:packages/clients/shared-ts"],
+    "@agent-os/shared-ts": ["@agent-os/shared-ts@workspace:packages/sdk/shared-ts"],
 
     "@agent-os/tui": ["@agent-os/tui@workspace:packages/clients/cli"],
 
@@ -71,7 +71,7 @@
 
     "@connectrpc/connect": ["@connectrpc/connect@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA=="],
 
-    "@marius-patrik/andromeda-manager": ["@marius-patrik/andromeda-manager@workspace:packages/migrate/manager"],
+    "@marius-patrik/andromeda-manager": ["@marius-patrik/andromeda-manager@workspace:packages/clients/cli/manager"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
