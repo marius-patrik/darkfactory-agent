@@ -1,27 +1,3 @@
-[submodule "DarkFactory"]
-	path = plugins/DarkFactory
-	url = https://github.com/marius-patrik/DarkFactory.git
-	branch = main
-[submodule "Memory"]
-	path = plugins/Memory
-	url = https://github.com/marius-patrik/Memory.git
-	branch = main
-[submodule "LifeQuest"]
-	path = plugins/LifeQuest
-	url = https://github.com/marius-patrik/LifeQuest.git
-	branch = main
-[submodule "SkyAgent"]
-	path = plugins/SkyAgent
-	url = https://github.com/marius-patrik/SkyAgent.git
-	branch = main
-[submodule "Singularity"]
-	path = apps/Singularity
-	url = https://github.com/marius-patrik/Singularity.git
-	branch = main
-[submodule "Fabrica"]
-	path = apps/Fabrica
-	url = https://github.com/marius-patrik/Fabrica.git
-	branch = dev
 [submodule "data"]
 	path = data/andromeda
 	url = https://github.com/marius-patrik/Andromeda-data.git
@@ -30,3 +6,27 @@
 	path = data/darkfactory
 	url = https://github.com/marius-patrik/darkfactory-data.git
 	branch = main
+[submodule "packages/darkfactory"]
+	path = packages/darkfactory
+	url = https://github.com/marius-patrik/DarkFactory.git
+	branch = main
+[submodule "packages/memory"]
+	path = packages/memory
+	url = https://github.com/marius-patrik/Memory.git
+	branch = main
+[submodule "packages/lifequest"]
+	path = packages/lifequest
+	url = https://github.com/marius-patrik/LifeQuest.git
+	branch = main
+[submodule "packages/skyagent"]
+	path = packages/skyagent
+	url = https://github.com/marius-patrik/SkyAgent.git
+	branch = main
+[submodule "packages/singularity"]
+	path = packages/singularity
+	url = https://github.com/marius-patrik/Singularity.git
+	branch = main
+[submodule "packages/fabrica"]
+	path = packages/fabrica
+	url = https://github.com/marius-patrik/Fabrica.git
+	branch = dev

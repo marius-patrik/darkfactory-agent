@@ -16,7 +16,6 @@ const tracked = execFileSync("git", ["-C", root, "ls-files", "--cached", "--othe
 const issues = [];
 issues.push(...inventoryIssues(root));
 const requiredLayout = [
-  "apps",
   "data",
   "plugins",
   "packages/core",
@@ -53,8 +52,8 @@ for (const relative of tracked) {
 const gitmodules = fs.readFileSync(path.join(root, ".gitmodules"), "utf8");
 for (const match of gitmodules.matchAll(/^\s*path\s*=\s*(.+)\s*$/gm)) {
   const submodulePath = match[1].trim();
-  if (!["apps/", "data/", "plugins/"].some((prefix) => submodulePath.startsWith(prefix))) {
-    issues.push(`managed repository submodule is outside apps/, data/, or plugins/: ${submodulePath}`);
+  if (!["data/", "packages/"].some((prefix) => submodulePath.startsWith(prefix))) {
+    issues.push(`managed repository submodule is outside data/ or packages/: ${submodulePath}`);
   }
 }
 

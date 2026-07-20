@@ -79,10 +79,10 @@ ready. Do not use an old product checkout or installer as an update source.
   is scheduled; it is the only public JavaScript package and `agents` CLI
   surface.
 - **agents** is the CLI.
-- `packages/` contains one direct child for each implementation domain.
-- `plugins/` contains the managed product plugins and is also the authored
-  root for repository-owned plugin capabilities.
-- `apps/` contains managed product applications.
+- `packages/` contains one direct child for each implementation domain,
+  managed product plugins, and managed product applications.
+- `plugins/` remains the authored root for repository-owned plugin capabilities;
+  it does not contain managed product repository gitlinks.
 - `data/` contains development pins for separate state and ledger repositories.
 
 Older product and topology names are migration evidence only. They are not
@@ -178,10 +178,10 @@ older snapshot-sync or provider-adoption command to fall back to.
   [gateway documentation](docs/gateway-runtime.md).
 - `packages/inference/` — agent loop and inference runtime; see
   [inference documentation](docs/inference.md).
-- `plugins/DarkFactory/`, `plugins/Memory/`, `plugins/LifeQuest/`, and
-  `plugins/SkyAgent/` — managed product plugins.
-- `apps/Singularity/` and `apps/Fabrica/` — managed product applications.
-- `skills/`, `hooks/`, `roles/`, and `commands/` — authored capability roots;
+- `packages/darkfactory/`, `packages/memory/`, `packages/lifequest/`, and
+  `packages/skyagent/` — managed product plugins.
+- `packages/singularity/` and `packages/fabrica/` — managed product applications.
+- `skills/`, `plugins/`, `hooks/`, `roles/`, and `commands/` — authored capability roots;
   `persona.md` is the authored identity persona.
 - `data/andromeda/` — the development pin for Andromeda-data; the live
   Andromeda-data checkout is `$AGENTS_HOME` and is also
@@ -197,7 +197,8 @@ The repository authors its capability floor directly at `skills/`, `plugins/`,
 `hooks/`, `roles/`, and `commands/`. The installer validates and publishes that
 source into the canonical `AGENTS_HOME` state tree; provider-specific copies are
 not another authority. Managed product plugins and authored plugin capabilities
-share `plugins/`, so every direct child must have one owner and one manifest.
+have separate `packages/` and `plugins/` roots, so moving the managed repositories
+does not change the authored capability-source contract.
 
 ## Validation
 

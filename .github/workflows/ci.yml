@@ -50,6 +50,12 @@ jobs:
           - suite: manager
             runner: windows-latest
             label: manager platform
+          - suite: memory-plugin
+            runner: ubuntu-latest
+            label: memory plugin
+          - suite: memory-plugin
+            runner: windows-latest
+            label: memory plugin platform
           - suite: darkfactory
             runner: ubuntu-latest
             label: DarkFactory plugin
@@ -99,17 +105,49 @@ jobs:
       - name: Run ${{ matrix.suite }} suite
         run: node scripts/run-ci-suite.mjs ${{ matrix.suite }}
 
+  repository-contract:
+    name: Repository contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact head without persisted credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact diff and initialize every moved public gitlink
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git diff --check "$BASE_SHA...$HEAD_SHA"
+          git submodule update --init --recursive -- packages/darkfactory packages/memory packages/lifequest packages/skyagent packages/singularity packages/fabrica
+          status="$(git submodule status --recursive -- packages/darkfactory packages/memory packages/lifequest packages/skyagent packages/singularity packages/fabrica)"
+          printf '%s\n' "$status"
+          if printf '%s\n' "$status" | grep -Eq '^[-+U]'; then
+            echo "One or more recursive submodules are missing, mismatched, or conflicted." >&2
+            exit 1
+          fi
+
   validate:
     name: Validate
     if: ${{ always() }}
-    needs: suites
+    needs:
+      - suites
+      - repository-contract
     runs-on: ubuntu-latest
     steps:
-      - name: Require every suite and platform leg
+      - name: Require every suite, platform leg, and repository contract
         env:
           SUITES_RESULT: ${{ needs.suites.result }}
+          REPOSITORY_CONTRACT_RESULT: ${{ needs.repository-contract.result }}
         run: |
           if [ "$SUITES_RESULT" != "success" ]; then
             echo "One or more required CI suite legs did not pass: $SUITES_RESULT" >&2
+            exit 1
+          fi
+          if [ "$REPOSITORY_CONTRACT_RESULT" != "success" ]; then
+            echo "The exact diff or fresh-clone recursive submodule contract did not pass: $REPOSITORY_CONTRACT_RESULT" >&2
             exit 1
           fi

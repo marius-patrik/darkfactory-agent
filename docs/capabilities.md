@@ -2,8 +2,8 @@
 
 The root `skills/`, `plugins/`, `hooks/`, `roles/`, and `commands/` directories,
 together with `persona.md`, are the authored source for the shared Agent OS
-capability floor. Managed product plugins and capability plugins share the
-`plugins/` namespace, so a direct child cannot have competing owners.
+capability floor. Managed product plugin repositories live under `packages/`;
+that move does not change the separate authored `plugins/` capability namespace.
 The installer validates every payload, writes an immutable object below
 `AGENTS_HOME/store/sha256`, atomically materializes skills below
 `AGENTS_HOME/skills`, activates the single Rommie identity, and records exact

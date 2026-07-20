@@ -251,6 +251,13 @@ const STRUCTURAL_STRING_FIELDS = new Set([
   "nextCheckAt",
 ]);
 
+// Dream cursor authority fields reference provider transcript artifacts by
+// their uuid filename. That exact leaf shape is admitted for these two fields
+// only; every other field keeps the fail-closed opaque-token treatment.
+const SESSION_ARTIFACT_URI_FIELDS = new Set(["pathUri", "lastSessionTitleUri"]);
+const SESSION_ARTIFACT_LEAF =
+  /(^|[\\/])[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.(?:jsonl|json)(?=$|[\\/])/gi;
+
 const PUBLIC_OPERATIONAL_IDENTIFIERS = new Set([
   "online/offline/busy/version/labels/last",
   "lifecycle/persistence/registration/supervision/observability",
@@ -331,6 +338,8 @@ const PUBLIC_ABSOLUTE_PATH_LEAVES = new Set([
 // still enter the fail-closed path-token scanner.
 const PUBLIC_ABSOLUTE_PATH_LEAF_HASHES = new Set([
   "94e8c98f13c41e8698a9b48326297bc7c52fa290a2a2ab6ae1f9ce6b07eccf48",
+  // hygiene-run-20260717.md — canonical hygiene evidence under provenance/ (#294).
+  "a766731b018adc8a927e429e6b4c7fd5d9239e161708271ddae78008f071b013",
 ]);
 
 function isPublicOperationalIdentifier(candidate: string): boolean {
@@ -780,13 +789,16 @@ function secretFieldPath(value: unknown, field = "", path = ""): string | null {
   if (typeof value === "string") {
     if (STRUCTURAL_STRING_FIELDS.has(field) && (UUID.test(value) || CANONICAL_HASH_OR_ID.test(value))) return null;
     if (field === "capsuleId" && COMPACTION_CAPSULE_ID.test(value)) return null;
-    const trimmed = value.trim();
+    const inspected = SESSION_ARTIFACT_URI_FIELDS.has(field)
+      ? value.replace(SESSION_ARTIFACT_LEAF, "$1session-artifact.jsonl")
+      : value;
+    const trimmed = inspected.trim();
     if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
       let structured: unknown;
       try {
         structured = JSON.parse(trimmed) as unknown;
       } catch {
-        return secretLikeText(value) ? path || field || "<root>" : null;
+        return secretLikeText(inspected) ? path || field || "<root>" : null;
       }
       if (structured !== null && typeof structured === "object") {
         try {
@@ -797,7 +809,7 @@ function secretFieldPath(value: unknown, field = "", path = ""): string | null {
         }
       }
     }
-    return secretLikeText(value) ? path || field || "<root>" : null;
+    return secretLikeText(inspected) ? path || field || "<root>" : null;
   }
   if (Array.isArray(value)) {
     for (const [index, item] of value.entries()) {

@@ -92,8 +92,11 @@ export function inventoryIssues(root = repositoryRoot) {
     if (!CI_SUITE_NAMES.includes(suite)) issues.push(`inventory references an unknown CI runner suite: ${suite}`);
   }
 
-  const declaredPackages = activeComponents
-    .map((entry) => entry.path)
+  const declaredPackages = [
+    ...activeComponents.map((entry) => entry.path),
+    ...parkedPlugins,
+    ...parkedApps,
+  ]
     .filter((entry) => typeof entry === "string" && entry.startsWith("packages/"))
     .sort();
   const actualPackages = sortedDirectories(root, "packages");
@@ -105,28 +108,78 @@ export function inventoryIssues(root = repositoryRoot) {
   }
 
   const declaredGitlinks = declaredSubmodulePaths(root);
+  const actualGitlinks = indexedGitlinks(root);
+  for (const declaredPath of declaredGitlinks) {
+    if (!declaredPath.startsWith("packages/") && !declaredPath.startsWith("data/")) {
+      issues.push(`managed repository declaration is outside data/ or packages/: ${declaredPath}`);
+    }
+  }
+  for (const gitlink of actualGitlinks) {
+    if (!gitlink.path.startsWith("packages/") && !gitlink.path.startsWith("data/")) {
+      issues.push(`managed repository gitlink is outside data/ or packages/: ${gitlink.path}`);
+    }
+  }
   const activeGitlinks = activeComponents
     .filter((entry) => entry.submodule === true)
     .map((entry) => entry.path)
     .filter((entry) => typeof entry === "string");
-  for (const [kind, prefix, parked] of [
-    ["plugin", "plugins/", parkedPlugins],
-    ["app", "apps/", parkedApps],
-  ]) {
-    const gitlinks = declaredGitlinks.filter((entry) => entry.startsWith(prefix)).sort();
-    const active = activeGitlinks.filter((entry) => entry.startsWith(prefix));
-    const classified = [...active, ...parked].sort();
-    for (const gitlinkPath of gitlinks) {
-      if (!classified.includes(gitlinkPath)) issues.push(`${kind} is neither active nor parked in CI inventory: ${gitlinkPath}`);
+  const classifications = [
+    { label: "active", paths: activeGitlinks },
+    { label: "parked plugin", paths: parkedPlugins.filter((entry) => typeof entry === "string") },
+    { label: "parked application", paths: parkedApps.filter((entry) => typeof entry === "string") },
+  ];
+  for (const classification of classifications) {
+    for (const managedPath of unique(classification.paths)) {
+      if (classification.paths.filter((entry) => entry === managedPath).length > 1) {
+        issues.push(`managed package is repeated in the ${classification.label} CI classification: ${managedPath}`);
+      }
     }
-    for (const classifiedPath of classified) {
-      if (!gitlinks.includes(classifiedPath)) issues.push(`classified ${kind} is not a repository gitlink: ${classifiedPath}`);
+  }
+  for (const managedPath of unique(classifications.flatMap((entry) => entry.paths))) {
+    const memberships = classifications.filter((entry) => entry.paths.includes(managedPath)).map((entry) => entry.label);
+    if (memberships.length > 1) {
+      issues.push(`managed package has conflicting CI classifications (${memberships.join(", ")}): ${managedPath}`);
+    }
+  }
+  const declaredPackageGitlinks = declaredGitlinks.filter((entry) => entry.startsWith("packages/")).sort();
+  const actualPackageGitlinks = actualGitlinks.filter((entry) => entry.path.startsWith("packages/"));
+  const classifiedPackageGitlinks = [...activeGitlinks, ...parkedPlugins, ...parkedApps]
+    .filter((entry) => entry.startsWith("packages/"))
+    .sort();
+  const managedPackagePaths = unique([
+    ...declaredPackageGitlinks,
+    ...actualPackageGitlinks.map((entry) => entry.path),
+    ...classifiedPackageGitlinks,
+  ]).sort();
+  for (const managedPath of managedPackagePaths) {
+    if (!/^packages\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(managedPath)) {
+      issues.push(`managed package path is not a lowercase direct child of packages/: ${managedPath}`);
+    }
+    const declarationCount = declaredPackageGitlinks.filter((entry) => entry === managedPath).length;
+    const gitlinks = actualPackageGitlinks.filter((entry) => entry.path === managedPath);
+    const classified = classifiedPackageGitlinks.includes(managedPath);
+    if ((declarationCount > 0 || gitlinks.length > 0) && !classified) {
+      issues.push(`managed package is neither active nor parked in CI inventory: ${managedPath}`);
+    }
+    if (gitlinks.length > 0 && declarationCount === 0) {
+      issues.push(`managed package gitlink is not declared in .gitmodules: ${managedPath}`);
+    }
+    if (classified && declarationCount === 0) {
+      issues.push(`classified managed package is not declared in .gitmodules: ${managedPath}`);
+    }
+    if (declarationCount > 1) issues.push(`managed package is declared multiple times: ${managedPath}`);
+    if (classified && gitlinks.length === 0) {
+      issues.push(`classified managed package is not a repository gitlink: ${managedPath}`);
+    }
+    if (gitlinks.length > 1) issues.push(`managed package has multiple index entries: ${managedPath}`);
+    if (gitlinks.some((entry) => entry.stage !== 0)) {
+      issues.push(`managed package has unmerged index entries: ${managedPath}`);
     }
   }
 
   const allowedDataGitlinks = ["data/andromeda", "data/darkfactory"];
   const declaredDataGitlinks = declaredGitlinks.filter((entry) => entry.startsWith("data/")).sort();
-  const actualDataGitlinks = indexedGitlinks(root).filter((entry) => entry.path.startsWith("data/"));
+  const actualDataGitlinks = actualGitlinks.filter((entry) => entry.path.startsWith("data/"));
   for (const declaredPath of declaredDataGitlinks) {
     if (!allowedDataGitlinks.includes(declaredPath)) issues.push(`data repository declaration is not allowlisted: ${declaredPath}`);
   }
@@ -165,7 +218,18 @@ export function inventoryIssues(root = repositoryRoot) {
     }
   }
   if (!/^\s+name:\s+Validate\s*$/m.test(workflow)) issues.push("CI workflow must preserve the required Validate context");
-  if (!/^\s+needs:\s+suites\s*$/m.test(workflow)) issues.push("Validate must aggregate every suite matrix leg");
+  if (!/^\s+name:\s+Repository contract\s*$/m.test(workflow)) {
+    issues.push("CI workflow must preserve the exact repository contract job");
+  }
+  if (!/^\s+fetch-depth:\s+0\s*$/m.test(workflow) || !workflow.includes("git submodule update --init --recursive -- packages/darkfactory packages/memory packages/lifequest packages/skyagent packages/singularity packages/fabrica")) {
+    issues.push("repository contract must fetch full history and initialize every moved public gitlink");
+  }
+  if (!workflow.includes('git diff --check "$BASE_SHA...$HEAD_SHA"') || !workflow.includes("git submodule status --recursive -- packages/darkfactory packages/memory packages/lifequest packages/skyagent packages/singularity packages/fabrica")) {
+    issues.push("repository contract must verify the exact diff and moved recursive gitlink state");
+  }
+  if (!/^\s+needs:\s*\r?\n\s+-\s+suites\s*\r?\n\s+-\s+repository-contract\s*$/m.test(workflow)) {
+    issues.push("Validate must aggregate every suite matrix leg and the repository contract");
+  }
   if (!/^\s+if:\s+\$\{\{\s*always\(\)\s*\}\}\s*$/m.test(workflow)) {
     issues.push("Validate must run even when a suite fails so omission cannot look green");
   }

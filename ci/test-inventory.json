@@ -59,8 +59,18 @@
       ]
     },
     {
+      "id": "memory-plugin",
+      "path": "plugins/memory",
+      "suite": "memory-plugin",
+      "platforms": ["ubuntu-latest", "windows-latest"],
+      "requiredPaths": [
+        "plugins/memory/test/memory-plugin.test.ts",
+        "plugins/memory/src/index.ts"
+      ]
+    },
+    {
       "id": "darkfactory",
-      "path": "plugins/DarkFactory",
+      "path": "packages/darkfactory",
       "suite": "darkfactory",
       "platforms": ["ubuntu-latest"],
       "submodule": true,
@@ -68,7 +78,7 @@
     },
     {
       "id": "memory",
-      "path": "plugins/Memory",
+      "path": "packages/memory",
       "suite": "memory",
       "platforms": ["ubuntu-latest", "windows-latest"],
       "submodule": true,
@@ -118,17 +128,16 @@
       "suite": "review",
       "platforms": ["ubuntu-latest"],
       "requiredPaths": [
-        ".github/scripts/run-kimi-review.test.mjs",
         ".github/scripts/managed-enforcement.test.mjs"
       ]
     }
   ],
   "parkedPlugins": [
-    "plugins/LifeQuest",
-    "plugins/SkyAgent"
+    "packages/lifequest",
+    "packages/skyagent"
   ],
   "parkedApps": [
-    "apps/Fabrica",
-    "apps/Singularity"
+    "packages/fabrica",
+    "packages/singularity"
   ]
 }

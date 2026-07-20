@@ -77,6 +77,7 @@ export const CI_SUITE_NAMES = Object.freeze([
   "harness",
   "inference",
   "manager",
+  "memory-plugin",
   "darkfactory",
   "memory",
   "release",
@@ -162,20 +163,29 @@ const suites = {
       "skills/compact/scripts/test_write_compaction_capsule.ps1",
     ]);
   },
+  "memory-plugin"() {
+    run("memory plugin types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "plugins/memory/tsconfig.json"]);
+    run("memory plugin tests", "bun", [
+      "test",
+      "--timeout=30000",
+      "--max-concurrency=1",
+      ...discoverBunTests(path.join("plugins", "memory", "test")),
+    ]);
+  },
   darkfactory() {
-    run("initialize pinned DarkFactory", "git", ["submodule", "update", "--init", "--depth", "1", "plugins/DarkFactory"]);
-    const cwd = path.join(root, "plugins", "DarkFactory");
+    run("initialize pinned DarkFactory", "git", ["submodule", "update", "--init", "--depth", "1", "packages/darkfactory"]);
+    const cwd = path.join(root, "packages", "darkfactory");
     runNpm("DarkFactory dependency install", ["ci"], cwd);
     runNpm("DarkFactory full check", ["run", "check"], cwd);
   },
   memory() {
-    run("initialize pinned Memory", "git", ["submodule", "update", "--init", "--depth", "1", "plugins/Memory"]);
-    run("Memory types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "plugins/Memory/tsconfig.json"]);
+    run("initialize pinned Memory", "git", ["submodule", "update", "--init", "--depth", "1", "packages/memory"]);
+    run("Memory types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "packages/memory/tsconfig.json"]);
     run("Memory integration", "bun", [
       "test",
       "--timeout=30000",
       "--max-concurrency=1",
-      "plugins/Memory/test/memory-plugin.test.ts",
+      "packages/memory/test/memory-plugin.test.ts",
     ]);
   },
   release() {
@@ -187,7 +197,6 @@ const suites = {
   review() {
     run("review workflow regressions", process.execPath, [
       "--test",
-      ".github/scripts/run-kimi-review.test.mjs",
       ".github/scripts/managed-enforcement.test.mjs",
     ]);
   },

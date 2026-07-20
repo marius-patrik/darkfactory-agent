@@ -21,7 +21,7 @@ function addIndexEntries(target, input) {
 
 function fixture() {
   const target = mkdtempSync(path.join(tmpdir(), "andromeda-ci-inventory-"));
-  for (const relative of ["ci", "scripts", ".github/workflows", "apps", "packages", "plugins"]) {
+  for (const relative of ["ci", "scripts", ".github/workflows", "packages"]) {
     mkdirSync(path.join(target, relative), { recursive: true });
   }
   cpSync(path.join(root, "ci", "test-inventory.json"), path.join(target, "ci", "test-inventory.json"));
@@ -95,15 +95,145 @@ test("denied failure: a new package without a suite cannot pass layout validatio
   }
 });
 
-test("denied failure: a new app without an inventory classification cannot pass layout validation", () => {
+test("denied failure: a new managed package without an inventory classification cannot pass layout validation", () => {
   const target = fixture();
   try {
     const gitmodulesPath = path.join(target, ".gitmodules");
     writeFileSync(
       gitmodulesPath,
-      `${requireText(gitmodulesPath)}[submodule "Unclassified"]\n\tpath = apps/Unclassified\n\turl = https://example.test/Unclassified.git\n`,
+      `${requireText(gitmodulesPath)}[submodule "packages/unclassified"]\n\tpath = packages/unclassified\n\turl = https://example.test/Unclassified.git\n`,
     );
-    assert.match(inventoryIssues(target).join("\n"), /app is neither active nor parked in CI inventory: apps\/Unclassified/);
+    assert.match(
+      inventoryIssues(target).join("\n"),
+      /managed package is neither active nor parked in CI inventory: packages\/unclassified/,
+    );
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: Validate cannot omit fresh-clone evidence for the moved public gitlinks", () => {
+  const target = fixture();
+  try {
+    const workflowPath = path.join(target, ".github", "workflows", "ci.yml");
+    writeFileSync(
+      workflowPath,
+      requireText(workflowPath).replace("git submodule update --init --recursive -- packages/darkfactory", "git submodule update --init --recursive -- packages/omitted"),
+    );
+    assert.match(
+      inventoryIssues(target).join("\n"),
+      /repository contract must fetch full history and initialize every moved public gitlink/,
+    );
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: managed package classifications must be unique and mutually exclusive", () => {
+  const target = fixture();
+  try {
+    const inventoryPath = path.join(target, "ci", "test-inventory.json");
+    const inventory = JSON.parse(requireText(inventoryPath));
+    inventory.parkedPlugins.push("packages/darkfactory", "packages/lifequest");
+    writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+    const issues = inventoryIssues(target).join("\n");
+    assert.match(issues, /managed package has conflicting CI classifications \(active, parked plugin\): packages\/darkfactory/);
+    assert.match(issues, /managed package is repeated in the parked plugin CI classification: packages\/lifequest/);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: an index-only package gitlink cannot evade declaration and classification", () => {
+  const target = fixture();
+  try {
+    addIndexEntries(target, `160000 ${fixtureGitlinkOid} 0\tpackages/index-only\n`);
+    const issues = inventoryIssues(target).join("\n");
+    assert.match(issues, /managed package gitlink is not declared in \.gitmodules: packages\/index-only/);
+    assert.match(issues, /managed package is neither active nor parked in CI inventory: packages\/index-only/);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: declarations and index gitlinks outside data and packages cannot pass", () => {
+  const target = fixture();
+  try {
+    const gitmodulesPath = path.join(target, ".gitmodules");
+    writeFileSync(
+      gitmodulesPath,
+      `${requireText(gitmodulesPath)}[submodule "legacy-plugin"]\n\tpath = plugins/legacy\n\turl = https://example.test/legacy.git\n`,
+    );
+    addIndexEntries(target, `160000 ${fixtureGitlinkOid} 0\tapps/index-only\n`);
+    const issues = inventoryIssues(target).join("\n");
+    assert.match(issues, /managed repository declaration is outside data\/ or packages\/: plugins\/legacy/);
+    assert.match(issues, /managed repository gitlink is outside data\/ or packages\/: apps\/index-only/);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: a classified managed package declaration without an index gitlink cannot pass", () => {
+  const target = fixture();
+  try {
+    git(target, "update-index", "--force-remove", "packages/darkfactory");
+    assert.match(
+      inventoryIssues(target).join("\n"),
+      /classified managed package is not a repository gitlink: packages\/darkfactory/,
+    );
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: duplicate managed package declarations cannot pass", () => {
+  const target = fixture();
+  try {
+    const gitmodulesPath = path.join(target, ".gitmodules");
+    writeFileSync(
+      gitmodulesPath,
+      `${requireText(gitmodulesPath)}[submodule "duplicate-darkfactory"]\n\tpath = packages/darkfactory\n\turl = https://example.test/duplicate.git\n`,
+    );
+    assert.match(
+      inventoryIssues(target).join("\n"),
+      /managed package is declared multiple times: packages\/darkfactory/,
+    );
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: conflicted managed package index entries cannot pass", () => {
+  const target = fixture();
+  try {
+    git(target, "update-index", "--force-remove", "packages/darkfactory");
+    addIndexEntries(
+      target,
+      `160000 ${fixtureGitlinkOid} 1\tpackages/darkfactory\n160000 ${fixtureGitlinkOid} 2\tpackages/darkfactory\n`,
+    );
+    const issues = inventoryIssues(target).join("\n");
+    assert.match(issues, /managed package has multiple index entries: packages\/darkfactory/);
+    assert.match(issues, /managed package has unmerged index entries: packages\/darkfactory/);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("denied failure: managed gitlinks must be lowercase direct package children", () => {
+  const target = fixture();
+  try {
+    const gitmodulesPath = path.join(target, ".gitmodules");
+    writeFileSync(
+      gitmodulesPath,
+      `${requireText(gitmodulesPath)}[submodule "uppercase"]\n\tpath = packages/Uppercase\n\turl = https://example.test/uppercase.git\n[submodule "nested"]\n\tpath = packages/nested/rogue\n\turl = https://example.test/nested.git\n`,
+    );
+    addIndexEntries(
+      target,
+      `160000 ${fixtureGitlinkOid} 0\tpackages/Uppercase\n160000 ${fixtureGitlinkOid} 0\tpackages/nested/rogue\n`,
+    );
+    const issues = inventoryIssues(target).join("\n");
+    assert.match(issues, /managed package path is not a lowercase direct child of packages\/: packages\/Uppercase/);
+    assert.match(issues, /managed package path is not a lowercase direct child of packages\/: packages\/nested\/rogue/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }

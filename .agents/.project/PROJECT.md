@@ -5,8 +5,8 @@ the implementation; `agents` is the only operator/runtime CLI and
 `/Users/user/.agents` is the personal installation's only state root.
 
 Implementation components are direct children of `packages/`: `manager`,
-`core`, `harness`, `gateway`, and `inference`. Managed plugin repositories are
-Git submodules under `plugins/`, managed applications are under `apps/`, and
+`core`, `harness`, `gateway`, and `inference`. Managed plugin repositories and
+managed applications are also Git submodules under `packages/`, and
 development data repositories are under `data/`. `data/andromeda` pins the
 Andromeda-data source contract while `data/darkfactory` pins DarkFactory's data
 ledger; the live Andromeda-data checkout remains `$AGENTS_HOME` itself. Their
@@ -14,9 +14,11 @@ names identify components, not alternate Agent OS products or state authorities.
 
 All repository authority is rooted here: `.agents/` owns project guidance,
 `.darkfactory/` owns managed-repository policy, and `docs/` owns component,
-protocol, architecture, and specification documentation. Package directories
-contain implementation and package manifests only; they must not carry nested
-repository authorities or documentation trees.
+protocol, architecture, and specification documentation. Superproject-owned
+implementation packages contain implementation and package manifests only;
+they must not carry nested repository authorities or documentation trees.
+Managed repository gitlinks below `packages/` retain their independently owned
+child authority and documentation without becoming Andromeda authority.
 
 Component ownership:
 
