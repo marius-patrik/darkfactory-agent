@@ -4,15 +4,22 @@
   "workspaces": {
     "": {
       "name": "@marius-patrik/agents-manager",
+      "dependencies": {
+        "@agentclientprotocol/sdk": "0.23.0",
+        "@bufbuild/protobuf": "2.12.1",
+        "@connectrpc/connect": "2.1.2",
+        "zod": "4.3.6",
+      },
       "devDependencies": {
         "@bufbuild/buf": "1.71.0",
-        "@bufbuild/protobuf": "2.12.1",
         "@types/bun": "1.3.14",
         "typescript": "5.9.3",
       },
     },
   },
   "packages": {
+    "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@0.23.0", "", { "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-wIGDQMSXwhoSPNCJflSQvf4WeSU2Jq1bbPRAwwb49euo9qMcND5Pb80hD7hVfuAwz9ZvvDuzVrNTOZrvKPR9Eg=="],
+
     "@bufbuild/buf": ["@bufbuild/buf@1.71.0", "", { "optionalDependencies": { "@bufbuild/buf-darwin-arm64": "1.71.0", "@bufbuild/buf-darwin-x64": "1.71.0", "@bufbuild/buf-linux-aarch64": "1.71.0", "@bufbuild/buf-linux-armv7": "1.71.0", "@bufbuild/buf-linux-x64": "1.71.0", "@bufbuild/buf-win32-arm64": "1.71.0", "@bufbuild/buf-win32-x64": "1.71.0" }, "bin": { "buf": "bin/buf", "protoc-gen-buf-lint": "bin/protoc-gen-buf-lint", "protoc-gen-buf-breaking": "bin/protoc-gen-buf-breaking" } }, "sha512-GDcjBCwLgHT/4nX4YSnYatZ7sDZDpHV6dxQvoT2/P6gKvV23O6hl8NryzLIRKmeau0FRXpQKHVy1dMfnBSpy+w=="],
 
     "@bufbuild/buf-darwin-arm64": ["@bufbuild/buf-darwin-arm64@1.71.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-qZ7xZQyen/jOKFPVs3dlN9pMA56PI4YEo3r4/9ixtiH9gyFgfowR31axsocUgXGThjiN8mvOA8WfpG2tvaSvsw=="],
@@ -31,6 +38,8 @@
 
     "@bufbuild/protobuf": ["@bufbuild/protobuf@2.12.1", "", {}, "sha512-BvAMfS6LrgZiryOAZ4pBYucu4wG/Ei/9o9DZ9akbREnMLbPJiom2i8b9C8IsKErQoiKqVhrerzt3kOT/RrzLHg=="],
 
+    "@connectrpc/connect": ["@connectrpc/connect@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA=="],
+
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
     "@types/node": ["@types/node@26.1.1", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw=="],
@@ -40,5 +49,7 @@
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
+
+    "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
   }
 }
