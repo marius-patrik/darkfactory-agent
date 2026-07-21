@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // @ts-ignore Native ESM workflow controller.
-const release: any = await import("../.github/scripts/df-release.mjs");
+const release: any = await import("../../../scripts/df-release.mjs");
 
 const SHA = {
   main: "1111111111111111111111111111111111111111",

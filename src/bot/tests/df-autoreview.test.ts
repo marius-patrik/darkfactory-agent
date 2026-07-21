@@ -5,11 +5,11 @@ import test from "node:test";
 import { findDelimiterEscapes } from "../prompts.js";
 
 // @ts-ignore Workflow protocol helpers are native ESM, not built TypeScript modules.
-const autoreviewModule: any = await import("../.github/scripts/df-autoreview.mjs");
+const autoreviewModule: any = await import("../../../scripts/df-autoreview.mjs");
 // @ts-ignore Workflow policy helpers are native ESM, not built TypeScript modules.
-const modelModule: any = await import("../.github/scripts/df-model-policy.mjs");
+const modelModule: any = await import("../../../scripts/df-model-policy.mjs");
 // @ts-ignore Workflow entrypoint helpers are native ESM, not built TypeScript modules.
-const autoreviewRunnerModule: any = await import("../.github/scripts/run-darkfactory-autoreview.mjs");
+const autoreviewRunnerModule: any = await import("../../../scripts/run-darkfactory-autoreview.mjs");
 
 const {
   loadAutoreviewPolicy,

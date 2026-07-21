@@ -7,10 +7,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const submodules: any = await import("../.github/scripts/df-submodule-autoupdate.mjs?unit=submodule-autoupdate-test");
-const checkout: any = await import("../.github/scripts/df-submodule-checkout.mjs?unit=submodule-checkout-test");
-const orchestrator: any = await import("../.github/scripts/df-orchestrate.mjs?unit=submodule-dashboard-test");
-const dfLib: any = await import("../.github/scripts/df-lib.mjs?unit=submodule-ledger-test");
+const submodules: any = await import("../../../scripts/df-submodule-autoupdate.mjs?unit=submodule-autoupdate-test");
+const checkout: any = await import("../../../scripts/df-submodule-checkout.mjs?unit=submodule-checkout-test");
+const orchestrator: any = await import("../../../scripts/df-orchestrate.mjs?unit=submodule-dashboard-test");
+const dfLib: any = await import("../../../scripts/df-lib.mjs?unit=submodule-ledger-test");
 
 const CHILD = { owner: "marius-patrik", repo: "DarkFactory" };
 const PARENT = { owner: "marius-patrik", repo: "Andromeda" };
@@ -1158,7 +1158,7 @@ test("finalization binds the read-only run and current App gates before automerg
 
 test("managed workflow keeps trusted planning, mutation, and validation authorities separate", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-submodule-autoupdate.yml", import.meta.url), "utf8");
-  const source = await readFile(new URL("../.github/scripts/df-submodule-autoupdate.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-submodule-autoupdate.mjs", import.meta.url), "utf8");
   const manifest = JSON.parse(await readFile(new URL("../.darkfactory/managed-repository.json", import.meta.url), "utf8"));
   const installer = JSON.parse(await readFile(new URL("../.darkfactory/installer-policy.json", import.meta.url), "utf8"));
   const trigger = JSON.parse(await readFile(new URL("../.darkfactory/trigger-policy.json", import.meta.url), "utf8"));

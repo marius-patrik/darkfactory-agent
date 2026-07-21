@@ -6,9 +6,9 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 // @ts-ignore Workflow protocol helpers are native ESM, not built TypeScript modules.
-const autoreviewModule: any = await import("../.github/scripts/df-autoreview.mjs");
+const autoreviewModule: any = await import("../../../scripts/df-autoreview.mjs");
 // @ts-ignore Workflow entrypoint helpers are native ESM, not built TypeScript modules.
-const runnerModule: any = await import("../.github/scripts/run-darkfactory-autoreview.mjs");
+const runnerModule: any = await import("../../../scripts/run-darkfactory-autoreview.mjs");
 
 const { loadAutoreviewPolicy } = autoreviewModule;
 const { createPullRequestTarget } = runnerModule;

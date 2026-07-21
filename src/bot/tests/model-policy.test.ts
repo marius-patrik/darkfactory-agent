@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 
 // @ts-ignore Workflow policy helpers are native ESM, not built TypeScript modules.
-const policyModule: any = await import("../.github/scripts/df-model-policy.mjs");
+const policyModule: any = await import("../../../scripts/df-model-policy.mjs");
 
 const {
   agentRunArguments,

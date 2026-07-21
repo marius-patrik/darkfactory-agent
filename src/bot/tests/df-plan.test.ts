@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-const dfPlan: any = await import("../.github/scripts/df-plan.mjs?unit=df-plan-test");
+const dfPlan: any = await import("../../../scripts/df-plan.mjs?unit=df-plan-test");
 
 const {
   PLANNER_BOT_LOGINS,

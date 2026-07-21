@@ -3,11 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-const dfLib: any = await import("../.github/scripts/df-lib.mjs");
+const dfLib: any = await import("../../../scripts/df-lib.mjs");
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-const dfFix: any = await import("../.github/scripts/df-fix.mjs");
+const dfFix: any = await import("../../../scripts/df-fix.mjs");
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-const dfSweep: any = await import("../.github/scripts/df-sweep.mjs");
+const dfSweep: any = await import("../../../scripts/df-sweep.mjs");
 // @ts-ignore js-yaml does not ship types in this package; tests only need load().
 const { load: loadYaml }: any = await import("js-yaml");
 
@@ -280,7 +280,7 @@ test("cleanupTempRoot reports EACCES cleanup failures without throwing", async (
   t.mock.module("node:fs/promises", { namedExports: { rm: rmMock, readFile: async () => "" } });
 
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { cleanupTempRoot: cleanupTempRootUnderTest } = await import("../.github/scripts/df-lib.mjs?mock=eacces");
+  const { cleanupTempRoot: cleanupTempRootUnderTest } = await import("../../../scripts/df-lib.mjs?mock=eacces");
   const result = await cleanupTempRootUnderTest("/some/temp/root", (warning: string) => warnings.push(warning));
 
   assert.equal(result.ok, false);
@@ -541,7 +541,7 @@ test("canonical Andromeda installation names resolve through the live managed re
 });
 
 test("df-sweep dev-merge closure uses worker PR provenance instead of issue labels or comments", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.match(source, /reason: "parked"/);
   assert.match(source, /if \(!isWorkerPullRequest\(pull, repository\)\)/);
@@ -608,7 +608,7 @@ test("df-sweep recognizes worker PRs only from the canonical App actor", () => {
 });
 
 test("df-sweep marks blocked worker issues when follow-through cannot merge", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.match(source, /markWorkerIssueBlocked\(repository, pull, "merge-policy-blocked"/);
   assert.match(source, /markWorkerIssueBlocked\(repository, pull, reason/);
@@ -618,7 +618,7 @@ test("df-sweep marks blocked worker issues when follow-through cannot merge", as
 });
 
 test("df-sweep dev-merge backstop preserves REST merged_at in normalized PRs", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.match(source, /const mergedAt = pull\.merged_at \|\| null/);
   assert.match(source, /mergedAt\s*\n\s*\};/);
@@ -811,7 +811,7 @@ function normalizeTrustedMergedDevPull() {
 }
 
 test("df-work cleanup remains a warning path after successful PR handoff", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
   const successBeforeFinally = /ledger\.status = "success";[\s\S]+finally \{/.test(source);
   const finallyBlock = source.slice(source.indexOf("finally {"));
 
@@ -825,7 +825,7 @@ test("df-work cleanup remains a warning path after successful PR handoff", async
 });
 
 test("df-plan reopens PRD-tracked issues when the PRD item still exists", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-plan.mjs", import.meta.url), "utf8");
 
   assert.match(source, /action: "keep-closed"/);
   assert.match(source, /action: "reopen-prd-issue"/);
@@ -838,7 +838,7 @@ test("df-plan reopens PRD-tracked issues when the PRD item still exists", async 
 });
 
 test("df-plan drift detection covers untracked open issues and PRs", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-plan.mjs", import.meta.url), "utf8");
 
   assert.match(source, /not tracked by any PRD item/);
   assert.match(source, /isDarkFactoryManagedIssue\(labels\)/);
@@ -849,7 +849,7 @@ test("df-plan drift detection covers untracked open issues and PRs", async () =>
 });
 
 test("df-plan drift detection maps M2 PRD commitments to code artifacts", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-plan.mjs", import.meta.url), "utf8");
 
   assert.match(source, /detectPrdArtifactDrift/);
   assert.match(source, /PRD editing to automatically reconcile sequenced backlog issues/);
@@ -927,7 +927,7 @@ test("df-plan workflow reacts safely to PRD edits on the trusted default branch"
 });
 
 test("df-plan never publishes or queues readiness without exact issue Autoreview", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-plan.mjs", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /dispatchIfNewlyReady|dispatchReadyWorker|await-control-orchestrator/);
   assert.doesNotMatch(source, /labels\.push\("df:ready"\)/);
@@ -938,7 +938,7 @@ test("df-plan never publishes or queues readiness without exact issue Autoreview
 });
 
 test("df-plan preserves PRD sequence references across completed predecessors", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-plan.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-plan.mjs", import.meta.url), "utf8");
 
   assert.match(source, /let previousIssueNumber = null/);
   assert.doesNotMatch(source, /previousOpenIssueNumber/);
@@ -950,7 +950,7 @@ test("df-plan preserves PRD sequence references across completed predecessors", 
 });
 
 test("repository doctor performs deterministic diagnosis and explicit per-finding reporting", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-audit.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-audit.mjs", import.meta.url), "utf8");
 
   assert.match(source, /runRepositoryDoctor/);
   assert.match(source, /auditBranchAndReleaseState/);
@@ -1060,7 +1060,7 @@ test("managed repository sync binds the canonical Andromeda-data checkout to AND
 
 test("active deterministic ledgers use provider-agnostic model call accounting", async () => {
   for (const script of ["df-orchestrate.mjs", "df-plan.mjs", "df-fix.mjs", "df-sweep.mjs", "df-verify.mjs"]) {
-    const source = await readFile(new URL(`../.github/scripts/${script}`, import.meta.url), "utf8");
+    const source = await readFile(new URL(`../../../scripts/${script}`, import.meta.url), "utf8");
     assert.match(source, /token_usage:\s*\{[\s\S]*?model_calls:\s*0/, script);
     assert.doesNotMatch(source, /\bcodex_calls\b/, script);
   }
@@ -1096,7 +1096,7 @@ test("df-follow-through workflow validates trusted refs before privileged tokens
 
 test("df-release runs immutable control code and exposes no force or default-branch write path", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-release.yml", import.meta.url), "utf8");
-  const source = await readFile(new URL("../.github/scripts/df-release.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-release.mjs", import.meta.url), "utf8");
   const gate = workflow.indexOf("Validate trusted control ref and input");
   const checkout = workflow.indexOf("Checkout immutable trusted release controller");
   const token = workflow.indexOf("Mint read-only release observation token");
@@ -1162,7 +1162,7 @@ test("df-fix workflow validates trusted refs before privileged tokens", async ()
 });
 
 test("df-fix is deterministic and routes red worker PR recovery through the orchestrator", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-fix.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-fix.mjs", import.meta.url), "utf8");
 
   assert.match(source, /listActiveManagedRepos\(gh, controlRepo, \{ root: CONTROL_ROOT \}\)/);
   assert.match(source, /isDarkFactoryWorkerPullRequest/);
@@ -1268,7 +1268,7 @@ test("df-work merge-policy preflight blocks protection without exact app-bound g
 });
 
 test("df-work blocks target auto-merge setup failures before clone or Agent OS worker", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   const blockIndex = source.indexOf("if (mergePolicy.blocked)");
   const cloneIndex = source.indexOf("await cloneRepository");
@@ -1284,9 +1284,9 @@ test("df-work blocks target auto-merge setup failures before clone or Agent OS w
 
 test("df-work delegates local model execution exclusively to canonical Agent OS state", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
   const modelTurnSource = await readFile(new URL("../model-turn.ts", import.meta.url), "utf8");
-  const modelPolicySource = await readFile(new URL("../.github/scripts/df-model-policy.mjs", import.meta.url), "utf8");
+  const modelPolicySource = await readFile(new URL("../../../scripts/df-model-policy.mjs", import.meta.url), "utf8");
 
   assert.match(workflow, /runs-on: \[self-hosted, df-local\]/);
   assert.match(workflow, /pwsh -NoLogo -NoProfile -File \$agentsLauncher state doctor --json/);
@@ -1355,7 +1355,7 @@ test("df-work native gate remains fail closed before checkout and worker executi
 });
 
 test("df-work binds Agent OS execution to the canonical launcher", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
   const modelTurnSource = await readFile(new URL("../model-turn.ts", import.meta.url), "utf8");
 
   assert.match(source, /const agentsHome = requiredEnv\("ANDROMEDA_HOME"\)/);
@@ -1372,7 +1372,7 @@ test("df-work binds Agent OS execution to the canonical launcher", async () => {
 
 test("df-work never falls back to a PATH-selected agents executable", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.doesNotMatch(workflow, /Get-Command\s+agents|^\s*agents\s+/m);
   assert.doesNotMatch(source, /runCommand\("agents"|spawnSync\("agents"/);
@@ -1380,7 +1380,7 @@ test("df-work never falls back to a PATH-selected agents executable", async () =
 });
 
 test("df-work failure path comments blocker, marks blocked, and releases the lane", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.match(source, /ledger\.status = "blocked"/);
   assert.match(source, /markWorkerBlocked\(TARGET_REPO, TARGET_ISSUE_NUMBER, ledger\.error\)/);
@@ -1425,7 +1425,7 @@ test("df-work workflow uses the installed control worker payload", async () => {
 
 test("df-work workflow uses the app token for control-dispatched workers", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.match(workflow, /if:\s*github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /DARK_FACTORY_TOKEN: \$\{\{ steps\.app-token\.outputs\.token \}\}/);
@@ -1657,7 +1657,7 @@ test("df-fix skips all-green PRs and fixes red PRs", () => {
 });
 
 test("df-sweep waits before treating empty check rollups as no-checks-configured", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.match(source, /EMPTY_CHECK_SETTLE_MS/);
   assert.match(source, /emptyCheckRollupHasSettled\(pull\)/);
@@ -1665,7 +1665,7 @@ test("df-sweep waits before treating empty check rollups as no-checks-configured
 });
 
 test("df-sweep verifies branch protection before merging empty check rollups", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.match(source, /getBranchProtection/);
   assert.match(source, /inspectManagedBranchProtection/);
@@ -1675,7 +1675,7 @@ test("df-sweep verifies branch protection before merging empty check rollups", a
 });
 
 test("df-sweep re-fetches checks immediately before direct merge and blocks red or pending checks", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
   const gateIndex = source.indexOf("const mergeGate = await getPullRequestMergeGate");
   const mergeIndex = source.indexOf("await mergePullRequest(repository, mergeGate)");
 
@@ -1711,7 +1711,7 @@ test("DarkFactory Autoreview workflow binds the exact gate to trusted Agent OS e
 
 test("DarkFactory Autoreview never checks out or executes the untrusted PR head", async () => {
   const workflow = await readFile(new URL("../.github/workflows/darkfactory-autoreview.yml", import.meta.url), "utf8");
-  const runner = await readFile(new URL("../.github/scripts/run-darkfactory-autoreview.mjs", import.meta.url), "utf8");
+  const runner = await readFile(new URL("../../../scripts/run-darkfactory-autoreview.mjs", import.meta.url), "utf8");
 
   assert.match(workflow, /Checkout protected DarkFactory control runtime/);
   assert.match(workflow, /repository: marius-patrik\/DarkFactory/);
@@ -1729,8 +1729,8 @@ test("DarkFactory Autoreview never checks out or executes the untrusted PR head"
 });
 
 test("DarkFactory Autoreview applies only hash-bound proposals after fresh target checks", async () => {
-  const runner = await readFile(new URL("../.github/scripts/run-darkfactory-autoreview.mjs", import.meta.url), "utf8");
-  const protocol = await readFile(new URL("../.github/scripts/df-autoreview.mjs", import.meta.url), "utf8");
+  const runner = await readFile(new URL("../../../scripts/run-darkfactory-autoreview.mjs", import.meta.url), "utf8");
+  const protocol = await readFile(new URL("../../../scripts/df-autoreview.mjs", import.meta.url), "utf8");
 
   assert.match(runner, /validateAutofixProposal/);
   assert.match(runner, /immediately before autofix push/);
@@ -1743,7 +1743,7 @@ test("DarkFactory Autoreview applies only hash-bound proposals after fresh targe
 
 test("DarkFactory Autoreview supports explicit issue review and only auditable owner override", async () => {
   const workflow = await readFile(new URL("../.github/workflows/darkfactory-autoreview.yml", import.meta.url), "utf8");
-  const runner = await readFile(new URL("../.github/scripts/run-darkfactory-autoreview.mjs", import.meta.url), "utf8");
+  const runner = await readFile(new URL("../../../scripts/run-darkfactory-autoreview.mjs", import.meta.url), "utf8");
 
   assert.match(workflow, /target_kind:/);
   assert.match(workflow, /owner_override_comment:/);
@@ -1756,14 +1756,14 @@ test("DarkFactory Autoreview supports explicit issue review and only auditable o
 });
 
 test("df-sweep has no no-check direct-merge escape", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /DF_ALLOW_NO_CHECK_REPOS|NO_CHECK_ALLOWLIST|no-checks-not-allowed/);
   assert.match(source, /merge-policy-blocked/);
 });
 
 test("df-sweep filters explicit sweep repositories through lifecycle and GitHub writability", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /if \(configured\.length\) return configured/);
   assert.match(source, /filterConfiguredActiveManagedRepos\(configured\)/);
@@ -1774,7 +1774,7 @@ test("df-sweep filters explicit sweep repositories through lifecycle and GitHub 
 });
 
 test("df-sweep considers default-branch worker PRs when no explicit work branch is configured", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.match(source, /const WORK_BRANCH = process\.env\.DF_WORK_BRANCH \|\| ""/);
   assert.match(source, /const baseBranches = await sweepBaseBranches\(repository\)/);
@@ -1784,7 +1784,7 @@ test("df-sweep considers default-branch worker PRs when no explicit work branch 
 });
 
 test("df-work no-ops instead of blocking when an open worker PR already exists", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.match(source, /findOpenWorkerPullRequestForIssue\(gh, TARGET_REPO, TARGET_ISSUE_NUMBER\)/);
   assert.match(source, /action: "existing-worker-pr"/);
@@ -1794,7 +1794,7 @@ test("df-work no-ops instead of blocking when an open worker PR already exists",
 });
 
 test("df-work blocks stale remote branches without open worker PRs", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   const openPrIndex = source.indexOf("const existingPullRequest = await findOpenWorkerPullRequestForIssue(gh, TARGET_REPO, TARGET_ISSUE_NUMBER)");
   const remoteBranchIndex = source.indexOf("if (await remoteBranchExists(TARGET_REPO, branch))");
@@ -1822,7 +1822,7 @@ test("df-work blocks stale remote branches without open worker PRs", async () =>
 
 test("df-work independently revalidates one exact resume branch and head", async () => {
   const workflow = await readFile(new URL("../.github/workflows/df-work.yml", import.meta.url), "utf8");
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.match(workflow, /resume_head:/);
   assert.match(workflow, /DF_RESUME_HEAD:\s*\$\{\{ inputs\.resume_head \}\}/);
@@ -1833,7 +1833,7 @@ test("df-work independently revalidates one exact resume branch and head", async
 });
 
 test("df-sweep does not skip green worker PRs solely because the issue is blocked", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-sweep.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-sweep.mjs", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /isWorkerIssueBlocked\(repository, issueNumber\)/);
   assert.doesNotMatch(source, /worker-issue-blocked/);
@@ -2178,7 +2178,7 @@ test("df-follow-through triggers only after verified worker claims", async () =>
 });
 
 test("df-work keeps issue running until verification confirms the claim", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /replaceIssueLabels\(TARGET_REPO, TARGET_ISSUE_NUMBER, \["df:done"\]/);
   assert.match(source, /The issue stays `df:running` until DarkFactory verifies the worker claim against GitHub reality\./);
@@ -2429,7 +2429,7 @@ test("control df-event-forward workflow safely dispatches local events to orches
 });
 
 test("df-orchestrate source requires the app token for cross-repo writes", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   assert.match(source, /const appInstallationToken = requiredEnv\("DARK_FACTORY_TOKEN"\)/);
   assert.match(source, /createGithubClient\(appInstallationToken, "darkfactory-orchestrate"\)/);
@@ -2438,7 +2438,7 @@ test("df-orchestrate source requires the app token for cross-repo writes", async
 });
 
 test("df-orchestrate uses machine readiness evaluation and dispatches via workflow_dispatch", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-orchestrate.mjs", import.meta.url), "utf8");
   const mainStart = source.indexOf("async function main()");
   const orchestrateStart = source.indexOf("export async function orchestrate");
   const mainSource = source.slice(mainStart, orchestrateStart);
@@ -2463,7 +2463,7 @@ test("df-orchestrate uses machine readiness evaluation and dispatches via workfl
 });
 
 test("df-orchestrate claims ready issues before dispatching workers", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   const preflightIndex = source.indexOf("const mergePolicy = await preflightMergePolicy");
   const claimIndex = source.indexOf("replaceIssueLabels(gh, repository, issueNumber, [\"df:running\"], [\"df:ready\"])", preflightIndex);
@@ -2476,7 +2476,7 @@ test("df-orchestrate claims ready issues before dispatching workers", async () =
 });
 
 test("df-orchestrate escalates decisions then evaluates readiness before plan building", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   const escalationIndex = source.indexOf("await escalateOwnerDecisionIssues(gh, scopedSnapshots, warn)");
   const readinessIndex = source.indexOf("await evaluateIssueReadinessLabels(gh, snapshots, warn");
@@ -2491,7 +2491,7 @@ test("df-orchestrate escalates decisions then evaluates readiness before plan bu
 });
 
 test("df-orchestrate blocks target auto-merge setup failures before worker dispatch", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   const blockIndex = source.indexOf("await blockIssueBeforeDispatch");
   const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
@@ -2508,7 +2508,7 @@ test("df-orchestrate blocks target auto-merge setup failures before worker dispa
 });
 
 test("df-orchestrate clears a failed claim and requires fresh readiness evaluation", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-orchestrate.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-orchestrate.mjs", import.meta.url), "utf8");
 
   const dispatchIndex = source.indexOf("/actions/workflows/df-work.yml/dispatches");
   const clearIndex = source.indexOf("replaceIssueLabels(gh, repository, issueNumber, [], [\"df:running\"])", dispatchIndex);
@@ -2566,7 +2566,7 @@ test("df-sweep evaluates enforcement rules before merge", async () => {
 });
 
 test("df-work loads and evaluates enforcement rules before clone or Agent OS execution", async () => {
-  const source = await readFile(new URL("../.github/scripts/df-work.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../../scripts/df-work.mjs", import.meta.url), "utf8");
 
   assert.match(source, /import \{ evaluateEnforcementRules, loadEnforcementRules \} from "\.\/df-enforcement\.mjs"/);
   assert.match(source, /loadEnforcementRules\(CONTROL_ROOT\)/);

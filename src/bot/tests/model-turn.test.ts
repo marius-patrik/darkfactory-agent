@@ -16,7 +16,7 @@ import {
 import { defaultPromptsRoot } from "../prompts.js";
 
 // @ts-ignore Workflow policy helpers are native ESM, not built TypeScript modules.
-const modelPolicyModule: any = await import("../.github/scripts/df-model-policy.mjs");
+const modelPolicyModule: any = await import("../../../scripts/df-model-policy.mjs");
 
 const REVISION = "0123456789abcdef0123456789abcdef01234567";
 const NOW = new Date("2026-07-15T12:00:00.000Z");

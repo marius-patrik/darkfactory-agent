@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-const { readVerificationTarget, verifyWorkerRun }: any = await import("../.github/scripts/df-verify.mjs?unit=df-verify-test");
+const { readVerificationTarget, verifyWorkerRun }: any = await import("../../../scripts/df-verify.mjs?unit=df-verify-test");
 
 function base64Json(value: unknown) {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");

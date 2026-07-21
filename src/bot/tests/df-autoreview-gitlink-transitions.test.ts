@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 // @ts-ignore Workflow policy helpers are native ESM, not built TypeScript modules.
-const autoreviewModule: any = await import("../.github/scripts/df-autoreview.mjs");
+const autoreviewModule: any = await import("../../../scripts/df-autoreview.mjs");
 // @ts-ignore Workflow entrypoint helpers are native ESM, not built TypeScript modules.
-const autoreviewRunnerModule: any = await import("../.github/scripts/run-darkfactory-autoreview.mjs");
+const autoreviewRunnerModule: any = await import("../../../scripts/run-darkfactory-autoreview.mjs");
 
 const {
   buildChangedTreeEvidence,

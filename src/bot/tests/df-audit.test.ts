@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const doctor: any = await import("../.github/scripts/df-audit.mjs?unit=repository-doctor-test");
+const doctor: any = await import("../../../scripts/df-audit.mjs?unit=repository-doctor-test");
 
 const repo = { owner: "marius-patrik", repo: "DarkFactory" };
 const LABEL_POLICY = JSON.stringify({

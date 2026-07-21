@@ -5,13 +5,13 @@ import test from "node:test";
 import { issueVersion } from "../issue-spec.ts";
 
 // @ts-ignore Native ESM workflow policy is exercised directly.
-const policyModule: any = await import("../.github/scripts/df-trigger-policy.mjs");
+const policyModule: any = await import("../../../scripts/df-trigger-policy.mjs");
 // @ts-ignore Trusted recovery controller is native ESM and exercised directly.
-const recoveryModule: any = await import("../.github/scripts/df-autoreview-recovery.mjs?unit=trigger-policy-recovery-test");
+const recoveryModule: any = await import("../../../scripts/df-autoreview-recovery.mjs?unit=trigger-policy-recovery-test");
 // @ts-ignore Base-trusted Autoreview result classification is exercised directly.
-const autoreviewRunner: any = await import("../.github/scripts/run-darkfactory-autoreview.mjs?unit=trigger-policy-result-test");
+const autoreviewRunner: any = await import("../../../scripts/run-darkfactory-autoreview.mjs?unit=trigger-policy-result-test");
 // @ts-ignore Shared native ESM GitHub transport is exercised against real response semantics.
-const githubClientModule: any = await import("../.github/scripts/df-lib.mjs?unit=trigger-policy-github-client-test");
+const githubClientModule: any = await import("../../../scripts/df-lib.mjs?unit=trigger-policy-github-client-test");
 const {
   REQUIRED_LOOP_IDS,
   admitLoopInvocation,

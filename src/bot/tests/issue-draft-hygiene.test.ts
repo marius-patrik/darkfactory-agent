@@ -15,7 +15,7 @@ import {
 import { issueContentDigest, issueVersion } from "../issue-spec.js";
 
 // @ts-ignore Native ESM trusted-main hygiene controller is exercised directly.
-const hygiene: any = await import("../.github/scripts/df-issue-draft-hygiene.mjs?unit=issue-draft-hygiene-test");
+const hygiene: any = await import("../../../scripts/df-issue-draft-hygiene.mjs?unit=issue-draft-hygiene-test");
 const controlRoot = path.resolve(import.meta.dirname, "..");
 const NOW = new Date("2026-07-16T12:00:00.000Z");
 

@@ -123,7 +123,7 @@ function restoreEnvironment(name: string, value: string | undefined) {
 
 test("orchestration policy loading fails closed and accepts only the canonical schema", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { readOrchestrationPolicy } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-policy-test");
+  const { readOrchestrationPolicy } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-policy-test");
   const root = await mkdtemp(join(tmpdir(), "df-orchestration-policy-"));
   const policyPath = join(root, ".darkfactory", "orchestration.json");
   try {
@@ -149,7 +149,7 @@ test("orchestration policy loading fails closed and accepts only the canonical s
 
 test("targeted issue readiness uses the full shared fleet, capacity, and exact Autoreview evaluator without mutation", async () => {
   // @ts-ignore Native ESM workflow helper is exercised directly.
-  const { evaluateTargetIssueReadiness } = await import("../.github/scripts/df-orchestrate.mjs?unit=targeted-readiness-test");
+  const { evaluateTargetIssueReadiness } = await import("../../../scripts/df-orchestrate.mjs?unit=targeted-readiness-test");
   const repository = "marius-patrik/example";
   const review = exactReviewHarness(repository, {
     number: 42,
@@ -202,7 +202,7 @@ test("targeted issue readiness uses the full shared fleet, capacity, and exact A
 
 test("orchestrator dispatches open df:ready issues in active managed repos", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-test");
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
   const review = exactReviewHarness("marius-patrik/example", {
@@ -283,7 +283,7 @@ test("orchestrator dispatches open df:ready issues in active managed repos", asy
 
 test("programmatic orchestration ignores ambient workflow dispatch scope", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-hermetic-dispatch-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-hermetic-dispatch-test");
   const previous = {
     repo: process.env.DF_TARGET_REPO,
     issue: process.env.DF_TARGET_ISSUE_NUMBER,
@@ -334,7 +334,7 @@ test("programmatic orchestration ignores ambient workflow dispatch scope", async
 
 test("orchestrator does not dispatch issues that already have an open worker PR", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-existing-pr-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-existing-pr-test");
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   const review = exactReviewHarness("marius-patrik/example", {
     number: 8,
@@ -407,7 +407,7 @@ test("orchestrator does not dispatch issues that already have an open worker PR"
 
 test("orchestrator selects ready issues by priority and blocked-by state", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { blockedByIssueNumbers, selectDispatchableIssues } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-scheduler-test");
+  const { blockedByIssueNumbers, selectDispatchableIssues } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-scheduler-test");
 
   assert.deepEqual(blockedByIssueNumbers("Blocked-by: #61, #63\nBlocked-by: owner/repo#70"), [61, 63, 70]);
   assert.equal(Number.isNaN(blockedByIssueNumbers("Blocked-by: waiting for owner")[0]), true);
@@ -477,7 +477,7 @@ test("orchestrator selects ready issues by priority and blocked-by state", async
 
 test("readiness evaluator accepts a bounded executable issue contract", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { evaluateIssueReadiness } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-readiness-positive-test");
+  const { evaluateIssueReadiness } = await import("../../../scripts/df-orchestrate.mjs?unit=df-readiness-positive-test");
   const result = evaluateIssueReadiness({
     number: 40,
     title: "Implement bounded readiness",
@@ -491,7 +491,7 @@ test("readiness evaluator accepts a bounded executable issue contract", async ()
 
 test("issue Autoreview admission accepts exact clean or auditable override and rejects stale, malformed, or untrusted evidence", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { evaluateIssueAutoreviewEvidence } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-issue-review-evidence-triplet-test");
+  const { evaluateIssueAutoreviewEvidence } = await import("../../../scripts/df-orchestrate.mjs?unit=df-issue-review-evidence-triplet-test");
   const issue = reviewedIssue({ number: 401, title: "Reviewed issue", body: EXECUTABLE_BODY, labels: [] });
   const clean = evaluateIssueAutoreviewEvidence(issue, [exactReviewComment(issue)], { dependencies: [] });
   const override = evaluateIssueAutoreviewEvidence(issue, [exactReviewComment(issue, issueVersion(issue), "Auditable owner override")], { dependencies: [] });
@@ -514,7 +514,7 @@ test("issue Autoreview admission accepts exact clean or auditable override and r
 
 test("dispatch-time admission revokes a cached ready label when the reviewed issue version changes", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-dispatch-review-race-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-dispatch-review-race-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const queued = reviewedIssue({
     number: 402,
@@ -563,7 +563,7 @@ test("dispatch-time admission revokes a cached ready label when the reviewed iss
 
 test("dispatch-time admission requires the exact referenced dependency to be a closed issue", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { revalidateDispatchAdmission } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-dispatch-dependency-identity-test");
+  const { revalidateDispatchAdmission } = await import("../../../scripts/df-orchestrate.mjs?unit=df-dispatch-dependency-identity-test");
   const issue = reviewedIssue({
     number: 403,
     title: "Dependency-bound reviewed issue",
@@ -595,7 +595,7 @@ test("dispatch-time admission requires the exact referenced dependency to be a c
 
 test("readiness fails closed on doctor, gate, capacity, and missing snapshot disagreement", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { evaluateIssueReadiness } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-readiness-state-triplet-test");
+  const { evaluateIssueReadiness } = await import("../../../scripts/df-orchestrate.mjs?unit=df-readiness-state-triplet-test");
   const issue = { number: 400, title: "Implement bounded readiness", body: EXECUTABLE_BODY, labels: [] };
   const doctor = evaluateIssueReadiness(issue, { currentRepoOpenIssueNumbers: new Set(), repositoryState: { observable: true, doctorPerfect: false, gatesHealthy: true }, capacityAvailable: true });
   const gates = evaluateIssueReadiness(issue, { currentRepoOpenIssueNumbers: new Set(), repositoryState: { observable: true, doctorPerfect: true, gatesHealthy: false }, capacityAvailable: true });
@@ -609,7 +609,7 @@ test("readiness fails closed on doctor, gate, capacity, and missing snapshot dis
 
 test("readiness evaluator rejects and explains a contentless issue contract", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { evaluateIssueReadiness } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-readiness-negative-test");
+  const { evaluateIssueReadiness } = await import("../../../scripts/df-orchestrate.mjs?unit=df-readiness-negative-test");
   const result = evaluateIssueReadiness({
     number: 41,
     title: "Alignment",
@@ -624,7 +624,7 @@ test("readiness evaluator rejects and explains a contentless issue contract", as
 
 test("readiness evaluator treats df:no-dispatch as categorical even for a valid contract", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { evaluateIssueReadiness, selectDispatchableIssues, shouldAutoReadySequencedIssue } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-readiness-edge-test");
+  const { evaluateIssueReadiness, selectDispatchableIssues, shouldAutoReadySequencedIssue } = await import("../../../scripts/df-orchestrate.mjs?unit=df-readiness-edge-test");
   const issue = {
     number: 42,
     title: "Owner-executed contract",
@@ -639,7 +639,7 @@ test("readiness evaluator treats df:no-dispatch as categorical even for a valid 
 
 test("readiness revokes a human or near-miss ready label before any full-predicate reapplication", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { currentReadyLabelOwnership, evaluateIssueReadinessLabels } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-ready-label-reconciliation-test");
+  const { currentReadyLabelOwnership, evaluateIssueReadinessLabels } = await import("../../../scripts/df-orchestrate.mjs?unit=df-ready-label-reconciliation-test");
   async function run(repositoryState: Record<string, unknown>, actor: Record<string, unknown>) {
     const issue = reviewedIssue({ number: 71, title: "Trust the ready owner", body: EXECUTABLE_BODY, state: "open", labels: [{ name: "df:ready" }] });
     const timeline = [labeledEvent("df:ready", "2026-07-16T10:00:00Z", actor)];
@@ -688,7 +688,7 @@ test("readiness revokes a human or near-miss ready label before any full-predica
 
 test("dispatch admission accepts current App ownership and rejects human or stale ready events", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { revalidateDispatchAdmission } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-ready-label-dispatch-admission-test");
+  const { revalidateDispatchAdmission } = await import("../../../scripts/df-orchestrate.mjs?unit=df-ready-label-dispatch-admission-test");
   async function admit(timeline: any[]) {
     const issue = reviewedIssue({ number: 72, title: "Dispatch only trusted ready", body: EXECUTABLE_BODY, state: "open", labels: [{ name: "df:ready" }] });
     const gh = {
@@ -719,7 +719,7 @@ test("dispatch admission accepts current App ownership and rejects human or stal
 
 test("orchestrator holds and escalates unknown cross-repo Blocked-by references", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { selectDispatchableIssues, ownerDecisionEscalation } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-cross-repo-test");
+  const { selectDispatchableIssues, ownerDecisionEscalation } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-cross-repo-test");
 
   const repository = { full_name: "marius-patrik/example" };
   const knownRepositories = new Set(["marius-patrik/example", "marius-patrik/managed-peer"]);
@@ -799,7 +799,7 @@ test("orchestrator holds and escalates unknown cross-repo Blocked-by references"
 
 test("sequencing pass auto-readies scoped issues only when blockers are resolved", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { autoReadySequencedIssues } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-test");
+  const { autoReadySequencedIssues } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-test");
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   const review = exactReviewHarness("marius-patrik/example", {
     number: 20,
@@ -852,7 +852,7 @@ test("sequencing pass auto-readies scoped issues only when blockers are resolved
 
 test("targeted sequencing runs resolve blockers against the full snapshot", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { autoReadySequencedIssues } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-scoped-test");
+  const { autoReadySequencedIssues } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-scoped-test");
   const calls: Array<{ method: string; path: string }> = [];
   const snapshots = [
     {
@@ -886,7 +886,7 @@ test("targeted sequencing runs resolve blockers against the full snapshot", asyn
 
 test("sequencing pass does not create an owner-reset ready label over repeated failures", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { autoReadySequencedIssues } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-reset-test");
+  const { autoReadySequencedIssues } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-reset-test");
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   const snapshots = [
     {
@@ -927,7 +927,7 @@ test("sequencing pass does not create an owner-reset ready label over repeated f
 
 test("sequencing pass refuses a stale issue Autoreview even after every blocker closes", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { autoReadySequencedIssues } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-stale-review-test");
+  const { autoReadySequencedIssues } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-auto-ready-stale-review-test");
   const issue = reviewedIssue({
     number: 32,
     title: "Stale reviewed successor",
@@ -959,7 +959,7 @@ test("sequencing pass refuses a stale issue Autoreview even after every blocker 
 
 test("orchestration plan applies wave gates and cross-repo concurrency caps", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-l6-plan-test");
+  const { buildOrchestrationPlan } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-l6-plan-test");
 
   const policy = {
     schemaVersion: 1,
@@ -1020,7 +1020,7 @@ test("orchestration plan applies wave gates and cross-repo concurrency caps", as
 
 test("orchestration plan enforces stream caps without single-lane prefiltering", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-stream-cap-test");
+  const { buildOrchestrationPlan } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-stream-cap-test");
 
   const policy = {
     schemaVersion: 1,
@@ -1049,7 +1049,7 @@ test("orchestration plan enforces stream caps without single-lane prefiltering",
 
 test("orchestration plan counts running stream occupancy against stream caps", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-running-stream-cap-test");
+  const { buildOrchestrationPlan } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-running-stream-cap-test");
 
   const policy = {
     schemaVersion: 1,
@@ -1078,7 +1078,7 @@ test("orchestration plan counts running stream occupancy against stream caps", a
 
 test("orchestration plan still lets repository and global caps bind", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-global-repo-cap-test");
+  const { buildOrchestrationPlan } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-global-repo-cap-test");
 
   const policy = {
     schemaVersion: 1,
@@ -1124,7 +1124,7 @@ test("orchestration plan still lets repository and global caps bind", async () =
 
 test("orchestration wave gate ignores parked owner and blocked issues", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { buildOrchestrationPlan } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-parked-wave-gate-test");
+  const { buildOrchestrationPlan } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-parked-wave-gate-test");
 
   const policy = {
     schemaVersion: 1,
@@ -1179,7 +1179,7 @@ test("orchestration wave gate ignores parked owner and blocked issues", async ()
 
 test("orchestrator updates the L6 dashboard issue after dispatch", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { DASHBOARD_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-dashboard-test");
+  const { DASHBOARD_MARKER, orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-dashboard-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
   const review = exactReviewHarness("marius-patrik/example", {
@@ -1256,7 +1256,7 @@ test("orchestrator updates the L6 dashboard issue after dispatch", async () => {
 
 test("orchestrator escalates ambiguous sequencing to df:ask-owner without dispatch", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { ASK_OWNER_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-ask-owner-test");
+  const { ASK_OWNER_MARKER, orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-ask-owner-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
 
   const gh = {
@@ -1335,7 +1335,7 @@ test("orchestrator escalates ambiguous sequencing to df:ask-owner without dispat
 
 test("repeated-failure scan ignores evidence before the latest owner reset", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-reset-history-test");
+  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-reset-history-test");
 
   const history = {
     comments: [
@@ -1358,7 +1358,7 @@ test("repeated-failure scan ignores evidence before the latest owner reset", asy
 
 test("repeated-failure scan escalates historical failures when no reset follows them", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-no-reset-history-test");
+  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-no-reset-history-test");
 
   const history = {
     comments: [
@@ -1375,7 +1375,7 @@ test("repeated-failure scan escalates historical failures when no reset follows 
 
 test("repeated-failure scan counts df:fix-round timeline labels as evidence", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-fix-round-history-test");
+  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-fix-round-history-test");
 
   const history = {
     comments: [
@@ -1391,7 +1391,7 @@ test("repeated-failure scan counts df:fix-round timeline labels as evidence", as
 
 test("repeated-failure scan escalates new failures after an owner reset", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-new-failures-history-test");
+  const { repeatedFailureEscalation, repeatedFailureEvidenceSinceReset } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-new-failures-history-test");
 
   const history = {
     comments: [
@@ -1414,7 +1414,7 @@ test("repeated-failure scan escalates new failures after an owner reset", async 
 
 test("orchestrator dispatches owner-reset issues instead of re-escalating stale failures", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-reset-dispatch-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-reset-dispatch-test");
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
   const review = exactReviewHarness("marius-patrik/example", {
@@ -1481,7 +1481,7 @@ test("orchestrator dispatches owner-reset issues instead of re-escalating stale 
 
 test("orchestrator turns trusted /df run comments into df:ready before dispatch", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-slash-run-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-slash-run-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
   const previousPayload = process.env.GITHUB_EVENT_PAYLOAD;
@@ -1569,7 +1569,7 @@ test("orchestrator turns trusted /df run comments into df:ready before dispatch"
 
 test("parseEventRequest ignores untrusted /df run comments", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { parseEventRequest } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-event-parse-test");
+  const { parseEventRequest } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-event-parse-test");
 
   const request = parseEventRequest(JSON.stringify({
     repository: { full_name: "marius-patrik/example" },
@@ -1582,7 +1582,7 @@ test("parseEventRequest ignores untrusted /df run comments", async () => {
 
 test("parseEventRequest accepts only the exact current App ready actor as dispatch-capable", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { parseEventRequest } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-label-event-parse-test");
+  const { parseEventRequest } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-label-event-parse-test");
 
   const request = parseEventRequest(JSON.stringify({
     action: "labeled",
@@ -1604,7 +1604,7 @@ test("parseEventRequest accepts only the exact current App ready actor as dispat
 
 test("parseEventRequest scopes human and near-miss ready labels to evaluation-only cleanup", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { parseEventRequest } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-untrusted-label-event-test");
+  const { parseEventRequest } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-untrusted-label-event-test");
   for (const sender of [
     { login: "marius-patrik", type: "User" },
     { login: "darkfactory-agent", type: "Bot" },
@@ -1632,7 +1632,7 @@ test("parseEventRequest scopes human and near-miss ready labels to evaluation-on
 
 test("current ready ownership follows the latest current event and rejects stale or near-miss actors", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { currentReadyLabelOwnership } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-ready-event-ownership-test");
+  const { currentReadyLabelOwnership } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-ready-event-ownership-test");
   const trusted = labeledEvent("df:ready", "2026-07-16T10:00:00Z");
   assert.equal(currentReadyLabelOwnership([trusted]).trusted, true);
   assert.equal(currentReadyLabelOwnership([
@@ -1651,7 +1651,7 @@ test("current ready ownership follows the latest current event and rejects stale
 
 test("parseWorkflowDispatchRequest scopes source events", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { parseWorkflowDispatchRequest } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-dispatch-parse-test");
+  const { parseWorkflowDispatchRequest } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-dispatch-parse-test");
 
   assert.deepEqual(parseWorkflowDispatchRequest("marius-patrik/example", "44", "issues", () => {}), {
     repository: { owner: "marius-patrik", repo: "example" },
@@ -1678,7 +1678,7 @@ test("parseWorkflowDispatchRequest scopes source events", async () => {
 
 test("setup readiness evaluation is repository-scoped and never dispatches worker or fleet mutations", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-setup-evaluation-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-setup-evaluation-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const review = exactReviewHarness("marius-patrik/example", {
     number: 12,
@@ -1729,7 +1729,7 @@ test("setup readiness evaluation is repository-scoped and never dispatches worke
 
 test("readiness clears only an exact healthy machine-owned merge-policy brake", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { evaluateIssueReadinessLabels } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-stale-brake-test");
+  const { evaluateIssueReadinessLabels } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-stale-brake-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const machineBrakeComment = { body: "<!-- dark-factory:orchestrator-ask-owner issue=1 reason=merge-policy-blocked -->" };
   const review = exactReviewHarness("marius-patrik/example", {
@@ -1783,7 +1783,7 @@ test("readiness clears only an exact healthy machine-owned merge-policy brake", 
 
 test("readiness reserves bounded capacity in deterministic priority order", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { evaluateIssueReadinessLabels } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-readiness-capacity-test");
+  const { evaluateIssueReadinessLabels } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-readiness-capacity-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const review = exactReviewHarness("marius-patrik/example", {
     number: 2,
@@ -1828,7 +1828,7 @@ test("readiness reserves bounded capacity in deterministic priority order", asyn
 
 test("machine readiness accepts only a fresh identity-bound self-hosted doctor receipt", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { machineReadinessFromDoctorLedger } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-machine-receipt-test");
+  const { machineReadinessFromDoctorLedger } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-machine-receipt-test");
   const now = "2026-07-15T12:00:00.000Z";
   const receipt = {
     kind: "repo-doctor",
@@ -1857,7 +1857,7 @@ test("machine readiness accepts only a fresh identity-bound self-hosted doctor r
 
 test("orchestrator turns scoped /df run dispatches into df:ready before dispatch", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-forwarded-slash-run-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-forwarded-slash-run-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
   const review = exactReviewHarness("marius-patrik/example", {
@@ -1934,7 +1934,7 @@ test("orchestrator turns scoped /df run dispatches into df:ready before dispatch
 
 test("orchestrator treats untrusted /df run comments as no-op events", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-untrusted-slash-run-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-untrusted-slash-run-test");
   const previousPayload = process.env.GITHUB_EVENT_PAYLOAD;
 
   process.env.GITHUB_EVENT_PAYLOAD = JSON.stringify({
@@ -1970,7 +1970,7 @@ test("orchestrator treats untrusted /df run comments as no-op events", async () 
 
 test("orchestrator ignores event runs for inactive managed repositories", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-inactive-event-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-inactive-event-test");
   const previousPayload = process.env.GITHUB_EVENT_PAYLOAD;
   const warnings: string[] = [];
 
@@ -2008,7 +2008,7 @@ test("orchestrator ignores event runs for inactive managed repositories", async 
 
 test("orchestrator resumes interrupted run against existing open worker PR", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { RESUME_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-pr-test");
+  const { RESUME_MARKER, orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-pr-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
 
   const gh = {
@@ -2098,7 +2098,7 @@ test("orchestrator resumes interrupted run against existing open worker PR", asy
 
 test("orchestrator resumes interrupted run from pushed branch when no PR exists", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { RESUME_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-branch-test");
+  const { RESUME_MARKER, orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-branch-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
   const resumeHead = "9".repeat(40);
@@ -2172,7 +2172,7 @@ test("orchestrator resumes interrupted run from pushed branch when no PR exists"
 
 test("interrupted recovery escalates multiple pushed branches without dispatching either", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { classifyResumeTarget, resumeInterruptedWorker } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-ambiguous-test");
+  const { classifyResumeTarget, resumeInterruptedWorker } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-ambiguous-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const gh = {
     async graphql() {
@@ -2206,7 +2206,7 @@ test("interrupted recovery escalates multiple pushed branches without dispatchin
 
 test("orchestrator requeues interrupted run with no usable branch", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { RESUME_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-requeue-test");
+  const { RESUME_MARKER, orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-requeue-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
 
   const gh = {
@@ -2276,7 +2276,7 @@ test("orchestrator requeues interrupted run with no usable branch", async () => 
 
 test("orchestrator does not resume running issue with terminal comment", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-no-resume-test");
+  const { orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-no-resume-test");
   const calls: Array<{ method: string; path: string }> = [];
 
   const gh = {
@@ -2331,7 +2331,7 @@ test("orchestrator does not resume running issue with terminal comment", async (
 
 test("orchestrator surfaces recovery decisions in ledger and dashboard", async () => {
   // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-  const { DASHBOARD_MARKER, orchestrate } = await import("../.github/scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-dashboard-test");
+  const { DASHBOARD_MARKER, orchestrate } = await import("../../../scripts/df-orchestrate.mjs?unit=df-orchestrate-resume-dashboard-test");
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const notFound = Object.assign(new Error("not found"), { status: 404 });
 

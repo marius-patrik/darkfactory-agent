@@ -366,7 +366,7 @@ test("append-only issue autofix corrections apply only to the exact owner-author
 
 test("Autoreview result comments never patch an untrusted marker owner", async () => {
   // @ts-ignore The base-trusted workflow runner is native ESM and shared directly with the CLI.
-  const { upsertResultComment } = await import("../.github/scripts/run-darkfactory-autoreview.mjs");
+  const { upsertResultComment } = await import("../../../scripts/run-darkfactory-autoreview.mjs");
   const writes: Array<{ method: string; path: string }> = [];
   const gh = {
     async request(method: string, requestPath: string) {
@@ -383,7 +383,7 @@ test("Autoreview result comments never patch an untrusted marker owner", async (
 
 test("exact clean issue completion repairs a missing reviewed label idempotently after a failed label write", async () => {
   // @ts-ignore The base-trusted workflow runner is native ESM and shared directly with recovery.
-  const { reconcileExactIssueCompletion } = await import("../.github/scripts/run-darkfactory-autoreview.mjs");
+  const { reconcileExactIssueCompletion } = await import("../../../scripts/run-darkfactory-autoreview.mjs");
   const repository = { owner: "marius-patrik", repo: "DarkFactory" };
   const issue = { number: 39, title: "Reviewed issue", body: "# Goal\n\nExact", state: "open", labels: [] as any[] };
   const version = issueVersion(issue);
@@ -625,7 +625,7 @@ test("publication revalidates the local reviewed draft after durable admission",
 
 test("shared CLI and Actions issue target admits one exact initial version and rejects malformed or stale versions", async () => {
   // @ts-ignore The base-trusted workflow runner is native ESM and shared directly with the CLI.
-  const { createIssueTarget } = await import("../.github/scripts/run-darkfactory-autoreview.mjs");
+  const { createIssueTarget } = await import("../../../scripts/run-darkfactory-autoreview.mjs");
   const issue = { number: 39, title: "Current", body: "# Goal\n\nExact", state: "open", labels: [], user: { login: "owner" }, updated_at: "2026-07-15T12:00:00Z" };
   const currentVersion = issueVersion(issue);
   let writes = 0;
@@ -651,7 +651,7 @@ test("shared CLI and Actions issue target admits one exact initial version and r
 
 test("shared PR Autoreview target rejects a stale base SHA before cloning or executing target content", async () => {
   // @ts-ignore The base-trusted workflow runner is native ESM and shared directly with the CLI.
-  const { createPullRequestTarget } = await import("../.github/scripts/run-darkfactory-autoreview.mjs");
+  const { createPullRequestTarget } = await import("../../../scripts/run-darkfactory-autoreview.mjs");
   let calls = 0;
   const gh = {
     async request(_method: string, requestPath: string) {

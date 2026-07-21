@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 // @ts-ignore Script helpers are native ESM workflow files, not built TypeScript modules.
-const dfEnforcement: any = await import("../.github/scripts/df-enforcement.mjs");
+const dfEnforcement: any = await import("../../../scripts/df-enforcement.mjs");
 
 const {
   BUILTIN_RULES,
