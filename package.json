@@ -1,5 +1,5 @@
 {
-  "name": "@marius-patrik/agents-manager",
+  "name": "@marius-patrik/andromeda",
   "version": "0.10.0",
   "description": "Authoritative Agent OS package surface for the unified `agents` CLI and the Andromeda system implementation.",
   "type": "module",
@@ -9,8 +9,7 @@
     "packages/sdk/shared-ts"
   ],
   "bin": {
-    "andromeda": "./packages/cli/src/cli.ts",
-    "agents": "./packages/cli/src/cli.ts"
+    "andromeda": "./packages/cli/src/cli.ts"
   },
   "scripts": {
     "agents": "bun packages/cli/src/cli.ts",

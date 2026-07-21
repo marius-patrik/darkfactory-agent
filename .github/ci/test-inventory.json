@@ -160,7 +160,7 @@
     "packages/app",
     "packages/cli",
     "packages/web",
-    "packages/darkfactory",
+    "packages/bot",
     "packages/mcp",
     "packages/migrate",
     "packages/migrate/genesis-os",

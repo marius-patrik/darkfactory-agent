@@ -131,7 +131,7 @@ async function installWindowsLauncher(state: SharedState): Promise<string> {
     child.exited,
   ]);
   if (code !== 0) throw new Error(`launcher installation failed (${code}): ${stdout}${stderr}`);
-  return path.join(state.stateDir, "bin", "agents.ps1");
+  return path.join(state.stateDir, "bin", "andromeda.ps1");
 }
 
 function flags(root: string): Record<string, string | boolean> {

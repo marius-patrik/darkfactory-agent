@@ -527,7 +527,7 @@ async function registryIntegrityCheck(state: SharedState): Promise<StateDoctorCh
 }
 
 export function launcherNameForPlatform(platform: NodeJS.Platform): string {
-  return platform === "win32" ? "agents.ps1" : "agents";
+  return platform === "win32" ? "andromeda.ps1" : "andromeda";
 }
 
 async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {

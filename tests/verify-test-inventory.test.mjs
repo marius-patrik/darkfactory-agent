@@ -234,14 +234,14 @@ test("denied failure: duplicate managed package declarations cannot pass", () =>
 test("denied failure: conflicted managed package index entries cannot pass", () => {
   const target = fixture();
   try {
-    git(target, "update-index", "--force-remove", "packages/darkfactory");
+    git(target, "update-index", "--force-remove", "packages/bot");
     addIndexEntries(
       target,
-      `160000 ${fixtureGitlinkOid} 1\tpackages/darkfactory\n160000 ${fixtureGitlinkOid} 2\tpackages/darkfactory\n`,
+      `160000 ${fixtureGitlinkOid} 1\tpackages/bot\n160000 ${fixtureGitlinkOid} 2\tpackages/bot\n`,
     );
     const issues = inventoryIssues(target).join("\n");
-    assert.match(issues, /managed package has multiple index entries: packages\/darkfactory/);
-    assert.match(issues, /managed package has unmerged index entries: packages\/darkfactory/);
+    assert.match(issues, /managed package has multiple index entries: packages\/bot/);
+    assert.match(issues, /managed package has unmerged index entries: packages\/bot/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }

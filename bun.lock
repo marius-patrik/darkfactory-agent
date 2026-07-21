@@ -12,7 +12,7 @@
       },
     },
     "packages/cli": {
-      "name": "@marius-patrik/andromeda",
+      "name": "@marius-patrik/andromeda-cli",
       "version": "0.10.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "0.23.0",
@@ -26,7 +26,7 @@
       },
     },
     "packages/sdk/shared-ts": {
-      "name": "@agent-os/shared-ts",
+      "name": "@marius-patrik/andromeda-sdk",
       "version": "0.10.0",
       "dependencies": {
         "@bufbuild/protobuf": "2.12.1",
@@ -34,15 +34,11 @@
       },
     },
     "packages/web": {
-      "name": "@agent-os/web",
+      "name": "@marius-patrik/andromeda-web",
       "version": "0.10.0",
     },
   },
   "packages": {
-    "@agent-os/shared-ts": ["@agent-os/shared-ts@workspace:packages/sdk/shared-ts"],
-
-    "@agent-os/web": ["@agent-os/web@workspace:packages/web"],
-
     "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@0.23.0", "", { "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-wIGDQMSXwhoSPNCJflSQvf4WeSU2Jq1bbPRAwwb49euo9qMcND5Pb80hD7hVfuAwz9ZvvDuzVrNTOZrvKPR9Eg=="],
 
     "@bufbuild/buf": ["@bufbuild/buf@1.71.0", "", { "optionalDependencies": { "@bufbuild/buf-darwin-arm64": "1.71.0", "@bufbuild/buf-darwin-x64": "1.71.0", "@bufbuild/buf-linux-aarch64": "1.71.0", "@bufbuild/buf-linux-armv7": "1.71.0", "@bufbuild/buf-linux-x64": "1.71.0", "@bufbuild/buf-win32-arm64": "1.71.0", "@bufbuild/buf-win32-x64": "1.71.0" }, "bin": { "buf": "bin/buf", "protoc-gen-buf-lint": "bin/protoc-gen-buf-lint", "protoc-gen-buf-breaking": "bin/protoc-gen-buf-breaking" } }, "sha512-GDcjBCwLgHT/4nX4YSnYatZ7sDZDpHV6dxQvoT2/P6gKvV23O6hl8NryzLIRKmeau0FRXpQKHVy1dMfnBSpy+w=="],
@@ -65,7 +61,11 @@
 
     "@connectrpc/connect": ["@connectrpc/connect@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA=="],
 
-    "@marius-patrik/andromeda": ["@marius-patrik/andromeda@workspace:packages/cli"],
+    "@marius-patrik/andromeda-cli": ["@marius-patrik/andromeda-cli@workspace:packages/cli"],
+
+    "@marius-patrik/andromeda-sdk": ["@marius-patrik/andromeda-sdk@workspace:packages/sdk/shared-ts"],
+
+    "@marius-patrik/andromeda-web": ["@marius-patrik/andromeda-web@workspace:packages/web"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

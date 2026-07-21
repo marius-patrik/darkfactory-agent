@@ -145,7 +145,7 @@ Default outputs (all committable, all in this repo):
 - **TS:** protobuf-es v2 emits the Connect-compatible service descriptors inside
   the `*_pb.ts` files; `@connectrpc/connect` v2 builds typed clients from them
   via `createClient(RegistryService, transport)` — so **no separate connect-es
-  codegen** is needed. Re-exported from `@agent-os/shared-ts/gen`.
+  codegen** is needed. Re-exported from `@marius-patrik/andromeda-sdk/gen`.
 - **Python:** plain protobuf `*_pb2.py` + `*_pb2.pyi` for the in-repository
   Agent OS inference consumer are generated with the opt-in template:
   ```sh
@@ -171,7 +171,7 @@ validated separately from generated output.
 | `packages/server/inference/python-agent/agent/gen/__init__.py` | source | `sys.path` bootstrap so `from andromeda.v1 import ...` resolves after `import agent.gen` |
 | `packages/server/inference/python-agent/agent/gen/andromeda/__init__.py` | source | Python package marker for the `andromeda` namespace |
 | `packages/server/inference/python-agent/agent/gen/andromeda/v1/__init__.py` | source | Python package marker for the `andromeda.v1` namespace |
-| `packages/sdk/shared-ts/src/gen/index.ts` | hand-authored | Re-export barrel so consumers import from `@agent-os/shared-ts/gen` |
+| `packages/sdk/shared-ts/src/gen/index.ts` | hand-authored | Re-export barrel so consumers import from `@marius-patrik/andromeda-sdk/gen` |
 | `packages/server/inference/python-agent/agent/gen/andromeda/v1/*_pb2.py` | **buf-generated** | Protobuf message classes - regenerate, never hand-edit |
 | `packages/server/inference/python-agent/agent/gen/andromeda/v1/*_pb2.pyi` | **buf-generated** | Type stubs - regenerate, never hand-edit |
 | `packages/sdk/shared-ts/src/gen/andromeda/v1/*_pb.ts` | **buf-generated** | protobuf-es v2 message + service descriptors — regenerate, never hand-edit |
@@ -245,10 +245,10 @@ surface.
 |----------|---------------------------------|----------------|------------------------|
 | **Go** | `packages/sdk/contracts-go` | `andromedav1 "github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1"` | Go services under `packages/server/inference/` |
 | **Go Connect** | `packages/sdk/contracts-go/gen/andromeda/v1/andromedav1connect` | `import "github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1/andromedav1connect"` | Go services that speak the Connect control plane |
-| **TypeScript** | private workspace `@agent-os/shared-ts` | `import { RegistryService } from "@agent-os/shared-ts/gen"` | `packages/web` |
+| **TypeScript** | private workspace `@marius-patrik/andromeda-sdk` | `import { RegistryService } from "@marius-patrik/andromeda-sdk/gen"` | `packages/web` |
 | **Python** | `agent.gen` bootstrap + `andromeda.v1` | `import agent.gen; from andromeda.v1 import session_frames_pb2, registry_pb2` | `packages/server/inference/python-agent` |
 
 `packages/web` and `packages/app` are currently private placeholder workspaces.
-They import the private `@agent-os/shared-ts` workspace and will host
+They import the private `@marius-patrik/andromeda-sdk` workspace and will host
 Andromeda's future in-repository web and app clients.
 There is no user-facing CLI or installer in `packages/sdk`.

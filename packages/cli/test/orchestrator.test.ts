@@ -172,14 +172,14 @@ describe("orchestrator state helpers", () => {
       await initializeOrchestratorState(state, "session-1", "fake", "test");
       await appendOrchestratorLedger(state, "session-1", {
         action: "dispatch",
-        repo: "marius-patrik/agents-manager",
+        repo: "marius-patrik/Andromeda",
         issue: 114,
         note: "orchestrator mode",
       });
       const doc = await readOrchestratorState(state);
       expect(doc?.ledger).toHaveLength(1);
       expect(doc?.ledger[0].action).toBe("dispatch");
-      expect(doc?.ledger[0].repo).toBe("marius-patrik/agents-manager");
+      expect(doc?.ledger[0].repo).toBe("marius-patrik/Andromeda");
       expect(doc?.ledger[0].issue).toBe(114);
     } finally {
       await rm(root, { recursive: true, force: true });

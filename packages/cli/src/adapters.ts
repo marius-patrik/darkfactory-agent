@@ -308,7 +308,7 @@ async function writeGlobalWrapper(state: SharedState, id: CliId, binary: string)
   }
 
   if (process.platform === "win32") {
-    const agentsScript = path.join(binDir, "agents.ps1");
+    const agentsScript = path.join(binDir, "andromeda.ps1");
     const wrapperPath = path.join(wrapperDir, `${id}.ps1`);
     const wrapperContent = [
       `$ErrorActionPreference = 'Stop'`,
@@ -329,7 +329,7 @@ async function writeGlobalWrapper(state: SharedState, id: CliId, binary: string)
     ].join("\r\n");
     await fs.promises.writeFile(wrapperPath, wrapperContent, "utf8");
   } else {
-    const agentsScript = path.join(binDir, "agents");
+    const agentsScript = path.join(binDir, "andromeda");
     const wrapperPath = path.join(wrapperDir, id);
     const wrapperContent = [
       `#!/usr/bin/env bash`,

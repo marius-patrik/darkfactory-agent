@@ -1175,7 +1175,7 @@ export async function auditRuntimeAuthority(github, repository, ref, controlRepo
     return [doctorFinding("canonical-worker-workflow-missing", "runtime authority", "Trusted control df-work workflow is missing.", { severity: "critical" })];
   }
   if (!/ANDROMEDA_HOME/.test(work) || !/bin\\agents\.ps1/.test(work) || !/state doctor --json/.test(work)) {
-    findings.push(doctorFinding("canonical-launcher-binding-invalid", "runtime authority", "df-work does not prove absolute ANDROMEDA_HOME, exact `bin\\agents.ps1`, and `state doctor --json` before execution.", { severity: "critical" }));
+    findings.push(doctorFinding("canonical-launcher-binding-invalid", "runtime authority", "df-work does not prove absolute ANDROMEDA_HOME, exact `bin\\andromeda.ps1`, and `state doctor --json` before execution.", { severity: "critical" }));
   }
   if (/\b(kimi|agy|claude)\s+(?:-p|--|\$)/i.test(work) || /\bcodex\s+exec\b/i.test(work)) {
     findings.push(doctorFinding("direct-provider-cli-in-worker", "runtime authority", "df-work contains a direct provider CLI invocation instead of canonical `agents` execution.", { severity: "critical" }));
@@ -1278,7 +1278,7 @@ export function auditMachineRuntimeEvidence(evidence) {
 
 function collectMachineRuntimeEvidence(agentsHome) {
   const root = path.resolve(String(agentsHome || ""));
-  const launcher = process.platform === "win32" ? path.join(root, "bin", "agents.ps1") : path.join(root, "bin", "agents");
+  const launcher = process.platform === "win32" ? path.join(root, "bin", "andromeda.ps1") : path.join(root, "bin", "andromeda");
   const agentsHomeExists = Boolean(agentsHome && existsSync(root));
   if (!agentsHomeExists || !existsSync(launcher)) {
     return emptyMachineRuntimeEvidence({ agentsHomeExists });

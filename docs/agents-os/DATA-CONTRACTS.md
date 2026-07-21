@@ -5,7 +5,7 @@ distro/container work; this document records evidence for a future
 owner-authorized issue and does not authorize implementation.
 
 This is the mount/environment contract for the future Agent OS image. Host
-paths are resolved by `agents-manager`; container processes consume only the
+paths are resolved by `andromeda-cli`; container processes consume only the
 projected container paths.
 
 ## Principles

@@ -29,8 +29,8 @@ generated wire-contract stubs for downstream components:
   - The module path still says `packages/core` while the directory is
     `packages/sdk/contracts-go`. That identity is embedded in the generated
     descriptors, so changing it is a codegen change rather than a rename.
-- **TypeScript:** private workspace `@agent-os/shared-ts`
-  - Shared descriptors and types: `@agent-os/shared-ts/gen`
+- **TypeScript:** private workspace `@marius-patrik/andromeda-sdk`
+  - Shared descriptors and types: `@marius-patrik/andromeda-sdk/gen`
   - Consumers: `packages/web` and `packages/app`, both still placeholders.
 - **Python:** plain protobuf stubs generated to
   `packages/server/inference/python-agent/agent/gen` and

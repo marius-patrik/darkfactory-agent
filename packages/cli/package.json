@@ -1,5 +1,5 @@
 {
-  "name": "@marius-patrik/andromeda",
+  "name": "@marius-patrik/andromeda-cli",
   "private": true,
   "version": "0.10.0",
   "description": "Private Andromeda client implementation for state, lifecycle, providers, sessions, packages, capabilities, and the andromeda CLI.",

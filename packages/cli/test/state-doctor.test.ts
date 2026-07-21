@@ -88,9 +88,9 @@ async function ensureDoctorProduct(state: ReturnType<typeof tempState>): Promise
 
 describe("read-only Agent OS state doctor", () => {
   test("selects one platform-native launcher name", () => {
-    expect(launcherNameForPlatform("win32")).toBe("agents.ps1");
-    expect(launcherNameForPlatform("darwin")).toBe("agents");
-    expect(launcherNameForPlatform("linux")).toBe("agents");
+    expect(launcherNameForPlatform("win32")).toBe("andromeda.ps1");
+    expect(launcherNameForPlatform("darwin")).toBe("andromeda");
+    expect(launcherNameForPlatform("linux")).toBe("andromeda");
   });
   test("does not initialize or create files while diagnosing missing state", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-doctor-empty-"));

@@ -1,5 +1,5 @@
 {
-  "name": "@agent-os/shared-ts",
+  "name": "@marius-patrik/andromeda-sdk",
   "private": true,
   "version": "0.10.0",
   "description": "Private generated TypeScript contract surface for Agent OS clients.",

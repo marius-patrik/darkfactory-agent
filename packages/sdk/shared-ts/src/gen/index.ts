@@ -5,9 +5,9 @@
 // emit an index.ts; only the sibling *_pb.ts files are regenerated.
 //
 // Do NOT wipe / --clean this directory before regenerating — cleaning would
-// destroy this barrel and break `import "@agent-os/shared-ts/gen"`.
+// destroy this barrel and break `import "@marius-patrik/andromeda-sdk/gen"`.
 //
-// Consumers (TUI + web) import the whole contract from "@agent-os/shared-ts/gen".
+// Consumers (TUI + web) import the whole contract from "@marius-patrik/andromeda-sdk/gen".
 // DO NOT EDIT the *_pb.ts files by hand — regenerate with
 // `bun run buf:generate` (root: `buf generate proto`).
 // See packages/mcp/contracts/wire.md §5 for full regeneration notes.

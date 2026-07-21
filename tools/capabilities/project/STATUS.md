@@ -17,7 +17,7 @@
   and the folded predecessors of the developmental runtime, the retired
   gateway, the legacy manager, and the workspace substrate — frozen and mined
   by reimplementation against the sdk.
-- `packages/darkfactory` carries the GitHub control-plane agent project, and
+- `packages/bot` carries the GitHub control-plane agent project, and
   `templates/` carries the five folded template repositories.
 - Every folded repository was verified before its source was deleted. Where a
   branch could not be merged into the fold, its commits are preserved as an

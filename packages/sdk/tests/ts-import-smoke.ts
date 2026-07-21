@@ -12,7 +12,7 @@ import {
 const request = create(ListModelsRequestSchema, {});
 
 if (
-  sharedName !== "@agent-os/shared-ts" ||
+  sharedName !== "@marius-patrik/andromeda-sdk" ||
   request.$typeName !== "andromeda.v1.ListModelsRequest" ||
   file_andromeda_v1_common.name !== "andromeda/v1/common" ||
   RegistryService.typeName !== "andromeda.v1.RegistryService"

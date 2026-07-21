@@ -14,7 +14,7 @@ succeeds. The same commands run locally through
 | `packages/sdk/harness` | `harness` | Ubuntu | direct tool-boundary tests plus the complete manager-coupled session, adapter, and tool-loop suites |
 | `packages/server/inference` | `inference` | Ubuntu | uv lock sync, lint, types, all non-live tests, build, CLI/import/layering checks |
 | `packages/cli` | `manager` | Ubuntu, Windows | TypeScript types, all manager tests, compact-capsule regression |
-| `packages/darkfactory` | `darkfactory` | Ubuntu | pinned public submodule, npm clean install, full check including templates and build |
+| `packages/bot` | `darkfactory` | Ubuntu | pinned public submodule, npm clean install, full check including templates and build |
 | `packages/memory` | `memory-plugin` | Ubuntu, Windows | manager-integrated TypeScript and plugin behavior tests |
 
 Inventory `requiredPaths` are durable coverage anchors, not an exhaustive test

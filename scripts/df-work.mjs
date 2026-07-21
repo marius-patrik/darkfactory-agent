@@ -912,7 +912,7 @@ function canonicalAgentsLauncher() {
   if (!path.isAbsolute(agentsHome)) {
     throw new Error("ANDROMEDA_HOME must be an absolute path");
   }
-  const agentsLauncher = path.join(agentsHome, "bin", "agents.ps1");
+  const agentsLauncher = path.join(agentsHome, "bin", "andromeda.ps1");
   if (!existsSync(agentsLauncher)) {
     throw new Error(`Canonical Agent OS launcher is missing at ${agentsLauncher}`);
   }

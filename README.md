@@ -73,11 +73,11 @@ ready. Do not use an old product checkout or installer as an update source.
 
 ## Product naming
 
-- **Agent OS** is the final product.
-- **Andromeda** is this repository. The root npm package remains
-  `@marius-patrik/agents-manager` as a recorded exception until a package rename
-  is scheduled; it is the only public JavaScript package and `agents` CLI
-  surface.
+- **Andromeda** is the product, this repository, and the npm scope. The root
+  package is `@marius-patrik/andromeda` and is the only public JavaScript
+  package; components follow it as `andromeda-cli`, `andromeda-sdk`,
+  `andromeda-web`, `andromeda-memory`, and `andromeda-bot`. The CLI surface is
+  `andromeda`.
 - **agents** is the CLI.
 - `src/` contains one direct child for each implementation domain,
   managed product plugins, and managed product applications.
@@ -193,7 +193,7 @@ depend on them.
   ([agent loop](docs/inference.md)), plus the folded predecessors: the memory
   plugin, dream, experience, the developmental runtime, the retired gateway,
   the legacy manager, and the workspace substrate.
-- `packages/darkfactory/` — the GitHub control-plane agent project.
+- `packages/bot/` — the GitHub control-plane agent project.
 - `templates/` — the folded template repositories: `bot`, `cli`, `repo`,
   `web`, and `darkfactory-templates`.
 

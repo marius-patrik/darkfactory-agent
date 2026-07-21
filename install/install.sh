@@ -185,9 +185,9 @@ is_windows() {
 
 launcher_path() {
   if is_windows; then
-    printf '%s/bin/agents.ps1\n' "$ANDROMEDA_HOME"
+    printf '%s/bin/andromeda.ps1\n' "$ANDROMEDA_HOME"
   else
-    printf '%s/bin/agents\n' "$ANDROMEDA_HOME"
+    printf '%s/bin/andromeda\n' "$ANDROMEDA_HOME"
   fi
 }
 

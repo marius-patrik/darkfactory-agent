@@ -1,6 +1,6 @@
 # Agent OS manager
 
-`agents-manager` implements the `agents` CLI: the single management and runtime
+`andromeda-cli` implements the `andromeda` CLI: the single management and runtime
 surface for Agent OS. It manages canonical state and memory, provider CLI
 homes, sessions, orchestration, package checkouts, harness execution,
 capabilities, data repositories, environments, secrets, and credits.

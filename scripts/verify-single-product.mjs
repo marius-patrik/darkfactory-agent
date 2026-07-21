@@ -56,7 +56,7 @@ const nestedRepositoryMetadata = [
 // packages/migrate holds former standalone repositories verbatim, frozen for
 // migration. Their original metadata is evidence and is not rewritten here;
 // code leaves migrate by reimplementation against the sdk.
-const migrateTree = /^packages\/(?:migrate|darkfactory)(?:\/|$)/;
+const migrateTree = /^packages\/(?:migrate|bot)(?:\/|$)/;
 // agents/ holds agent projects, and templates/ holds folded template repositories,
 // versioning, and project docs. Like migrate, they are carried rather than
 // built as part of this product, so the single-product interior rules do not
@@ -156,18 +156,23 @@ for (const relative of tracked) {
 const rootPackage = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const productVersion = rootPackage.version;
 if (typeof productVersion !== "string" || !productVersion) issues.push("root package.json must declare the product version");
-if (rootPackage.name !== "@marius-patrik/agents-manager") {
-  issues.push("root package.json must remain the recorded @marius-patrik/agents-manager package-name exception");
+// The agents-manager exception is retired: the root package carries the product
+// name, and every component follows it as andromeda-<component>.
+if (rootPackage.name !== "@marius-patrik/andromeda") {
+  issues.push("root package.json must be named @marius-patrik/andromeda");
 }
 if (rootPackage.bin?.andromeda !== "./packages/cli/src/cli.ts") {
-  issues.push("root package.json must own the authoritative agents CLI entrypoint");
+  issues.push("root package.json must own the authoritative andromeda CLI entrypoint");
+}
+// Nothing may reintroduce the retired agents command as a bin alias.
+if (rootPackage.bin?.agents) {
+  issues.push("root package.json reintroduces the retired agents CLI alias");
 }
 
 const expectedJavaScriptWorkspaces = new Map([
-  ["packages/cli/package.json", "@marius-patrik/andromeda"],
-  ["packages/sdk/shared-ts/package.json", "@agent-os/shared-ts"],
-
-  ["packages/web/package.json", "@agent-os/web"],
+  ["packages/cli/package.json", "@marius-patrik/andromeda-cli"],
+  ["packages/sdk/shared-ts/package.json", "@marius-patrik/andromeda-sdk"],
+  ["packages/web/package.json", "@marius-patrik/andromeda-web"],
 ]);
 const declaredWorkspaces = new Set(rootPackage.workspaces ?? []);
 for (const required of ["packages/cli", "packages/web", "packages/sdk/shared-ts"]) {

@@ -51,8 +51,8 @@ within_sandbox "$ANDROMEDA_ROOT" || die "ANDROMEDA_ROOT escapes the disposable s
 [ "$ANDROMEDA_HOME" != "/Users/user/.andromeda" ] || die "refusing to smoke-test against live personal state"
 
 case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) launcher="$ANDROMEDA_HOME/bin/agents.ps1" ;;
-  *) launcher="$ANDROMEDA_HOME/bin/agents" ;;
+  MINGW*|MSYS*|CYGWIN*) launcher="$ANDROMEDA_HOME/bin/andromeda.ps1" ;;
+  *) launcher="$ANDROMEDA_HOME/bin/andromeda" ;;
 esac
 
 invoke_launcher() {

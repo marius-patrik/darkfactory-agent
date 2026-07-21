@@ -8,9 +8,9 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@agent-os/shared-ts": ["shared-ts/src/index.ts"],
-      "@agent-os/shared-ts/gen": ["shared-ts/src/gen/index.ts"],
-      "@agent-os/web": ["../web/src/index.ts"]
+      "@marius-patrik/andromeda-sdk": ["shared-ts/src/index.ts"],
+      "@marius-patrik/andromeda-sdk/gen": ["shared-ts/src/gen/index.ts"],
+      "@marius-patrik/andromeda-web": ["../web/src/index.ts"]
     }
   },
   "include": [

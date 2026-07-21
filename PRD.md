@@ -5,7 +5,7 @@
 Agent OS is a single personal agent system that can execute through multiple
 models, provider CLIs, harnesses, and machines without creating competing
 identity, memory, session, or configuration authorities. The
-`Andromeda` repository implements the system, and its `agents` CLI is the
+`Andromeda` repository implements the system, and its `andromeda` CLI is the
 single management and runtime surface.
 
 Andromeda is one program, not a collection of adjacent tools. Every component
@@ -28,7 +28,7 @@ dashboards, and escalates only via ask-owner issues. The full backlog drains
 through DarkFactory lanes: issue → branch (from `dev`) → PR → Validate + DarkFactory Autoreview
 gates → automerge → release. Zero orchestrator terminal sessions. "GitHub-only
 control" means autonomous orchestration operates exclusively through the GitHub
-control plane; the `agents` CLI remains the local operator surface.
+control plane; the `andromeda` CLI remains the local operator surface.
 
 This PRD is the repository's specification source of truth. The owner-facing
 task board in the private-data authority at `context/TASK.md` remains the
@@ -42,9 +42,11 @@ until the owner reopens it.
 
 ## Naming and authority
 
-- **Agent OS** — final product name.
-- **Andromeda** — repository. npm package surface stays `@marius-patrik/agents-manager` (recorded exception).
-- **agents** — CLI command.
+- **Andromeda** — the product, the repository, and the npm scope. The root
+  package is `@marius-patrik/andromeda`; components follow it as
+  `andromeda-cli`, `andromeda-sdk`, `andromeda-web`, `andromeda-memory`, and
+  `andromeda-bot`. The recorded `agents-manager` package-name exception is retired.
+- **andromeda** — CLI command.
 - **`~/.andromeda` / `ANDROMEDA_HOME`** — only authoritative runtime state root; a
   checkout of the private-data authority.
 - **`src/`** — implementation domains, each rooted as one direct child.
@@ -76,11 +78,11 @@ The components below are the previous implementation, carried under
 | Component | Role |
 | --- | --- |
 | `packages/sdk` | Generated Go, TypeScript, and Python contracts, the session harness, and the suite verifying the contract surface; protobuf sources live in `packages/mcp` |
-| `packages/cli` | `agents` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
+| `packages/cli` | `andromeda` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
 | `packages/sdk/harness` | Canonical session event handling and tool execution today. Owner-ruled target (2026-07-13, #218): the operation engine owning orchestration, with the orchestrator runtime migrating from the manager |
 | `packages/server/gateway` | Local model registry, routing, health, quota, and transient control-plane relay; switcher control plane and cloud OAuth dispatch |
 | `packages/server/inference` | Gateway-backed Python agent loop, status, persistence, redaction, and package validation; engine discovery and serve profiles |
-| `packages/darkfactory` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
+| `packages/bot` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
 
 Binding architecture rule: the manager manages and the harness operates — as
 the owner-ruled target architecture. Local system management (state, installs,
@@ -89,8 +91,7 @@ by DarkFactory — no parallel implementations in the control plane. Operation
 (orchestration, session execution, tool execution) becomes harness-owned when
 the #218 migration is implemented and accepted; until then orchestration
 remains manager-owned. Gateway and inference own their assigned local runtime
-responsibilities. GitHub is the remote control plane; the `agents` CLI is the
-local one.
+responsibilities. GitHub is the remote control plane; the `andromeda` CLI is the`nlocal one.
 
 ## Goals
 
@@ -102,7 +103,7 @@ local one.
 - Preserve ordered canonical session and orchestration events across provider
   switches while retaining native resume handles where supported.
 - Manage packages, data repositories, environments, skills, plugins, hooks,
-  templates, secrets, and credits through `agents`.
+  templates, secrets, and credits through `andromeda`.
 - Provide journalled, idempotent, reversible migration from inventoried retired
   data into the final layout, then remove every superseded live path.
 - Provide safe cross-machine event exchange with deterministic replay,
@@ -375,7 +376,7 @@ strictly through them.
 
 - Every active component's full test suite runs in Validate on every PR:
   `src/{core,gateway,harness,inference,manager}` and
-  `packages/darkfactory`; parked plugins and applications stay excluded.
+  `packages/bot`; parked plugins and applications stay excluded.
 - Real-behavior legs, not only mocks: a real gateway process round-trip
   (plain and streaming) against an OpenAI-wire backend and an engine
   discovery→registration→routing pass; no hardcoded registry counts.
@@ -514,7 +515,7 @@ declared set.
 ## Installation and validation
 
 The supported source install maintains one checkout of
-`marius-patrik/Andromeda`, writes one regular `ANDROMEDA_HOME/bin/agents`
+`marius-patrik/Andromeda`, writes one regular `ANDROMEDA_HOME/bin/andromeda`
 launcher, initializes explicit canonical roots, pins installed providers, and
 runs `agents state doctor`. It uses no global package-manager link. Old product
 checkout locations and installers are not supported update paths.
