@@ -6,7 +6,7 @@ import { withStateFileLock } from "./state-lock";
 import type { ProviderId } from "./provider-registry";
 
 export const SYSTEM_DATA_REPO_ID = "agent-os-data";
-export const SYSTEM_DATA_REPOSITORY = "marius-patrik/Andromeda-data";
+export const SYSTEM_DATA_REPOSITORY = "marius-patrik/private-data";
 export const SYSTEM_DATA_ENV = "ANDROMEDA_SYSTEM_DATA_ROOT";
 const LEGACY_SYSTEM_DATA_REPOSITORY = "marius-patrik/agents-data";
 const LEGACY_SYSTEM_DATA_RELATIVE_PATH = path.join("data", "agent-os");
@@ -94,7 +94,7 @@ export interface SharedState {
   envFile: string;
 }
 
-/** The Andromeda-data checkout is the canonical personal state root. */
+/** The private-data checkout is the canonical personal state root. */
 export function systemDataPath(state: SharedState): string {
   return state.stateDir;
 }

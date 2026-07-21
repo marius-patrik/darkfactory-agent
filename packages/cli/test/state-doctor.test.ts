@@ -40,7 +40,7 @@ async function ensureDoctorProduct(state: ReturnType<typeof tempState>): Promise
   await git(state.stateDir, ["init", "-q", "-b", "main"]);
   await git(state.stateDir, ["config", "user.name", "Agent OS state test"]);
   await git(state.stateDir, ["config", "user.email", "state@invalid"]);
-  await git(state.stateDir, ["remote", "add", "origin", "https://github.com/marius-patrik/Andromeda-data.git"]);
+  await git(state.stateDir, ["remote", "add", "origin", "https://github.com/marius-patrik/private-data.git"]);
   await writeFile(path.join(state.stateDir, ".gitignore"), "*\n!.gitignore\n!agent.package.json\n!README.md\n!scripts/\n!scripts/validate.mjs\n");
   await writeFile(path.join(state.stateDir, "agent.package.json"), '{"schemaVersion":1,"id":"agent-os-data","kind":"data"}\n');
   await writeFile(path.join(state.stateDir, "README.md"), "# State fixture\n");

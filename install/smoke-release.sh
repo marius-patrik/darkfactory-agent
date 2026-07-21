@@ -88,9 +88,9 @@ git -C "$SOURCE_DIR" commit -q --allow-empty -m "smoke source snapshot"
 
 # Seed the primary state checkout before planting existing provider/runtime
 # contents. This models an already-converged ANDROMEDA_HOME while the edge fixture
-# below still exercises a fresh Andromeda-data clone.
+# below still exercises a fresh private-data clone.
 git clone --quiet --branch main "$STUB_ROOT/data" "$ANDROMEDA_HOME"
-git -C "$ANDROMEDA_HOME" remote set-url origin https://github.com/marius-patrik/Andromeda-data.git
+git -C "$ANDROMEDA_HOME" remote set-url origin https://github.com/marius-patrik/private-data.git
 
 # The manager runtime does not need installed third-party packages for this
 # boundary. Skip only the install subcommand; every CLI execution uses real Bun.

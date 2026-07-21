@@ -99,7 +99,7 @@ export function validateSubmodulePolicy(value) {
     throw new Error("submodule policy release receipt lifetime is invalid");
   }
   const expectedData = [
-    ["marius-patrik/Andromeda-data", "encrypted-bundle-validate"],
+    ["marius-patrik/private-data", "encrypted-bundle-validate"],
     ["marius-patrik/darkfactory-data", "app-ledger-validate"]
   ];
   if (!Array.isArray(value.mainOnlyData) || JSON.stringify(value.mainOnlyData.map((item) => {
@@ -127,7 +127,7 @@ export function validateSubmodulePolicy(value) {
     ["DarkFactory", "plugins/DarkFactory", "marius-patrik/DarkFactory", "main"],
     ["LifeQuest", "plugins/LifeQuest", "marius-patrik/LifeQuest", "main"],
     ["SkyAgent", "plugins/SkyAgent", "marius-patrik/SkyAgent", "main"],
-    ["data", "data/andromeda", "marius-patrik/Andromeda-data", "main"],
+    ["data", "data/andromeda", "marius-patrik/private-data", "main"],
     ["darkfactory-data", "data/darkfactory", "marius-patrik/darkfactory-data", "main"]
   ];
   const actual = root.gitlinks.map((item) => {

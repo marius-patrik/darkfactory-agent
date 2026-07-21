@@ -38,7 +38,7 @@ async function repositoryState(root: string, options: { keepGitIdentity?: boolea
   await git(stateDir, ["init", "-q", "-b", "main"]);
   await git(stateDir, ["config", "user.name", "State repository test"]);
   await git(stateDir, ["config", "user.email", "state@invalid"]);
-  await git(stateDir, ["remote", "add", "origin", "https://github.com/marius-patrik/Andromeda-data.git"]);
+  await git(stateDir, ["remote", "add", "origin", "https://github.com/marius-patrik/private-data.git"]);
   await writeFile(
     path.join(stateDir, ".gitignore"),
     [
@@ -65,7 +65,7 @@ async function repositoryState(root: string, options: { keepGitIdentity?: boolea
   return state;
 }
 
-describe("Andromeda-data state repository", () => {
+describe("private-data state repository", () => {
   test("recognizes an equivalent Windows checkout path alias", async () => {
     if (process.platform !== "win32") return;
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-state-repository-alias-"));
@@ -88,7 +88,7 @@ describe("Andromeda-data state repository", () => {
         scope: "global",
         subject: "agent-os",
         predicate: "state-root",
-        value: "Andromeda-data",
+        value: "private-data",
         sensitivity: "internal",
         evidence,
       });
@@ -212,7 +212,7 @@ describe("Andromeda-data state repository", () => {
       await git(state.stateDir, ["checkout", "--", "README.md"]);
       await git(state.stateDir, ["remote", "set-url", "origin", "https://example.invalid/not-andromeda-data.git"]);
       const status = await inspectStateRepository(state);
-      expect(status.issues).toContain("origin must be marius-patrik/Andromeda-data");
+      expect(status.issues).toContain("origin must be marius-patrik/private-data");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -230,7 +230,7 @@ describe("Andromeda-data state repository", () => {
       const empty = path.join(root, "empty");
       await mkdir(empty, { recursive: true });
       await git(empty, ["init", "-q", "-b", "main"]);
-      await git(empty, ["remote", "add", "origin", "https://github.com/marius-patrik/Andromeda-data.git"]);
+      await git(empty, ["remote", "add", "origin", "https://github.com/marius-patrik/private-data.git"]);
       const emptyState = sharedStateAt(path.join(root, "empty-source"), empty, root);
       const status = await inspectStateRepository(emptyState);
       expect(status.issues).toContain("state repository has no committed HEAD");

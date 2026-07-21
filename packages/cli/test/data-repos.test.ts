@@ -13,7 +13,7 @@ describe("data repos", () => {
       await ensureSharedState(state);
       const initial = await readDataRepos(state);
       expect(initial[0].id).toBe("agent-os-data");
-      expect(initial[0].repo).toBe("marius-patrik/Andromeda-data");
+      expect(initial[0].repo).toBe("marius-patrik/private-data");
       expect(dataRepoManagedRoot(initial[0])).toBe(state.stateDir);
 
       const repo = await upsertDataRepo(state, {
@@ -36,7 +36,7 @@ describe("data repos", () => {
       await expect(
         upsertDataRepo(state, {
           id: "system-data-alias",
-          repo: "marius-patrik/Andromeda-data",
+          repo: "marius-patrik/private-data",
           path: "data/system-data-alias",
           branch: "main",
         }),
@@ -73,7 +73,7 @@ describe("data repos", () => {
       await mkdir(path.join(state.stateDir, ".git"), { recursive: true });
       await ensureSharedState(state);
       const [registration] = await readDataRepos(state);
-      expect(registration.repo).toBe("marius-patrik/Andromeda-data");
+      expect(registration.repo).toBe("marius-patrik/private-data");
       expect(registration.path).toBe(state.stateDir);
       expect(registration.configuredAt).toBe("2026-07-01T00:00:00.000Z");
     } finally {

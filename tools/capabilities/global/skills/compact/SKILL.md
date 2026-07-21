@@ -1,6 +1,6 @@
 ---
 name: compact
-description: Prepare a compaction-safe handoff in canonical Agent OS memory and synchronize its encrypted Andromeda-data state backup. Use when the user asks to compact, prepare for compaction, preserve current work state, make compaction useful, or before reminding the user to compact after substantial work.
+description: Prepare a compaction-safe handoff in canonical Agent OS memory and synchronize its encrypted private-data state backup. Use when the user asks to compact, prepare for compaction, preserve current work state, make compaction useful, or before reminding the user to compact after substantial work.
 ---
 
 # Compact
