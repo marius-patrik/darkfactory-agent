@@ -21,15 +21,15 @@ export function discoverBunTests(relativeDirectory, repositoryRoot = root) {
 }
 
 function managerTests() {
-  return discoverBunTests(path.join("src", "migrate", "manager", "test"));
+  return discoverBunTests(path.join("packages", "clients", "cli", "test"));
 }
 
 function harnessTests() {
   return [
-    ...discoverBunTests(path.join("src", "migrate", "harness", "test")),
-    path.join("src", "migrate", "manager", "test", "session.test.ts"),
-    path.join("src", "migrate", "manager", "test", "session-adapters.test.ts"),
-    path.join("src", "migrate", "manager", "test", "tui-tools.test.ts"),
+    ...discoverBunTests(path.join("packages", "migrate", "harness", "test")),
+    path.join("packages", "clients", "cli", "test", "session.test.ts"),
+    path.join("packages", "clients", "cli", "test", "session-adapters.test.ts"),
+    path.join("packages", "clients", "cli", "test", "tui-tools.test.ts"),
   ];
 }
 
@@ -63,7 +63,7 @@ function requireUv() {
 function runGatewayPytest(marker) {
   requireUv();
   const uv = process.env.UV || "uv";
-  const cwd = path.join(root, "src", "migrate", "gateway");
+  const cwd = path.join(root, "packages", "migrate", "gateway");
   run("gateway dependency sync", uv, ["sync", "--frozen"], { cwd });
   run(`gateway pytest (${marker})`, uv, ["run", "pytest", "-q", "-m", marker], { cwd });
 }
@@ -91,25 +91,25 @@ const suites = {
   inventory() {
     run("product contract regression tests", process.execPath, [
       "--test",
-      "scripts/verify-single-product.test.mjs",
-      "scripts/verify-test-inventory.test.mjs",
+      "tests/verify-single-product.test.mjs",
+      "tests/verify-test-inventory.test.mjs",
     ]);
     run("repository layout and suite inventory", "bun", ["run", "layout:check"]);
   },
   core() {
-    run("core TypeScript types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "src/migrate/core/tsconfig.json"]);
-    run("core TypeScript import smoke", "bun", ["src/migrate/core/tests/ts-import-smoke.ts"]);
-    run("core TypeScript tests", "bun", ["test", ...discoverBunTests(path.join("src", "migrate", "core", "tests"))]);
+    run("core TypeScript types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "packages/migrate/core/tsconfig.json"]);
+    run("core TypeScript import smoke", "bun", ["packages/migrate/core/tests/ts-import-smoke.ts"]);
+    run("core TypeScript tests", "bun", ["test", ...discoverBunTests(path.join("packages", "migrate", "core", "tests"))]);
     run("generated contract freshness", "bun", ["scripts/verify-codegen.ts"]);
-    run("core Python import smoke", "bun", ["src/migrate/core/scripts/python-smoke.mjs"]);
+    run("core Python import smoke", "bun", ["packages/migrate/core/scripts/python-smoke.mjs"]);
     run("core Go contracts", "go", ["test", "./..."], {
-      cwd: path.join(root, "src", "migrate", "core", "contracts-go"),
+      cwd: path.join(root, "packages", "sdk", "contracts-go"),
     });
   },
   gateway() {
     requireUv();
     const uv = process.env.UV || "uv";
-    const cwd = path.join(root, "src", "migrate", "gateway");
+    const cwd = path.join(root, "packages", "migrate", "gateway");
     const sandbox = mkdtempSync(path.join(tmpdir(), "andromeda-gateway-ci-"));
     const userHome = path.join(sandbox, "user");
     const stateHome = path.join(userHome, ".agents");
@@ -143,9 +143,9 @@ const suites = {
   inference() {
     requireUv();
     const uv = process.env.UV || "uv";
-    const cwd = path.join(root, "src", "migrate", "inference", "python-agent");
+    const cwd = path.join(root, "packages", "migrate", "inference", "python-agent");
     run("inference dependency sync", uv, ["sync", "--frozen"], { cwd });
-    run("inference validation", "bun", ["src/migrate/inference/scripts/validate.mjs"]);
+    run("inference validation", "bun", ["packages/migrate/inference/scripts/validate.mjs"]);
   },
   manager() {
     run("manager types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit"]);
@@ -158,16 +158,16 @@ const suites = {
       "-ExecutionPolicy",
       "Bypass",
       "-File",
-      "skills/compact/scripts/test_write_compaction_capsule.ps1",
+      "packages/.global/skills/compact/scripts/test_write_compaction_capsule.ps1",
     ]);
   },
   "memory-plugin"() {
-    run("memory plugin types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "src/migrate/memory/tsconfig.json"]);
+    run("memory plugin types", "bun", ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", "packages/migrate/memory/tsconfig.json"]);
     run("memory plugin tests", "bun", [
       "test",
       "--timeout=30000",
       "--max-concurrency=1",
-      ...discoverBunTests(path.join("src", "migrate", "memory", "test")),
+      ...discoverBunTests(path.join("packages", "migrate", "memory", "test")),
     ]);
   },
   release() {
@@ -179,7 +179,7 @@ const suites = {
   review() {
     run("review workflow regressions", process.execPath, [
       "--test",
-      "scripts/managed-enforcement.test.mjs",
+      "tests/managed-enforcement.test.mjs",
     ]);
   },
 };

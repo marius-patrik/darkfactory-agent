@@ -1,0 +1,62 @@
+name: Release on merge
+
+# Trunk-based: work branches off main, returns through a reviewed pull request,
+# and every merge publishes a release. The tag is derived from the version in
+# package.json, so a release is cut exactly once per version and a merge that
+# does not change the version is a no-op rather than a duplicate tag.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-on-merge
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'marius-patrik' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve product version
+        id: version
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ -z "$version" ] || [ "$version" = "undefined" ]; then
+            echo "package.json does not declare a version" >&2
+            exit 1
+          fi
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release when the version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; this merge did not change the product version."
+            exit 0
+          fi
+
+          # The release notes are the merge that produced this state, so the
+          # published history reads as the sequence of reviewed changes.
+          subject="$(git log -1 --pretty=%s)"
+          body="$(git log -1 --pretty=%b)"
+          printf '%s\n\n%s\n' "$subject" "$body" > release-notes.md
+
+          gh release create "$TAG" \
+            --target "${GITHUB_SHA}" \
+            --title "Andromeda $TAG" \
+            --notes-file release-notes.md

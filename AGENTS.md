@@ -2,11 +2,11 @@
 
 Load the project-local authority before non-trivial work:
 
-1. `docs/.agents/.project/AGENTS.md`
-2. `docs/.agents/.project/PROJECT.md`
-3. `docs/.agents/.project/COMMANDS.md`
-4. `docs/.agents/.project/STATUS.md`
-5. `docs/.agents/.project/HANDOFF.md`
+1. `packages/.project/AGENTS.md`
+2. `packages/.project/PROJECT.md`
+3. `packages/.project/COMMANDS.md`
+4. `packages/.project/STATUS.md`
+5. `packages/.project/HANDOFF.md`
 
 Shared identity, memory, roles, and skills are installed once under
 `$AGENTS_HOME`; this repository does not carry a second global agent floor.
@@ -17,20 +17,20 @@ root-owned. Do not add `.agents`, `.darkfactory`, `docs/`, `AGENTS.md`,
 Managed repository gitlinks below `src/` retain their independently owned
 child policy and documentation; those child files do not become Andromeda
 authority. Andromeda component documentation belongs under root `docs/`, and
-component-specific validation commands belong in `docs/.agents/.project/COMMANDS.md`.
+component-specific validation commands belong in `packages/.project/COMMANDS.md`.
 
 Component boundaries:
 
-- `src/migrate/manager` owns the `agents` CLI, canonical state, installs,
+- `packages/clients/cli` owns the `agents` CLI, canonical state, installs,
   credentials/secrets, providers, sessions, memory, packages, lifecycle
   management, and — until the #218 harness migration is implemented and
   accepted — orchestration.
-- `src/migrate/core` owns protobuf contracts and generated Go, TypeScript, and
+- `packages/migrate/core` owns protobuf contracts and generated Go, TypeScript, and
   Python clients.
-- `src/migrate/harness` owns canonical session events and the event-backed tool
+- `packages/migrate/harness` owns canonical session events and the event-backed tool
   loop, with the owner-ruled target (#218) of becoming the operation engine
   owning orchestration; it does not own state-root or provider-discovery
   policy.
-- `src/migrate/gateway` owns local model routing and transient gateway runtime
+- `packages/migrate/gateway` owns local model routing and transient gateway runtime
   state; it requires an explicit absolute `AGENTS_HOME`.
-- `src/migrate/inference` owns the Python inference loop and private runtime state.
+- `packages/migrate/inference` owns the Python inference loop and private runtime state.

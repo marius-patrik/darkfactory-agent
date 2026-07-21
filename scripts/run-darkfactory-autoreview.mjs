@@ -44,7 +44,7 @@ import {
   validateIssueAutofixProposal
 } from "../../src/issue-spec.ts";
 
-const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONTROL_REPOSITORY = "marius-patrik/darkfactory";
 const REVIEW_MARKER = "<!-- darkfactory-autoreview -->";
 const OWNER_HISTORY_MARKER = "<!-- darkfactory:owner-text-history -->";
@@ -516,9 +516,9 @@ function trustedBaseRules(repoRoot, token, hooksRoot) {
   const paths = [
     "AGENTS.md",
     ".agents/AGENTS.md",
-    "docs/.agents/.project/AGENTS.md",
-    "docs/.agents/.project/PROJECT.md",
-    "docs/.agents/.project/COMMANDS.md"
+    "packages/.project/AGENTS.md",
+    "packages/.project/PROJECT.md",
+    "packages/.project/COMMANDS.md"
   ];
   const sections = [];
   for (const filePath of paths) {

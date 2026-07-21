@@ -160,7 +160,7 @@ async function reconcileTargetRepository(repo, controlRepo) {
   const prdSources = await getPrdSources(TARGET_REPO, sourceRef, prdPresence.tree);
   ledger.prd_files = prdSources.map((source) => source.path);
 
-  const modelPolicy = await loadModelPolicy(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."));
+  const modelPolicy = await loadModelPolicy(path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
   const items = prdSources
     .flatMap((source) => parsePrdItems(source.content, source.path))
     .map((item) => ({

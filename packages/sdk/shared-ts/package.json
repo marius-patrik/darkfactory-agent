@@ -1,0 +1,19 @@
+{
+  "name": "@agent-os/shared-ts",
+  "private": true,
+  "version": "0.10.0",
+  "description": "Private generated TypeScript contract surface for Agent OS clients.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./gen": "./src/gen/index.ts"
+  },
+  "scripts": {
+    "buf:generate": "cd ../.. && bunx --bun @bufbuild/buf generate proto",
+    "typecheck": "tsc -p ../../tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.12.1",
+    "@connectrpc/connect": "2.1.2"
+  }
+}

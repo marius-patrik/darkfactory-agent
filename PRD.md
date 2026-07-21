@@ -71,16 +71,16 @@ machines, each joined as either a client or a server, never both.
 | `plugins` | Capabilities loaded through the sdk plugin contract. |
 
 The components below are the previous implementation, carried under
-`src/migrate` and mined by reimplementation rather than extended in place.
+`packages/migrate` and mined by reimplementation rather than extended in place.
 
 | Component | Role |
 | --- | --- |
-| `src/migrate/core` | Protobuf sources and generated Go, TypeScript, and Python contracts |
-| `src/migrate/manager` | `agents` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
-| `src/migrate/harness` | Canonical session event handling and tool execution today. Owner-ruled target (2026-07-13, #218): the operation engine owning orchestration, with the orchestrator runtime migrating from the manager |
-| `src/migrate/gateway` | Local model registry, routing, health, quota, and transient control-plane relay; switcher control plane and cloud OAuth dispatch |
-| `src/migrate/inference` | Gateway-backed Python agent loop, status, persistence, redaction, and package validation; engine discovery and serve profiles |
-| `agents/darkfactory` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
+| `packages/migrate/core` | Protobuf sources and generated Go, TypeScript, and Python contracts |
+| `packages/clients/cli` | `agents` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
+| `packages/migrate/harness` | Canonical session event handling and tool execution today. Owner-ruled target (2026-07-13, #218): the operation engine owning orchestration, with the orchestrator runtime migrating from the manager |
+| `packages/migrate/gateway` | Local model registry, routing, health, quota, and transient control-plane relay; switcher control plane and cloud OAuth dispatch |
+| `packages/migrate/inference` | Gateway-backed Python agent loop, status, persistence, redaction, and package validation; engine discovery and serve profiles |
+| `packages/darkfactory` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
 
 Binding architecture rule: the manager manages and the harness operates — as
 the owner-ruled target architecture. Local system management (state, installs,
@@ -375,7 +375,7 @@ strictly through them.
 
 - Every active component's full test suite runs in Validate on every PR:
   `src/{core,gateway,harness,inference,manager}` and
-  `agents/darkfactory`; parked plugins and applications stay excluded.
+  `packages/darkfactory`; parked plugins and applications stay excluded.
 - Real-behavior legs, not only mocks: a real gateway process round-trip
   (plain and streaming) against an OpenAI-wire backend and an engine
   discovery→registration→routing pass; no hardcoded registry counts.
@@ -488,17 +488,17 @@ clients/        cli, app, web
 plugins/        capabilities loaded through the sdk plugin contract
 agents/         agent projects, carried with their own identity
 templates/      folded template repositories
-src/migrate/    the previous implementation, frozen for migration
+packages/migrate/    the previous implementation, frozen for migration
 skills/  hooks/  roles/  commands/  persona.md
 docs/    ci/     install/  scripts/  .github/  .darkfactory/
 ```
 
 Two rules govern this layout.
 
-**Carried trees are not built.** `src/migrate/`, `agents/<project>/`, and
+**Carried trees are not built.** `packages/migrate/`, `agents/<project>/`, and
 `templates/<project>/` hold former standalone repositories folded in with their
 full history. They keep their own identity, versioning, and project docs, and
-nothing outside them may depend on them. Code leaves `src/migrate` by being
+nothing outside them may depend on them. Code leaves `packages/migrate` by being
 reimplemented against the sdk — never by being re-imported, and never by being
 deleted. Repository-wide contracts that govern what is built and shipped
 (retired names, forbidden paths, nested package metadata, the single-product

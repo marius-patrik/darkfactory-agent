@@ -184,7 +184,7 @@ These hold former standalone repositories, folded in with their full history.
 They keep their own identity and versioning, and nothing outside them may
 depend on them.
 
-- `src/migrate/` — the previous implementation, frozen and mined by
+- `packages/migrate/` — the previous implementation, frozen and mined by
   reimplementation against the sdk: `manager` (the `agents` CLI and state
   runtime, see [manager](docs/manager.md)), `core`
   ([contracts and generated clients](docs/core.md)), `harness`
@@ -193,7 +193,7 @@ depend on them.
   ([agent loop](docs/inference.md)), plus the folded predecessors: the memory
   plugin, dream, experience, the developmental runtime, the retired gateway,
   the legacy manager, and the workspace substrate.
-- `agents/darkfactory/` — the GitHub control-plane agent project.
+- `packages/darkfactory/` — the GitHub control-plane agent project.
 - `templates/` — the folded template repositories: `bot`, `cli`, `repo`,
   `web`, and `darkfactory-templates`.
 

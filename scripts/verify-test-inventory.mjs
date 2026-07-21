@@ -22,7 +22,7 @@ function unique(values) {
 
 // Managed repositories live under data/ (state), src/ (components), and
 // agents/ (agent projects built on src/agent).
-const MANAGED_REPOSITORY_PREFIXES = ["src/"];
+const MANAGED_REPOSITORY_PREFIXES = ["packages/"];
 
 export function parseIndexedGitlinks(output) {
   return output
@@ -75,9 +75,9 @@ function workflowHasLeg(workflow, suite, runner) {
 
 export function inventoryIssues(root = repositoryRoot) {
   const issues = [];
-  const inventoryPath = path.join(root, "ci", "test-inventory.json");
+  const inventoryPath = path.join(root, ".github", "ci", "test-inventory.json");
   const inventory = JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
-  if (inventory.schemaVersion !== 1) issues.push("ci/test-inventory.json must use schemaVersion 1");
+  if (inventory.schemaVersion !== 1) issues.push(".github/ci/test-inventory.json must use schemaVersion 1");
 
   const groups = [
     ...(Array.isArray(inventory.activeComponents) ? inventory.activeComponents : []),
@@ -113,20 +113,22 @@ export function inventoryIssues(root = repositoryRoot) {
     ...parkedApps,
     ...scaffoldedComponents,
   ]
-    .filter((entry) => typeof entry === "string" && (["sdk", "mcp", "hooks", "roles", "skills", "server", "plugins", "agents", "clients", "templates"].includes(entry) || entry.startsWith("src/") || entry.startsWith("clients/") || entry.startsWith("agents/") || entry.startsWith("templates/")))
+    .filter((entry) => typeof entry === "string" && (["templates"].includes(entry) || entry.startsWith("packages/") || entry.startsWith("agents/") || entry.startsWith("templates/")))
     .sort();
-  // src/migrate nests one level deeper: its children are frozen former
+  // packages/migrate nests one level deeper: its children are frozen former
   // components, each still individually declared in the inventory.
   const actualPackages = [
-    ...sortedDirectories(root, "src"),
-    ...sortedDirectories(root, "src/migrate"),
+    ...sortedDirectories(root, "packages"),
+    ...sortedDirectories(root, "packages/migrate"),
+    ...sortedDirectories(root, "packages/clients"),
+
+    ...sortedDirectories(root, "packages/sdk"),
     ...(fs.existsSync(path.join(root, "sdk")) ? ["sdk"] : []),
     ...(fs.existsSync(path.join(root, "server")) ? ["server"] : []),
     ...(fs.existsSync(path.join(root, "plugins")) ? ["plugins"] : []),
     ...(fs.existsSync(path.join(root, "agents")) ? ["agents"] : []),
     ...(fs.existsSync(path.join(root, "clients")) ? ["clients"] : []),
-    ...sortedDirectories(root, "clients"),
-    ...sortedDirectories(root, "agents"),
+    ...sortedDirectories(root, "packages"),
     ...(fs.existsSync(path.join(root, "templates")) ? ["templates"] : []),
     ...sortedDirectories(root, "templates"),
     ...(fs.existsSync(path.join(root, "mcp")) ? ["mcp"] : []),
@@ -145,12 +147,12 @@ export function inventoryIssues(root = repositoryRoot) {
   const actualGitlinks = indexedGitlinks(root);
   for (const declaredPath of declaredGitlinks) {
     if (!MANAGED_REPOSITORY_PREFIXES.some((prefix) => declaredPath.startsWith(prefix))) {
-      issues.push(`managed repository declaration is outside data/, src/, or agents/: ${declaredPath}`);
+      issues.push(`managed repository declaration is outside packages/: ${declaredPath}`);
     }
   }
   for (const gitlink of actualGitlinks) {
     if (!MANAGED_REPOSITORY_PREFIXES.some((prefix) => gitlink.path.startsWith(prefix))) {
-      issues.push(`managed repository gitlink is outside data/, src/, or agents/: ${gitlink.path}`);
+      issues.push(`managed repository gitlink is outside packages/: ${gitlink.path}`);
     }
   }
   const activeGitlinks = activeComponents
@@ -175,7 +177,7 @@ export function inventoryIssues(root = repositoryRoot) {
       issues.push(`managed package has conflicting CI classifications (${memberships.join(", ")}): ${managedPath}`);
     }
   }
-  const isManagedComponentPath = (value) => value.startsWith("src/") || value.startsWith("agents/");
+  const isManagedComponentPath = (value) => value.startsWith("packages/");
   const declaredPackageGitlinks = declaredGitlinks.filter(isManagedComponentPath).sort();
   const actualPackageGitlinks = actualGitlinks.filter((entry) => isManagedComponentPath(entry.path));
   const classifiedPackageGitlinks = [...activeGitlinks, ...parkedPlugins, ...parkedApps]
@@ -187,8 +189,8 @@ export function inventoryIssues(root = repositoryRoot) {
     ...classifiedPackageGitlinks,
   ]).sort();
   for (const managedPath of managedPackagePaths) {
-    if (!/^(?:src\/(?:migrate\/)?|agents\/)[a-z0-9]+(?:-[a-z0-9]+)*$/.test(managedPath)) {
-      issues.push(`managed component path is not a lowercase child of src/, src/migrate/, or agents/: ${managedPath}`);
+    if (!/^packages\/(?:migrate\/(?:agents\/)?|clients\/)?[a-z0-9]+(?:-[a-z0-9]+)*$/.test(managedPath)) {
+      issues.push(`managed component path is not a lowercase child of packages/: ${managedPath}`);
     }
     const declarationCount = declaredPackageGitlinks.filter((entry) => entry === managedPath).length;
     const gitlinks = actualPackageGitlinks.filter((entry) => entry.path === managedPath);

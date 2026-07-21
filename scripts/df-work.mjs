@@ -40,7 +40,7 @@ import {
   validationCommandsForRepository
 } from "../../src/model-turn.ts";
 
-const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const CONTROL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TOKEN = requiredEnv("DARK_FACTORY_TOKEN");
 const CONTROL_REPO = parseRepo(requiredEnv("DF_CONTROL_REPO"));
 const TARGET_REPO = parseRepo(requiredEnv("DF_TARGET_REPO"));

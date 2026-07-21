@@ -16,30 +16,30 @@ const tracked = execFileSync("git", ["-C", root, "ls-files", "--cached", "--othe
 const issues = [];
 issues.push(...inventoryIssues(root));
 const requiredLayout = [
-  "src/migrate/core",
-  "src/migrate/gateway",
-  "src/migrate/harness",
-  "src/migrate/inference",
-  "src/migrate/manager",
-  "skills",
-  "hooks",
-  "roles",
-  "commands",
+  "packages/migrate/core",
+  "packages/migrate/gateway",
+  "packages/migrate/harness",
+  "packages/migrate/inference",
+  "packages/clients/cli",
+  "packages/.global/skills",
+  "packages/.global/hooks",
+  "packages/.global/roles",
+  "packages/.global/commands",
 ];
 for (const relative of requiredLayout) {
   if (!fs.statSync(path.join(root, relative), { throwIfNoEntry: false })?.isDirectory()) {
     issues.push(`required repository root is missing: ${relative}`);
   }
 }
-for (const retired of ["src/migrate/core/src", "src/migrate/core/test", "src/migrate/core/capabilities"]) {
+for (const retired of ["packages/migrate/core/src", "packages/migrate/core/test", "packages/migrate/core/capabilities"]) {
   if (fs.statSync(path.join(root, retired), { throwIfNoEntry: false })) {
     issues.push(`retired nested repository root remains: ${retired}`);
   }
 }
 
 const nestedRepositoryMetadata = [
-  /^packages\/(?:.*\/)?(?:\.agents|\.darkfactory|docs)(?:\/|$)/i,
-  /^packages\/(?:.*\/)?(?:AGENTS|PRD)\.md$/i,
+  /^packages\/(?!\.project\/)(?:.*\/)?(?:\.agents|\.darkfactory|docs)(?:\/|$)/i,
+  /^packages\/(?!\.project\/)(?:.*\/)?(?:AGENTS|PRD)\.md$/i,
   // A component may carry exactly one contract README at its own root; anything
   // deeper is a package pretending to be its own repository again.
   // clients/ groups the client components one level deeper; each still owns
@@ -47,15 +47,15 @@ const nestedRepositoryMetadata = [
   /^packages\/(?!clients\/)[a-z0-9-]+\/.+\/README\.md$/i,
   /^packages\/clients\/[a-z0-9-]+\/.+\/README\.md$/i,
 ];
-// src/migrate holds former standalone repositories verbatim, frozen for
+// packages/migrate holds former standalone repositories verbatim, frozen for
 // migration. Their original metadata is evidence and is not rewritten here;
 // code leaves migrate by reimplementation against the sdk.
-const migrateTree = /^(?:src\/migrate|(?:hooks|roles|skills)(?:\/|$))/;
+const migrateTree = /^packages\/(?:migrate|darkfactory)(?:\/|$)/;
 // agents/ holds agent projects, and templates/ holds folded template repositories,
 // versioning, and project docs. Like migrate, they are carried rather than
 // built as part of this product, so the single-product interior rules do not
 // apply inside them. Every live surface remains fully scanned.
-const agentsTree = /^(?:agents|templates)\/[^/]+\//;
+const agentsTree = /^templates\/[^/]+\//;
 const carriedTree = (relative) => migrateTree.test(relative) || agentsTree.test(relative);
 for (const relative of tracked) {
   if (carriedTree(relative)) continue;
@@ -67,8 +67,8 @@ for (const relative of tracked) {
 const gitmodules = fs.readFileSync(path.join(root, ".gitmodules"), "utf8");
 for (const match of gitmodules.matchAll(/^\s*path\s*=\s*(.+)\s*$/gm)) {
   const submodulePath = match[1].trim();
-  if (!["Andromeda-data", "src/", "agents/"].some((prefix) => submodulePath === prefix || submodulePath.startsWith(prefix))) {
-    issues.push(`managed repository submodule is outside data/, src/, or agents/: ${submodulePath}`);
+  if (!["packages/"].some((prefix) => submodulePath === prefix || submodulePath.startsWith(prefix))) {
+    issues.push(`managed repository submodule is outside packages/: ${submodulePath}`);
   }
 }
 
@@ -103,21 +103,21 @@ const retiredContent = [
 
 const retiredVariableRejectionFiles = new Set([
   "install/install.sh",
-  "src/migrate/manager/src/runtime-paths.ts",
-  "src/migrate/manager/src/state-doctor.ts",
-  "src/migrate/manager/test/state.test.ts",
+  "packages/clients/cli/src/runtime-paths.ts",
+  "packages/clients/cli/src/state-doctor.ts",
+  "packages/clients/cli/test/state.test.ts",
 ]);
 
 // This policy file necessarily spells the retired identifiers it rejects.
 // Product source, manifests, scripts, and documentation remain fully scanned.
-// The CI inventory necessarily names the frozen src/migrate directories,
+// The CI inventory necessarily names the frozen packages/migrate directories,
 // which keep the original repository names they were retired under. Its schema,
 // paths, suites, and gitlinks are enforced by verify-test-inventory instead.
-const policyFiles = new Set(["scripts/verify-single-product.mjs", "ci/test-inventory.json"]);
+const policyFiles = new Set(["scripts/verify-single-product.mjs", ".github/ci/test-inventory.json"]);
 
 for (const relative of tracked) {
   if (policyFiles.has(relative)) continue;
-  // src/migrate holds former standalone repositories verbatim as frozen
+  // packages/migrate holds former standalone repositories verbatim as frozen
   // evidence, and those histories necessarily spell the names they were retired
   // for. Retired-name enforcement stays fully active on every surface that is
   // still built, imported, or shipped; nothing imports migrate.
@@ -140,18 +140,18 @@ if (typeof productVersion !== "string" || !productVersion) issues.push("root pac
 if (rootPackage.name !== "@marius-patrik/agents-manager") {
   issues.push("root package.json must remain the recorded @marius-patrik/agents-manager package-name exception");
 }
-if (rootPackage.bin?.agents !== "./src/migrate/manager/src/cli.ts") {
+if (rootPackage.bin?.andromeda !== "./packages/clients/cli/src/cli.ts") {
   issues.push("root package.json must own the authoritative agents CLI entrypoint");
 }
 
 const expectedJavaScriptWorkspaces = new Map([
-  ["src/migrate/manager/package.json", "@marius-patrik/andromeda-manager"],
-  ["src/migrate/core/clients/shared-ts/package.json", "@agent-os/shared-ts"],
-  ["src/migrate/core/clients/tui/package.json", "@agent-os/tui"],
-  ["src/migrate/core/clients/web/package.json", "@agent-os/web"],
+  ["packages/clients/cli/package.json", "@marius-patrik/andromeda"],
+  ["packages/sdk/shared-ts/package.json", "@agent-os/shared-ts"],
+
+  ["packages/clients/web/package.json", "@agent-os/web"],
 ]);
 const declaredWorkspaces = new Set(rootPackage.workspaces ?? []);
-for (const required of ["src/migrate/manager", "src/migrate/core/clients/*"]) {
+for (const required of ["packages/clients/cli", "packages/clients/web", "packages/sdk/shared-ts"]) {
   if (!declaredWorkspaces.has(required)) issues.push(`root package.json does not own workspace pattern: ${required}`);
 }
 for (const [relative, expectedName] of expectedJavaScriptWorkspaces) {

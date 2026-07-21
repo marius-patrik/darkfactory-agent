@@ -4,12 +4,9 @@ on:
   push:
     branches:
       - main
-      - dev
   pull_request:
     branches:
       - main
-      - dev
-
 permissions:
   contents: read
 
@@ -84,7 +81,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: stable
-          cache-dependency-path: src/migrate/core/contracts-go/go.sum
+          cache-dependency-path: packages/sdk/contracts-go/go.sum
 
       - name: Set up uv
         if: contains(fromJSON('["gateway", "gateway-real", "engine-real", "inference"]'), matrix.suite)
@@ -113,7 +110,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           git diff --check "$BASE_SHA...$HEAD_SHA"
-          # No submodules remain: every former gitlink is folded into src/migrate
+          # No submodules remain: every former gitlink is folded into packages/migrate
           # with its history. If one is ever declared again, verify-test-inventory
           # fails until this job initializes and verifies exactly that set.
           if [ -s .gitmodules ]; then

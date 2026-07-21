@@ -1,18 +1,21 @@
 # DarkFactory Branching Policy
 
-Managed code repositories use `dev` for work integration and `main` for each
-repository's canonical released product state.
+Managed code repositories are trunk-based: `main` is the only long-lived branch
+and is the canonical released product state.
 
-- Work pull requests target `dev`.
-- `dev` and `main` require strict, GitHub-Actions-bound `Validate` and
+- Work branches off `main` and returns through a reviewed pull request into
+  `main`. There is no `dev` integration branch and no separate release pull
+  request.
+- `main` requires strict, GitHub-Actions-bound `Validate` and
   `DarkFactory Autoreview` checks. A clean medium review alone is insufficient;
   Autoreview succeeds only after an independent schema-valid clean high confirmation.
 - Force-pushes, deletion, and administrative gate bypass remain disabled.
-- Release pull requests move reviewed `dev` state to `main` through an eligible
-  `release/<id>` branch without deleting long-lived `dev`.
-- Post-merge convergence is exact Git tree identity backed by trusted reviewed
-  PR ancestry; merge-commit SHA identity is neither required nor simulated with
-  protected-ref writes. Main-ahead state returns to `dev` through a reviewed PR.
+- Every merge into `main` publishes a release. The tag is derived from the
+  product version, so a release is cut exactly once per version and a merge that
+  does not change the version publishes nothing rather than duplicating a tag.
+- Because `main` is the only long-lived branch, post-merge convergence is
+  trivially exact: there is no second branch to reconcile and no tree-identity
+  comparison to maintain.
 - DarkFactory and Andromeda retain their explicit independent product, version,
   tag, and release authority.
 - Only `marius-patrik/private-data` and `marius-patrik/darkfactory-data` use

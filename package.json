@@ -1,23 +1,25 @@
 {
   "name": "@marius-patrik/agents-manager",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Authoritative Agent OS package surface for the unified `agents` CLI and the Andromeda system implementation.",
   "type": "module",
   "workspaces": [
-    "src/migrate/manager",
-    "src/migrate/core/clients/*"
+    "packages/clients/cli",
+    "packages/clients/web",
+    "packages/sdk/shared-ts"
   ],
   "bin": {
-    "agents": "./src/migrate/manager/src/cli.ts"
+    "andromeda": "./packages/clients/cli/src/cli.ts",
+    "agents": "./packages/clients/cli/src/cli.ts"
   },
   "scripts": {
-    "agents": "bun src/migrate/manager/src/cli.ts",
+    "agents": "bun packages/clients/cli/src/cli.ts",
     "check": "bunx tsc --noEmit",
-    "test": "bun test src/migrate/manager/test/*.test.ts",
+    "test": "bun test packages/clients/cli/test/*.test.ts",
     "proto:check": "bun scripts/verify-codegen.ts",
     "layout:check": "node scripts/verify-single-product.mjs",
     "ci": "node scripts/run-ci-suite.mjs all",
-    "test:compact": "pwsh -NoProfile -ExecutionPolicy Bypass -File skills/compact/scripts/test_write_compaction_capsule.ps1",
+    "test:compact": "pwsh -NoProfile -ExecutionPolicy Bypass -File packages/.global/skills/compact/scripts/test_write_compaction_capsule.ps1",
     "smoke:release": "bun scripts/run-release-smoke.mjs",
     "smoke:sync": "bun scripts/run-sync-smoke.mjs"
   },
