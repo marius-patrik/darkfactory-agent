@@ -4,16 +4,6 @@
   "workspaces": {
     "": {
       "name": "@marius-patrik/agents-manager",
-      "devDependencies": {
-        "@bufbuild/buf": "1.71.0",
-        "@bufbuild/protobuf": "2.12.1",
-        "@types/bun": "1.3.14",
-        "typescript": "5.9.3",
-      },
-    },
-    "packages/cli": {
-      "name": "@marius-patrik/andromeda-cli",
-      "version": "0.10.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "0.23.0",
         "@bufbuild/protobuf": "2.12.1",
@@ -21,21 +11,10 @@
         "zod": "4.3.6",
       },
       "devDependencies": {
+        "@bufbuild/buf": "1.71.0",
         "@types/bun": "1.3.14",
         "typescript": "5.9.3",
       },
-    },
-    "packages/sdk/shared-ts": {
-      "name": "@marius-patrik/andromeda-sdk",
-      "version": "0.10.0",
-      "dependencies": {
-        "@bufbuild/protobuf": "2.12.1",
-        "@connectrpc/connect": "2.1.2",
-      },
-    },
-    "packages/web": {
-      "name": "@marius-patrik/andromeda-web",
-      "version": "0.10.0",
     },
   },
   "packages": {
@@ -60,12 +39,6 @@
     "@bufbuild/protobuf": ["@bufbuild/protobuf@2.12.1", "", {}, "sha512-BvAMfS6LrgZiryOAZ4pBYucu4wG/Ei/9o9DZ9akbREnMLbPJiom2i8b9C8IsKErQoiKqVhrerzt3kOT/RrzLHg=="],
 
     "@connectrpc/connect": ["@connectrpc/connect@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA=="],
-
-    "@marius-patrik/andromeda-cli": ["@marius-patrik/andromeda-cli@workspace:packages/cli"],
-
-    "@marius-patrik/andromeda-sdk": ["@marius-patrik/andromeda-sdk@workspace:packages/sdk/shared-ts"],
-
-    "@marius-patrik/andromeda-web": ["@marius-patrik/andromeda-web@workspace:packages/web"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

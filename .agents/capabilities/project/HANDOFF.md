@@ -14,17 +14,17 @@ $env:ANDROMEDA_HOME = "$HOME\.agents"
 $env:ANDROMEDA_USER_HOME = "$HOME"
 $env:ANDROMEDA_ROOT = "$HOME\marius-patrik\Andromeda"
 Set-Location $env:ANDROMEDA_ROOT
-bun packages/cli/src/cli.ts state doctor --json
+bun src/cli/cli.ts state doctor --json
 ```
 
 ## What the next session should know
 
 The target components — `sdk`, `mcp`, `server`, `clients/*`, `plugins` — exist
 as contracts without implementation. The work ahead is reimplementing capability
-out of `packages/bot` against the sdk, not extending the frozen tree in place.
+out of `src/bot` against the sdk, not extending the frozen tree in place.
 Nothing outside a carried tree may depend on one.
 
-Carried trees (`packages/bot/`, `agents/<project>/`, `templates/<project>/`) hold
+Carried trees (`src/bot/`, `agents/<project>/`, `templates/<project>/`) hold
 former standalone repositories with their full history. Repository-wide
 contracts that govern what is built and shipped do not apply inside them; every
 live surface is still fully scanned. If a rule needs relaxing for a carried

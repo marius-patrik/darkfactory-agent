@@ -7,10 +7,10 @@
 # narrowed to exclude generated trees rather than satisfied by editing output
 # that would then no longer match `buf generate`. Every hand-authored file,
 # including the one barrel that lives inside a generated tree, stays checked.
-packages/sdk/contracts-go/gen/** -whitespace
-packages/sdk/shared-ts/src/gen/** -whitespace
-packages/server/inference/python-agent/agent/gen/** -whitespace
-packages/server/gateway/andromeda/** -whitespace
+src/sdk/contracts-go/gen/** -whitespace
+src/sdk/shared-ts/gen/** -whitespace
+src/server/inference/python-agent/agent/gen/** -whitespace
+src/server/gateway/andromeda/** -whitespace
 
 # Hand-authored, and buf never emits it: keep it under the whitespace contract.
-packages/sdk/shared-ts/src/gen/index.ts whitespace
+src/sdk/shared-ts/gen/index.ts whitespace

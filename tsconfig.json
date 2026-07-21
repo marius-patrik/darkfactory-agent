@@ -8,5 +8,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["packages/cli/src/**/*.ts", "packages/cli/test/**/*.ts"]
+  "include": ["src/cli/**/*.ts", "src/cli/test/**/*.ts"]
 }

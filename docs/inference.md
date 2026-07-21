@@ -12,7 +12,7 @@ runtime state below `$ANDROMEDA_HOME/runtime/inference`:
 
 Inference does not write the canonical Agent OS session, memory, capability,
 configuration, or credit stores. Its generated `common_pb2` module uses the
-canonical `andromeda.v1` protocol emitted from `packages/mcp/proto`.
+canonical `andromeda.v1` protocol emitted from `src/mcp/proto`.
 
 ## Contents
 
@@ -22,7 +22,7 @@ canonical `andromeda.v1` protocol emitted from `packages/mcp/proto`.
 ## Verify
 
 ```sh
-bun packages/server/inference/scripts/validate.mjs
+bun src/server/inference/scripts/validate.mjs
 ```
 
 That command runs ruff, mypy, pytest, the Python package build, generated

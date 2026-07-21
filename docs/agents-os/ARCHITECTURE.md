@@ -13,14 +13,14 @@ Agent OS remains one product inside or outside a container:
 
 - `andromeda-cli` owns state discovery, provider pinning, sessions, memory,
   capabilities, package registries, and lifecycle commands.
-- `packages/cli`, `packages/sdk/harness`, `packages/sdk`, `packages/server/gateway`,
-  and `packages/server/inference` are implementation components, not separate products.
-- `packages/bot` is a GitHub control-plane package, not a second agent
+- `src/cli`, `src/sdk/harness`, `src/sdk`, `src/server/gateway`,
+  and `src/server/inference` are implementation components, not separate products.
+- `src/bot` is a GitHub control-plane package, not a second agent
   brain.
-- `packages/memory` is the cognitive memory-operations plugin; it reads and
+- `src/memory` is the cognitive memory-operations plugin; it reads and
   mutates memory only through manager-owned canonical contracts.
-- `packages/lifequest` and `packages/skyagent` are managed plugins;
-  `packages/fabrica` is a managed application.
+- `src/lifequest` and `src/skyagent` are managed plugins;
+  `src/fabrica` is a managed application.
 - `data/andromeda` and `data/darkfactory` pin the separate Andromeda and
   DarkFactory data repositories for development.
 - private-data is checked out at `ANDROMEDA_HOME`; it is the same physical root

@@ -34,7 +34,7 @@ installation and validation. Python package operations use the `uv` CLI rather
 than `python -m uv`.
 
 The pre-convergence `go.work` exception is obsolete. The Go contract module is
-now inside this repository at `packages/sdk/contracts-go/go.mod`; validation no
+now inside this repository at `src/sdk/contracts-go/go.mod`; validation no
 longer depends on a sibling contracts checkout, and the monorepo has no root
 `go.work` file to conditionally discover.
 

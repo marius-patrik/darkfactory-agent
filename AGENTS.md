@@ -21,16 +21,16 @@ component-specific validation commands belong in `.agents/capabilities/project/C
 
 Component boundaries:
 
-- `packages/cli` owns the `agents` CLI, canonical state, installs,
+- `src/cli` owns the `agents` CLI, canonical state, installs,
   credentials/secrets, providers, sessions, memory, packages, lifecycle
   management, and — until the #218 harness migration is implemented and
   accepted — orchestration.
-- `packages/sdk` owns the generated Go, TypeScript, and Python clients and the
-  suite that verifies them; `packages/mcp` owns the protobuf sources.
-- `packages/sdk/harness` owns canonical session events and the event-backed tool
+- `src/sdk` owns the generated Go, TypeScript, and Python clients and the
+  suite that verifies them; `src/mcp` owns the protobuf sources.
+- `src/sdk/harness` owns canonical session events and the event-backed tool
   loop, with the owner-ruled target (#218) of becoming the operation engine
   owning orchestration; it does not own state-root or provider-discovery
   policy.
-- `packages/server/gateway` owns local model routing and transient gateway runtime
+- `src/server/gateway` owns local model routing and transient gateway runtime
   state; it requires an explicit absolute `ANDROMEDA_HOME`.
-- `packages/server/inference` owns the Python inference loop and private runtime state.
+- `src/server/inference` owns the Python inference loop and private runtime state.

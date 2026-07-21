@@ -16,11 +16,11 @@ const tracked = execFileSync("git", ["-C", root, "ls-files", "--cached", "--othe
 const issues = [];
 issues.push(...inventoryIssues(root));
 const requiredLayout = [
-  "packages/sdk/tests",
-  "packages/server/gateway",
-  "packages/sdk/harness",
-  "packages/server/inference",
-  "packages/cli",
+  "src/sdk/tests",
+  "src/server/gateway",
+  "src/sdk/harness",
+  "src/server/inference",
+  "src/cli",
   ".agents/capabilities/global/skills",
   ".agents/capabilities/global/hooks",
   ".agents/capabilities/global/roles",
@@ -44,7 +44,7 @@ const nestedRepositoryMetadata = [
   // carve out is gone and the single component-depth rule covers every package.
   /^packages\/[a-z0-9-]+\/.+\/README\.md$/i,
 ];
-// packages/bot carries the folded DarkFactory repository verbatim, with its own
+// src/bot carries the folded DarkFactory repository verbatim, with its own
 // identity and versioning. Repository-wide contracts on what is built and
 // shipped do not apply inside it; every live surface stays fully scanned.
 const carriedPackageTree = /^packages\/bot(?:\/|$)/;
@@ -64,8 +64,8 @@ for (const relative of tracked) {
 const gitmodules = fs.readFileSync(path.join(root, ".gitmodules"), "utf8");
 for (const match of gitmodules.matchAll(/^\s*path\s*=\s*(.+)\s*$/gm)) {
   const submodulePath = match[1].trim();
-  if (!["packages/"].some((prefix) => submodulePath === prefix || submodulePath.startsWith(prefix))) {
-    issues.push(`managed repository submodule is outside packages/: ${submodulePath}`);
+  if (!["src/"].some((prefix) => submodulePath === prefix || submodulePath.startsWith(prefix))) {
+    issues.push(`managed repository submodule is outside src/: ${submodulePath}`);
   }
 }
 
@@ -112,15 +112,17 @@ const retiredContent = [
 // .rommie.
 const retiredVariableRejectionFiles = new Set([
   "install/install.sh",
-  "packages/cli/src/capabilities.ts",
-  "packages/cli/src/runtime-paths.ts",
-  "packages/cli/src/state-doctor.ts",
-  "packages/cli/test/state.test.ts",
+  "src/cli/capabilities.ts",
+  "src/cli/runtime-paths.ts",
+  "src/cli/state-doctor.ts",
+  "src/cli/test/state.test.ts",
 ]);
 
 // This policy file necessarily spells the retired identifiers it rejects.
 // Product source, manifests, scripts, and documentation remain fully scanned.
-// The CI inventory necessarily names carried directories that keep the original`n// repository names they were retired under. Its schema, paths, suites, and`n// gitlinks are enforced by verify-test-inventory instead.
+// The CI inventory necessarily names carried directories that keep the original
+// repository names they were retired under. Its schema, paths, suites, and
+// gitlinks are enforced by verify-test-inventory instead.
 const policyFiles = new Set(["scripts/verify-single-product.mjs", ".github/ci/test-inventory.json"]);
 
 for (const relative of tracked) {
@@ -147,7 +149,7 @@ if (typeof productVersion !== "string" || !productVersion) issues.push("root pac
 if (rootPackage.name !== "@marius-patrik/andromeda") {
   issues.push("root package.json must be named @marius-patrik/andromeda");
 }
-if (rootPackage.bin?.andromeda !== "./packages/cli/src/cli.ts") {
+if (rootPackage.bin?.andromeda !== "./src/cli/cli.ts") {
   issues.push("root package.json must own the authoritative andromeda CLI entrypoint");
 }
 // Nothing may reintroduce the retired agents command as a bin alias.
@@ -155,22 +157,15 @@ if (rootPackage.bin?.agents) {
   issues.push("root package.json reintroduces the retired agents CLI alias");
 }
 
-const expectedJavaScriptWorkspaces = new Map([
-  ["packages/cli/package.json", "@marius-patrik/andromeda-cli"],
-  ["packages/sdk/shared-ts/package.json", "@marius-patrik/andromeda-sdk"],
-  ["packages/web/package.json", "@marius-patrik/andromeda-web"],
-]);
-const declaredWorkspaces = new Set(rootPackage.workspaces ?? []);
-for (const required of ["packages/cli", "packages/web", "packages/sdk/shared-ts"]) {
-  if (!declaredWorkspaces.has(required)) issues.push(`root package.json does not own workspace pattern: ${required}`);
+// One package, no workspaces: the product is a single @marius-patrik/andromeda
+// manifest at the root with src/ as its source tree. A nested manifest would
+// mean a component had started publishing itself again.
+const nestedManifests = tracked.filter((name) => name.startsWith("src/") && name.endsWith("package.json") && !name.endsWith("agent.package.json") && !carriedTree(name));
+for (const relative of nestedManifests) {
+  issues.push(`src/ must hold no nested JavaScript package manifest: ${relative}`);
 }
-for (const [relative, expectedName] of expectedJavaScriptWorkspaces) {
-  if (!fs.statSync(path.join(root, relative), { throwIfNoEntry: false })?.isFile()) {
-    issues.push(`required JavaScript workspace metadata is missing: ${relative}`);
-    continue;
-  }
-  const manifest = JSON.parse(fs.readFileSync(path.join(root, relative), "utf8"));
-  if (manifest.name !== expectedName) issues.push(`JavaScript package name drift in ${relative}: ${manifest.name} != ${expectedName}`);
+if (Array.isArray(rootPackage.workspaces) && rootPackage.workspaces.length > 0) {
+  issues.push("root package.json must not declare workspaces: the product is one package");
 }
 for (const relative of tracked.filter(
   (name) =>

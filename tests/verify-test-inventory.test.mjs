@@ -75,14 +75,14 @@ test("success: the checked-in component inventory and workflow are complete", ()
 test("success: new core and harness Bun tests join their suites automatically", () => {
   const target = fixture();
   try {
-    const coreTest = path.join(target, "packages", "migrate", "core", "tests", "new-contract.spec.ts");
-    const harnessTest = path.join(target, "packages", "migrate", "harness", "test", "nested", "new-tool.test.js");
+    const coreTest = path.join(target, "src", "migrate", "core", "tests", "new-contract.spec.ts");
+    const harnessTest = path.join(target, "src", "migrate", "harness", "test", "nested", "new-tool.test.js");
     mkdirSync(path.dirname(coreTest), { recursive: true });
     mkdirSync(path.dirname(harnessTest), { recursive: true });
     writeFileSync(coreTest, "fixture\n");
     writeFileSync(harnessTest, "fixture\n");
-    assert.ok(discoverBunTests(path.join("packages", "migrate", "core", "tests"), target).includes(path.relative(target, coreTest)));
-    assert.ok(discoverBunTests(path.join("packages", "migrate", "harness", "test"), target).includes(path.relative(target, harnessTest)));
+    assert.ok(discoverBunTests(path.join("src", "migrate", "core", "tests"), target).includes(path.relative(target, coreTest)));
+    assert.ok(discoverBunTests(path.join("src", "migrate", "harness", "test"), target).includes(path.relative(target, harnessTest)));
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -99,7 +99,7 @@ test("success: serialized manager tests retain a bounded Windows filesystem time
 test("edge input: a missing manager-coupled harness test fails the inventory", () => {
   const target = fixture();
   try {
-    rmSync(path.join(target, "packages", "cli", "test", "session.test.ts"));
+    rmSync(path.join(target, "src", "cli", "test", "session.test.ts"));
     assert.match(inventoryIssues(target).join("\n"), /harness is missing required suite path/);
   } finally {
     rmSync(target, { recursive: true, force: true });
@@ -109,8 +109,8 @@ test("edge input: a missing manager-coupled harness test fails the inventory", (
 test("denied failure: a new package without a suite cannot pass layout validation", () => {
   const target = fixture();
   try {
-    mkdirSync(path.join(target, "packages", "unwired"));
-    assert.match(inventoryIssues(target).join("\n"), /package has no fail-closed CI inventory entry: packages\/unwired/);
+    mkdirSync(path.join(target, "src", "unwired"));
+    assert.match(inventoryIssues(target).join("\n"), /package has no fail-closed CI inventory entry: src\/unwired/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -122,11 +122,11 @@ test("denied failure: a new managed package without an inventory classification 
     const gitmodulesPath = path.join(target, ".gitmodules");
     writeFileSync(
       gitmodulesPath,
-      `${requireText(gitmodulesPath)}[submodule "packages/unclassified"]\n\tpath = packages/unclassified\n\turl = https://example.test/Unclassified.git\n`,
+      `${requireText(gitmodulesPath)}[submodule "src/unclassified"]\n\tpath = src/unclassified\n\turl = https://example.test/Unclassified.git\n`,
     );
     assert.match(
       inventoryIssues(target).join("\n"),
-      /managed package is neither active nor parked in CI inventory: packages\/unclassified/,
+      /managed package is neither active nor parked in CI inventory: src\/unclassified/,
     );
   } finally {
     rmSync(target, { recursive: true, force: true });
@@ -151,20 +151,20 @@ test("denied failure: managed package classifications must be unique and mutuall
   const target = fixture();
   try {
     const inventoryPath = path.join(target, ".github", "ci", "test-inventory.json");
-    seedGitlink(target, "packages/seeded");
+    seedGitlink(target, "src/seeded");
     const inventory = JSON.parse(requireText(inventoryPath));
     inventory.activeComponents.push({
       id: "seeded",
-      path: "packages/seeded",
+      path: "src/seeded",
       suite: "core",
       submodule: true,
       platforms: ["ubuntu-latest"],
     });
-    inventory.parkedPlugins.push("packages/seeded", "packages/parked-twice", "packages/parked-twice");
+    inventory.parkedPlugins.push("src/seeded", "src/parked-twice", "src/parked-twice");
     writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
     const issues = inventoryIssues(target).join("\n");
-    assert.match(issues, /managed package has conflicting CI classifications \(active, parked plugin\): packages\/seeded/);
-    assert.match(issues, /managed package is repeated in the parked plugin CI classification: packages\/parked-twice/);
+    assert.match(issues, /managed package has conflicting CI classifications \(active, parked plugin\): src\/seeded/);
+    assert.match(issues, /managed package is repeated in the parked plugin CI classification: src\/parked-twice/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -173,10 +173,10 @@ test("denied failure: managed package classifications must be unique and mutuall
 test("denied failure: an index-only package gitlink cannot evade declaration and classification", () => {
   const target = fixture();
   try {
-    addIndexEntries(target, `160000 ${fixtureGitlinkOid} 0\tpackages/index-only\n`);
+    addIndexEntries(target, `160000 ${fixtureGitlinkOid} 0\tsrc/index-only\n`);
     const issues = inventoryIssues(target).join("\n");
-    assert.match(issues, /managed package gitlink is not declared in \.gitmodules: packages\/index-only/);
-    assert.match(issues, /managed package is neither active nor parked in CI inventory: packages\/index-only/);
+    assert.match(issues, /managed package gitlink is not declared in \.gitmodules: src\/index-only/);
+    assert.match(issues, /managed package is neither active nor parked in CI inventory: src\/index-only/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -192,8 +192,8 @@ test("denied failure: declarations and index gitlinks outside data and packages 
     );
     addIndexEntries(target, `160000 ${fixtureGitlinkOid} 0\tapps/index-only\n`);
     const issues = inventoryIssues(target).join("\n");
-    assert.match(issues, /managed repository declaration is outside packages\/: plugins\/legacy/);
-    assert.match(issues, /managed repository gitlink is outside packages\/: apps\/index-only/);
+    assert.match(issues, /managed repository declaration is outside src\/: plugins\/legacy/);
+    assert.match(issues, /managed repository gitlink is outside src\/: apps\/index-only/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -203,14 +203,14 @@ test("denied failure: a classified managed package declaration without an index 
   const target = fixture();
   try {
     // Declared and classified, but never staged as a gitlink.
-    seedGitlink(target, "packages/seeded", { index: false });
+    seedGitlink(target, "src/seeded", { index: false });
     const inventoryPath = path.join(target, ".github", "ci", "test-inventory.json");
     const inventory = JSON.parse(requireText(inventoryPath));
-    inventory.parkedApps.push("packages/seeded");
+    inventory.parkedApps.push("src/seeded");
     writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
     assert.match(
       inventoryIssues(target).join("\n"),
-      /classified managed package is not a repository gitlink: packages\/seeded/,
+      /classified managed package is not a repository gitlink: src\/seeded/,
     );
   } finally {
     rmSync(target, { recursive: true, force: true });
@@ -220,11 +220,11 @@ test("denied failure: a classified managed package declaration without an index 
 test("denied failure: duplicate managed package declarations cannot pass", () => {
   const target = fixture();
   try {
-    seedGitlink(target, "packages/seeded");
-    seedGitlink(target, "packages/seeded", { index: false });
+    seedGitlink(target, "src/seeded");
+    seedGitlink(target, "src/seeded", { index: false });
     assert.match(
       inventoryIssues(target).join("\n"),
-      /managed package is declared multiple times: packages\/seeded/,
+      /managed package is declared multiple times: src\/seeded/,
     );
   } finally {
     rmSync(target, { recursive: true, force: true });
@@ -234,14 +234,14 @@ test("denied failure: duplicate managed package declarations cannot pass", () =>
 test("denied failure: conflicted managed package index entries cannot pass", () => {
   const target = fixture();
   try {
-    git(target, "update-index", "--force-remove", "packages/bot");
+    git(target, "update-index", "--force-remove", "src/bot");
     addIndexEntries(
       target,
-      `160000 ${fixtureGitlinkOid} 1\tpackages/bot\n160000 ${fixtureGitlinkOid} 2\tpackages/bot\n`,
+      `160000 ${fixtureGitlinkOid} 1\tsrc/bot\n160000 ${fixtureGitlinkOid} 2\tsrc/bot\n`,
     );
     const issues = inventoryIssues(target).join("\n");
-    assert.match(issues, /managed package has multiple index entries: packages\/bot/);
-    assert.match(issues, /managed package has unmerged index entries: packages\/bot/);
+    assert.match(issues, /managed package has multiple index entries: src\/bot/);
+    assert.match(issues, /managed package has unmerged index entries: src\/bot/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -253,15 +253,15 @@ test("denied failure: managed gitlinks must be lowercase direct package children
     const gitmodulesPath = path.join(target, ".gitmodules");
     writeFileSync(
       gitmodulesPath,
-      `${requireText(gitmodulesPath)}[submodule "uppercase"]\n\tpath = packages/Uppercase\n\turl = https://example.test/uppercase.git\n[submodule "nested"]\n\tpath = packages/nested/rogue\n\turl = https://example.test/nested.git\n`,
+      `${requireText(gitmodulesPath)}[submodule "uppercase"]\n\tpath = src/Uppercase\n\turl = https://example.test/uppercase.git\n[submodule "nested"]\n\tpath = src/nested/rogue\n\turl = https://example.test/nested.git\n`,
     );
     addIndexEntries(
       target,
       `160000 ${fixtureGitlinkOid} 0\tsrc/Uppercase\n160000 ${fixtureGitlinkOid} 0\tsrc/nested/rogue\n`,
     );
     const issues = inventoryIssues(target).join("\n");
-    assert.match(issues, /managed component path is not a lowercase child of packages\/: packages\/Uppercase/);
-    assert.match(issues, /managed component path is not a lowercase child of packages\/: packages\/nested\/rogue/);
+    assert.match(issues, /managed component path is not a lowercase child of src\/: src\/Uppercase/);
+    assert.match(issues, /managed component path is not a lowercase child of src\/: src\/nested\/rogue/);
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -336,11 +336,11 @@ test("denied failure: a rogue nonzero-stage data gitlink cannot evade the allowl
 test("denied failure: a conflicted managed gitlink cannot pass", () => {
   const target = fixture();
   try {
-    seedGitlink(target, "packages/seeded", { index: false });
+    seedGitlink(target, "src/seeded", { index: false });
     addIndexEntries(target, `160000 ${fixtureGitlinkOid} 2\tsrc/seeded\n`);
     assert.match(
       inventoryIssues(target).join("\n"),
-      /managed package is neither active nor parked in CI inventory: packages\/seeded/,
+      /managed package is neither active nor parked in CI inventory: src\/seeded/,
     );
   } finally {
     rmSync(target, { recursive: true, force: true });

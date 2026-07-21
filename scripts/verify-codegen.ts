@@ -13,13 +13,13 @@ import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { TextDecoder } from "node:util";
 
 const root = resolve(import.meta.dir, "..");
-const core = join(root, "packages/mcp");
+const core = join(root, "src/mcp");
 const buf = join(root, "node_modules/.bin", process.platform === "win32" ? "buf.exe" : "buf");
 const outputs = [
-  "packages/sdk/contracts-go/gen",
-  "packages/sdk/shared-ts/src/gen",
-  "packages/server/inference/python-agent/agent/gen",
-  "packages/server/gateway/andromeda",
+  "src/sdk/contracts-go/gen",
+  "src/sdk/shared-ts/gen",
+  "src/server/inference/python-agent/agent/gen",
+  "src/server/gateway/andromeda",
 ];
 const TRANSIENT_RETRY_DELAYS_MS = [5_000, 15_000] as const;
 
@@ -128,12 +128,12 @@ function main(): void {
 
     // This package-owned barrel is intentionally not emitted by Buf.
     cpSync(
-      join(beforeRoot, "packages/sdk/shared-ts/src/gen/index.ts"),
-      join(root, "packages/sdk/shared-ts/src/gen/index.ts"),
+      join(beforeRoot, "src/sdk/shared-ts/gen/index.ts"),
+      join(root, "src/sdk/shared-ts/gen/index.ts"),
     );
     for (const init of ["__init__.py", "andromeda/__init__.py", "andromeda/v1/__init__.py"]) {
-      const source = join(beforeRoot, "packages/server/inference/python-agent/agent/gen", init);
-      const destination = join(root, "packages/server/inference/python-agent/agent/gen", init);
+      const source = join(beforeRoot, "src/server/inference/python-agent/agent/gen", init);
+      const destination = join(root, "src/server/inference/python-agent/agent/gen", init);
       mkdirSync(dirname(destination), { recursive: true });
       cpSync(source, destination);
     }

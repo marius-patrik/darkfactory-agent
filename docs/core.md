@@ -6,15 +6,15 @@ moved to their owners and this document is the map.
 
 ## Where things live
 
-- `packages/mcp/proto/` holds the canonical Andromeda protobuf wire contract.
-- `packages/mcp/buf.gen*.yaml` are the generation templates. Codegen runs with
-  `packages/mcp` as its working directory.
-- `packages/sdk/contracts-go/` holds the generated Go protobuf and Connect stubs.
-- `packages/sdk/shared-ts/` holds the generated TypeScript descriptors and the
+- `src/mcp/proto/` holds the canonical Andromeda protobuf wire contract.
+- `src/mcp/buf.gen*.yaml` are the generation templates. Codegen runs with
+  `src/mcp` as its working directory.
+- `src/sdk/contracts-go/` holds the generated Go protobuf and Connect stubs.
+- `src/sdk/shared-ts/` holds the generated TypeScript descriptors and the
   shared client exports.
-- `packages/sdk/tests/` verifies the surface: TypeScript and Python import
+- `src/sdk/tests/` verifies the surface: TypeScript and Python import
   smokes, and the codegen retry behaviour.
-- `packages/mcp/contracts/` holds the protocol, engine, execution-lane, and
+- `src/mcp/contracts/` holds the protocol, engine, execution-lane, and
   worker lifecycle contracts.
 
 ## Package surface
@@ -25,16 +25,16 @@ generated wire-contract stubs for downstream components:
 - **Go:** module `github.com/marius-patrik/andromeda/packages/sdk/contracts-go`
   - Messages: `andromedav1 "github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1"`
   - Connect services: `"github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1/andromedav1connect"`
-  - Consumers: the Go services under `packages/server/inference/`.
-  - The module path still says `packages/core` while the directory is
-    `packages/sdk/contracts-go`. That identity is embedded in the generated
+  - Consumers: the Go services under `src/server/inference/`.
+  - The module path still says `src/core` while the directory is
+    `src/sdk/contracts-go`. That identity is embedded in the generated
     descriptors, so changing it is a codegen change rather than a rename.
 - **TypeScript:** private workspace `@marius-patrik/andromeda-sdk`
   - Shared descriptors and types: `@marius-patrik/andromeda-sdk/gen`
-  - Consumers: `packages/web`, still a placeholder.
+  - Consumers: `src/web`, still a placeholder.
 - **Python:** plain protobuf stubs generated to
-  `packages/server/inference/python-agent/agent/gen` and
-  `packages/server/gateway/andromeda`
+  `src/server/inference/python-agent/agent/gen` and
+  `src/server/gateway/andromeda`
   - Bootstrap: `import agent.gen`
   - Messages: `from andromeda.v1 import session_frames_pb2, registry_pb2`
   - Consumers: the inference Python agent and the gateway.
@@ -54,7 +54,7 @@ That regenerates into a scratch tree and fails if the committed output differs,
 which is how CI enforces freshness. To regenerate in place:
 
 ```sh
-cd packages/mcp
+cd src/mcp
 bunx --bun @bufbuild/buf generate proto
 bunx --bun @bufbuild/buf generate proto --template buf.gen.python.yaml
 ```

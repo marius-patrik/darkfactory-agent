@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@marius-patrik/andromeda-sdk": ["shared-ts/index.ts"],
+      "@marius-patrik/andromeda-sdk/gen": ["shared-ts/gen/index.ts"],
+      "@marius-patrik/andromeda-web": ["../web/src/index.ts"]
+    }
+  },
+  "include": [
+    "tests/**/*.ts"
+  ]
+}

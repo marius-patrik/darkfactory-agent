@@ -76,12 +76,12 @@ The components below are the current implementation.
 
 | Component | Role |
 | --- | --- |
-| `packages/sdk` | Generated Go, TypeScript, and Python contracts, the session harness, and the suite verifying the contract surface; protobuf sources live in `packages/mcp` |
-| `packages/cli` | `andromeda` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
-| `packages/sdk/harness` | Canonical session event handling and tool execution today. Owner-ruled target (2026-07-13, #218): the operation engine owning orchestration, with the orchestrator runtime migrating from the manager |
-| `packages/server/gateway` | Local model registry, routing, health, quota, and transient control-plane relay; switcher control plane and cloud OAuth dispatch |
-| `packages/server/inference` | Gateway-backed Python agent loop, status, persistence, redaction, and package validation; engine discovery and serve profiles |
-| `packages/bot` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
+| `src/sdk` | Generated Go, TypeScript, and Python contracts, the session harness, and the suite verifying the contract surface; protobuf sources live in `src/mcp` |
+| `src/cli` | `andromeda` CLI, state, installs, credentials/secrets, providers, sessions, memory, package/capability registries, and lifecycle management — the single local management surface; hosts the orchestrator runtime until the #218 migration is implemented and accepted |
+| `src/sdk/harness` | Canonical session event handling and tool execution today. Owner-ruled target (2026-07-13, #218): the operation engine owning orchestration, with the orchestrator runtime migrating from the manager |
+| `src/server/gateway` | Local model registry, routing, health, quota, and transient control-plane relay; switcher control plane and cloud OAuth dispatch |
+| `src/server/inference` | Gateway-backed Python agent loop, status, persistence, redaction, and package validation; engine discovery and serve profiles |
+| `src/bot` | Thin GitHub control-plane adapter: issues/PRs/labels ↔ work units, enforcement sync, review gates. No second brain. |
 
 Binding architecture rule: the manager manages and the harness operates — as
 the owner-ruled target architecture. Local system management (state, installs,
@@ -328,9 +328,9 @@ come first: the system may only learn in ways it can prove it can stop.
   flag.
 - The substrate serves per-role adapters behind the same engine contract.
 
-### Cognitive memory operations (packages/memory — owner-ruled, epic #227)
+### Cognitive memory operations (src/memory — owner-ruled, epic #227)
 
-The reflection/cognitive layer lives in a new `packages/memory` plugin, which
+The reflection/cognitive layer lives in a new `src/memory` plugin, which
 also absorbs existing memory operations tooling. The canonical memory
 authority and state contracts remain manager/core-owned — the plugin operates
 strictly through them.
@@ -375,7 +375,7 @@ strictly through them.
 
 - Every active component's full test suite runs in Validate on every PR:
   `src/{core,gateway,harness,inference,manager}` and
-  `packages/bot`; parked plugins and applications stay excluded.
+  `src/bot`; parked plugins and applications stay excluded.
 - Real-behavior legs, not only mocks: a real gateway process round-trip
   (plain and streaming) against an OpenAI-wire backend and an engine
   discovery→registration→routing pass; no hardcoded registry counts.
@@ -494,7 +494,7 @@ docs/    ci/     install/  scripts/  .github/  .darkfactory/
 
 Two rules govern this layout.
 
-**Carried trees are not built.** `packages/bot/`, `agents/<project>/`, and
+**Carried trees are not built.** `src/bot/`, `agents/<project>/`, and
 `templates/<project>/` hold former standalone repositories folded in with their
 full history. They keep their own identity, versioning, and project docs, and
 nothing outside them may depend on them. Code leaves a carried tree by being
@@ -568,7 +568,7 @@ the lane breakdown lives in the program plan (`context/PLAN.md`):
 8. **Autolearn** — the #225 epic: brakes-first self-improvement, recorded
    scope only, execution owner-gated.
 9. **Memory plugin** — the #227 epic: reflection, dreams, and corpus
-   processing in `packages/memory` through the canonical memory contract, with
+   processing in `src/memory` through the canonical memory contract, with
    the Dream tooling migrated.
 
 Program acceptance: one continuous woven live session — an operator task from

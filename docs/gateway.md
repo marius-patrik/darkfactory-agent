@@ -40,7 +40,7 @@ harnesses.
 ## VS2 control plane and session stream
 
 `buf generate proto --template buf.gen.gateway-python.yaml` runs from
-`packages/mcp` and produces the checked-in `andromeda.v1` Python
+`src/mcp` and produces the checked-in `andromeda.v1` Python
 messages and Connect handlers. The gateway mounts the generated Health,
 Registry, Session, and Switcher services at their canonical
 `/andromeda.v1.<Service>/<Method>` paths. These are protocol handlers, not

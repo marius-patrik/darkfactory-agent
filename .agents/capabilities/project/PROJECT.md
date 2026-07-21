@@ -10,10 +10,10 @@ once a separate repository is folded in with its full history:
 
 - **Target components** — `sdk`, `mcp`, `server`, `clients/{cli,app,web}`, and
   `plugins` — carry their contracts and are where new implementation belongs.
-- **Carried trees** — `packages/bot/`, `agents/<project>/`, and
+- **Carried trees** — `src/bot/`, `agents/<project>/`, and
   `templates/<project>/` — hold former standalone repositories. They keep their
   own identity and versioning, nothing outside them may depend on them, and code
-  leaves `packages/bot` by reimplementation against the sdk rather than by
+  leaves `src/bot` by reimplementation against the sdk rather than by
   re-import or deletion.
 
 Durable state is not part of this repository. It lives in `private-data` and is
@@ -37,21 +37,21 @@ Target component ownership:
 - `clients/cli`, `clients/app`, `clients/web` — clients only, no business logic.
 - `plugins` — capabilities loaded through the sdk plugin contract.
 
-Carried component ownership, frozen under `packages/bot` and mined by
+Carried component ownership, frozen under `src/bot` and mined by
 reimplementation:
 
-- `packages/cli` — `agents` CLI, state, installs, credentials/secrets,
+- `src/cli` — `agents` CLI, state, installs, credentials/secrets,
   providers, sessions, memory, package/capability registries, lifecycle
   management, and — until the #218 harness migration is implemented and
   accepted — the orchestrator runtime.
-- `packages/sdk` — generated Go, TypeScript, and Python contracts and the
-  suite that verifies them. The protobuf sources are `packages/mcp/proto`.
-- `packages/sdk/harness` — canonical session event handling and tool execution.
+- `src/sdk` — generated Go, TypeScript, and Python contracts and the
+  suite that verifies them. The protobuf sources are `src/mcp/proto`.
+- `src/sdk/harness` — canonical session event handling and tool execution.
   Owner-ruled target (2026-07-13, #218): the operation engine owning
   orchestration, with the orchestrator runtime migrating from the manager.
-- `packages/server/gateway` — local model registry, routing, health, quota, and
+- `src/server/gateway` — local model registry, routing, health, quota, and
   transient control-plane relay.
-- `packages/server/inference` — gateway-backed Python agent loop, status, persistence,
+- `src/server/inference` — gateway-backed Python agent loop, status, persistence,
   redaction, and package validation.
 
 Historical product names, provider-home paths, launchers, and variables are

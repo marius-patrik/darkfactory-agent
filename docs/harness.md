@@ -1,7 +1,7 @@
 # Agent OS Runtime Harness
 
 This directory contains the TypeScript runtime harness used by `agents`. It is
-an implementation component rooted at `packages/sdk/harness`; it is not a separate
+an implementation component rooted at `src/sdk/harness`; it is not a separate
 product, install, release, or state authority.
 
 ## Current surface
@@ -13,7 +13,7 @@ product, install, release, or state authority.
 | `tools.ts` | Tool-call parsing/execution and event-backed provider/model switching. |
 
 Managed provider processes are resolved and launched by
-`packages/cli/src`. Harness state is rooted only through the explicit
+`src/cli`. Harness state is rooted only through the explicit
 Agent OS state descriptor below `ANDROMEDA_HOME`; provider-native state remains
 under `ANDROMEDA_HOME/clis/<provider>`.
 
@@ -36,9 +36,9 @@ From the repository root:
 
 ```sh
 bun run check
-bun test packages/cli/test/session.test.ts \
-  packages/cli/test/session-adapters.test.ts \
-  packages/cli/test/tui-tools.test.ts
+bun test src/cli/test/session.test.ts \
+  src/cli/test/session-adapters.test.ts \
+  src/cli/test/tui-tools.test.ts
 ```
 
 See the [harness specification](specs/harness.md) for the behavioral boundary

@@ -277,7 +277,7 @@ install_launcher() {
       write_ps_env ANDROMEDA_CONFIG "$(native_path "$ANDROMEDA_HOME/config.json")"
       write_ps_env ANDROMEDA_SYSTEM_DATA_ROOT "$(native_path "$ANDROMEDA_HOME")"
       write_ps_env ANDROMEDA_BUN "$(native_path "$bun_bin")"
-      write_ps_env ANDROMEDA_ENTRYPOINT "$(native_path "$ANDROMEDA_ROOT/packages/cli/src/cli.ts")"
+      write_ps_env ANDROMEDA_ENTRYPOINT "$(native_path "$ANDROMEDA_ROOT/src/cli/cli.ts")"
       printf '& $env:ANDROMEDA_BUN $env:ANDROMEDA_ENTRYPOINT @args\n'
       printf 'exit $LASTEXITCODE\n'
     } >"$temporary"
@@ -312,7 +312,7 @@ install_launcher() {
       write_export ANDROMEDA_CONFIG "$ANDROMEDA_HOME/config.json"
       write_export ANDROMEDA_SYSTEM_DATA_ROOT "$ANDROMEDA_HOME"
       write_export ANDROMEDA_BUN "$bun_bin"
-      write_export ANDROMEDA_ENTRYPOINT "$ANDROMEDA_ROOT/packages/cli/src/cli.ts"
+      write_export ANDROMEDA_ENTRYPOINT "$ANDROMEDA_ROOT/src/cli/cli.ts"
       echo 'exec "$ANDROMEDA_BUN" "$ANDROMEDA_ENTRYPOINT" "$@"'
     } >"$temporary"
   fi

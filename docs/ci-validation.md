@@ -9,13 +9,13 @@ succeeds. The same commands run locally through
 
 | Component | Suite | Hosted platforms | Coverage |
 | --- | --- | --- | --- |
-| `packages/sdk/tests` | `core` | Ubuntu, Windows | TypeScript types/imports, generated contract freshness, Python imports, Go tests |
-| `packages/server/gateway` | `gateway` | Ubuntu | uv lock sync, lint, types, all non-live tests, packaging smoke, build |
-| `packages/sdk/harness` | `harness` | Ubuntu | direct tool-boundary tests plus the complete manager-coupled session, adapter, and tool-loop suites |
-| `packages/server/inference` | `inference` | Ubuntu | uv lock sync, lint, types, all non-live tests, build, CLI/import/layering checks |
-| `packages/cli` | `manager` | Ubuntu, Windows | TypeScript types, all manager tests, compact-capsule regression |
-| `packages/bot` | `darkfactory` | Ubuntu | pinned public submodule, npm clean install, full check including templates and build |
-| `packages/memory` | `memory-plugin` | Ubuntu, Windows | manager-integrated TypeScript and plugin behavior tests |
+| `src/sdk/tests` | `core` | Ubuntu, Windows | TypeScript types/imports, generated contract freshness, Python imports, Go tests |
+| `src/server/gateway` | `gateway` | Ubuntu | uv lock sync, lint, types, all non-live tests, packaging smoke, build |
+| `src/sdk/harness` | `harness` | Ubuntu | direct tool-boundary tests plus the complete manager-coupled session, adapter, and tool-loop suites |
+| `src/server/inference` | `inference` | Ubuntu | uv lock sync, lint, types, all non-live tests, build, CLI/import/layering checks |
+| `src/cli` | `manager` | Ubuntu, Windows | TypeScript types, all manager tests, compact-capsule regression |
+| `src/bot` | `darkfactory` | Ubuntu | pinned public submodule, npm clean install, full check including templates and build |
+| `src/memory` | `memory-plugin` | Ubuntu, Windows | manager-integrated TypeScript and plugin behavior tests |
 
 Inventory `requiredPaths` are durable coverage anchors, not an exhaustive test
 allowlist. Core, harness, and manager recursively discover every Bun
@@ -25,11 +25,11 @@ it to `Validate` without another hand-maintained path entry.
 
 Harness has an explicit test-location exemption. Its session implementation
 depends on manager-owned canonical state and CLI adapters, so the exhaustive
-session tests remain under `packages/cli/test`. The inventory names those
-files individually and fails if any disappear; `packages/sdk/harness/test` owns
+session tests remain under `src/cli/test`. The inventory names those
+files individually and fails if any disappear; `src/sdk/harness/test` owns
 the package-local tool-boundary regression triplet.
 
-The parked `packages/lifequest`, `packages/skyagent`, and `packages/fabrica`
+The parked `src/lifequest`, `src/skyagent`, and `src/fabrica`
 gitlinks are classified but intentionally have no CI suite.
 Adding any package, plugin, or app without classifying and wiring it makes
 layout validation fail.

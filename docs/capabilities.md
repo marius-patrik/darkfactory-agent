@@ -3,7 +3,7 @@
 The `.agents/capabilities/global/` `skills/`, `plugins/`, `hooks/`, `roles/`, and
 `commands/` directories, together with `persona.md` beside them, are the
 authored source for the shared Agent OS
-capability floor. Managed product plugin repositories live under `packages/`;
+capability floor. Managed product plugin repositories live under `src/`;
 that move does not change the separate authored `plugins/` capability namespace.
 The installer validates every payload, writes an immutable object below
 `ANDROMEDA_HOME/store/sha256`, atomically materializes skills below

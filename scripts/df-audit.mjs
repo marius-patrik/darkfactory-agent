@@ -54,7 +54,7 @@ export const ANDROMEDA_LAYOUT = [
   { name: "darkfactory-data", path: "data/darkfactory", repo: "marius-patrik/darkfactory-data" }
 ];
 
-const ANDROMEDA_ROOTS = ["apps", "commands", "data", "hooks", "packages", "plugins", "roles", "skills"];
+const ANDROMEDA_ROOTS = ["apps", "commands", "data", "hooks", "src", "plugins", "roles", "skills"];
 const HEALTHY_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 const RED_CONCLUSIONS = new Set(["action_required", "cancelled", "failure", "startup_failure", "stale", "timed_out"]);
 const PULL_REQUEST_ONLY_GATE_CONTEXTS = new Set(["Codex Review", "DarkFactory Autoreview"]);
@@ -1305,13 +1305,13 @@ function collectMachineRuntimeEvidence(agentsHome) {
   const launcherBound = checks.some((check) => check?.id === "launcher" && check?.ok === true);
   const sourceRecord = checks.find((check) => check?.id === "source_install")?.details?.record;
   const versionObserved = typeof sourceRecord?.commit === "string" && sourceRecord.commit.length >= 7;
-  const packages = run(["packages", "list", "--json"]);
+  const packages = run(["src", "list", "--json"]);
   const packagesJson = parse(packages);
   const packageRecords = Array.isArray(packagesJson) ? packagesJson : Array.isArray(packagesJson?.packages) ? packagesJson.packages : [];
   const packageRecord = packageRecords.find((item) => /darkfactory/i.test(String(item?.name || item?.path || item?.id || "")));
   const packageName = String(packageRecord?.name || packageRecord?.id || "DarkFactory");
   const packageRegistered = Boolean(packageRecord);
-  const dfRunnable = packageRegistered && run(["packages", "run", packageName, "--", "--help"]).ok;
+  const dfRunnable = packageRegistered && run(["src", "run", packageName, "--", "--help"]).ok;
   const runner = run(["runner", "status", "--json"]);
   const { runnerRegistered, runnerOnline, runnerPersistent } = normalizeRunnerLifecycleEvidence(parse(runner));
   const route = run(["route", "probe", "--json"]);

@@ -12,12 +12,12 @@
   `server`, `clients/{cli,app,web}`, and `plugins`. They hold contract READMEs
   rather than implementation; the fail-closed inventory requires that a
   component gaining code also gains a test suite.
-- The previous implementation is carried under `packages/bot` — `manager`,
+- The previous implementation is carried under `src/bot` — `manager`,
   `core`, `harness`, `gateway`, `inference`, `memory`, `dream`, `experience`,
   and the folded predecessors of the developmental runtime, the retired
   gateway, the legacy manager, and the workspace substrate — frozen and mined
   by reimplementation against the sdk.
-- `packages/bot` carries the GitHub control-plane agent project, and
+- `src/bot` carries the GitHub control-plane agent project, and
   `templates/` carries the five folded template repositories.
 - Every folded repository was verified before its source was deleted. Where a
   branch could not be merged into the fold, its commits are preserved as an

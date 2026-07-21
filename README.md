@@ -191,7 +191,7 @@ depend on them.
   ([agent loop](docs/inference.md)), plus the folded predecessors: the memory
   plugin, dream, experience, the developmental runtime, the retired gateway,
   the legacy manager, and the workspace substrate.
-- `packages/bot/` — the GitHub control-plane agent project.
+- `src/bot/` — the GitHub control-plane agent project.
 - `templates/` — the folded template repositories: `bot`, `cli`, `repo`,
   `web`, and `darkfactory-templates`.
 

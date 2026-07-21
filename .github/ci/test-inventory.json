@@ -3,84 +3,84 @@
   "activeComponents": [
     {
       "id": "core",
-      "path": "packages/sdk/tests",
+      "path": "src/sdk/tests",
       "suite": "core",
       "platforms": [
         "ubuntu-latest",
         "windows-latest"
       ],
       "requiredPaths": [
-        "packages/sdk/tests/ts-import-smoke.ts",
-        "packages/sdk/tests/codegen-retry.test.ts",
-        "packages/sdk/tests/python-import-smoke.py",
-        "packages/sdk/contracts-go/smoke_test.go",
-        "packages/sdk/tests/python-smoke.mjs"
+        "src/sdk/tests/ts-import-smoke.ts",
+        "src/sdk/tests/codegen-retry.test.ts",
+        "src/sdk/tests/python-import-smoke.py",
+        "src/sdk/contracts-go/smoke_test.go",
+        "src/sdk/tests/python-smoke.mjs"
       ]
     },
     {
       "id": "gateway",
-      "path": "packages/server/gateway",
+      "path": "src/server/gateway",
       "suite": "gateway",
       "platforms": [
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/server/gateway/tests/test_app.py",
-        "packages/server/gateway/tests/test_real_process.py"
+        "src/server/gateway/tests/test_app.py",
+        "src/server/gateway/tests/test_real_process.py"
       ]
     },
     {
       "id": "harness",
-      "path": "packages/sdk/harness",
+      "path": "src/sdk/harness",
       "suite": "harness",
       "platforms": [
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/sdk/harness/test/tools.test.ts",
-        "packages/cli/test/session.test.ts",
-        "packages/cli/test/session-adapters.test.ts",
-        "packages/cli/test/tui-tools.test.ts"
+        "src/sdk/harness/test/tools.test.ts",
+        "src/cli/test/session.test.ts",
+        "src/cli/test/session-adapters.test.ts",
+        "src/cli/test/tui-tools.test.ts"
       ]
     },
     {
       "id": "inference",
-      "path": "packages/server/inference",
+      "path": "src/server/inference",
       "suite": "inference",
       "platforms": [
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/server/inference/python-agent/tests/test_loop.py",
-        "packages/server/inference/tests/layering/check_planted_violations.py",
-        "packages/server/inference/scripts/validate.mjs"
+        "src/server/inference/python-agent/tests/test_loop.py",
+        "src/server/inference/tests/layering/check_planted_violations.py",
+        "src/server/inference/scripts/validate.mjs"
       ]
     },
     {
       "id": "manager",
-      "path": "packages/cli",
+      "path": "src/cli",
       "suite": "manager",
       "platforms": [
         "ubuntu-latest",
         "windows-latest"
       ],
       "requiredPaths": [
-        "packages/cli/test/state-doctor.test.ts",
-        "packages/cli/test/state-v2.test.ts",
-        "packages/cli/test/event-sync.test.ts"
+        "src/cli/test/state-doctor.test.ts",
+        "src/cli/test/state-v2.test.ts",
+        "src/cli/test/event-sync.test.ts"
       ]
     },
     {
       "id": "memory-plugin",
-      "path": "packages/memory",
+      "path": "src/memory",
       "suite": "memory-plugin",
       "platforms": [
         "ubuntu-latest",
         "windows-latest"
       ],
       "requiredPaths": [
-        "packages/memory/test/memory-plugin.test.ts",
-        "packages/memory/src/index.ts"
+        "src/memory/test/memory-plugin.test.ts",
+        "src/memory/index.ts"
       ]
     }
   ],
@@ -92,7 +92,7 @@
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/server/gateway/tests/test_real_process.py"
+        "src/server/gateway/tests/test_real_process.py"
       ]
     },
     {
@@ -102,7 +102,7 @@
         "ubuntu-latest"
       ],
       "requiredPaths": [
-        "packages/server/gateway/tests/test_real_process.py"
+        "src/server/gateway/tests/test_real_process.py"
       ]
     }
   ],
@@ -155,21 +155,22 @@
   "parkedPlugins": [],
   "parkedApps": [],
   "scaffoldedComponents": [
-    "packages",
+    "src",
     "packages-manager-legacy",
-    "packages/cli",
-    "packages/web",
-    "packages/bot",
-    "packages/mcp",
-    "packages/memory",
-    "packages/sdk",
-    "packages/sdk/contracts-go",
-    "packages/sdk/shared-ts",
-    "packages/server",
+    "src/cli",
+    "src/web",
+    "src/bot",
+    "src/mcp",
+    "src/memory",
+    "src/sdk",
+    "src/sdk/contracts-go",
+    "src/sdk/shared-ts",
+    "src/server",
     "templates",
     "templates/bot",
     "templates/cli",
     "templates/darkfactory-templates",
+    "templates/workspace",
     "templates/repo",
     "templates/web"
   ],
