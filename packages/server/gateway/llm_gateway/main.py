@@ -22,12 +22,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from protobuf import Oneof
 from connectrpc.errors import ConnectError
 
-from agent_os.v1.common_pb import RunStatus, SwitcherScope
-from agent_os.v1.health_connect import HealthServiceASGIApplication
-from agent_os.v1.registry_connect import RegistryServiceASGIApplication
-from agent_os.v1.session_frames_pb import Attach, ClientFrame, ServerFrame, SessionEvent, SessionEventKind, Status, Switch, SwitchState, UserInput
-from agent_os.v1.sessions_connect import SessionServiceASGIApplication
-from agent_os.v1.switchers_connect import SwitcherServiceASGIApplication
+from andromeda.v1.common_pb import RunStatus, SwitcherScope
+from andromeda.v1.health_connect import HealthServiceASGIApplication
+from andromeda.v1.registry_connect import RegistryServiceASGIApplication
+from andromeda.v1.session_frames_pb import Attach, ClientFrame, ServerFrame, SessionEvent, SessionEventKind, Status, Switch, SwitchState, UserInput
+from andromeda.v1.sessions_connect import SessionServiceASGIApplication
+from andromeda.v1.switchers_connect import SwitcherServiceASGIApplication
 
 from llm_gateway import __version__
 from llm_gateway.schemas import (

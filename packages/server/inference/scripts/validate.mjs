@@ -53,7 +53,7 @@ const checks = [
       "run",
       "python",
       "-c",
-      "import agent.gen; from agent_os.v1 import common_pb2",
+      "import agent.gen; from andromeda.v1 import common_pb2",
     ],
   },
   {

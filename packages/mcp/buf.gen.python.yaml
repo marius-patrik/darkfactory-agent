@@ -13,7 +13,7 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen
+      value: github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen
 
 plugins:
   - remote: buf.build/protocolbuffers/python:v35.0

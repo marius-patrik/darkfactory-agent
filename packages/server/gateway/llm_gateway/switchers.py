@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 
-from agent_os.v1.common_pb import Fabric, Host, Model, Node, Provider, SwitcherAxis, SwitcherScope, SwitcherState
-from agent_os.v1.switchers_pb import SwitcherOption
+from andromeda.v1.common_pb import Fabric, Host, Model, Node, Provider, SwitcherAxis, SwitcherScope, SwitcherState
+from andromeda.v1.switchers_pb import SwitcherOption
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 

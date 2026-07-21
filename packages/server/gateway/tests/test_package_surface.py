@@ -16,7 +16,7 @@ def test_gateway_distribution_and_import_namespace_are_installed():
     assert version("agent-os-gateway")
     assert version("protobuf-py") == "0.1.1"
     assert find_spec("llm_gateway") is not None
-    assert find_spec("agent_os.v1.registry_connect") is not None
+    assert find_spec("andromeda.v1.registry_connect") is not None
 
 
 def test_serve_defaults_to_canonical_native_endpoint(monkeypatch):

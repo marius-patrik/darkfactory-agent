@@ -2,14 +2,14 @@
 
 **Status:** active supporting reference. The root [PRD](../../PRD.md) owns
 product specification, and the protobuf module under
-[`packages/mcp/proto/agent_os/v1/`](../proto/agent_os/v1) is
+[`packages/mcp/proto/andromeda/v1/`](../proto/andromeda/v1) is
 the executable wire authority. This document maps that checked-in schema; its
 legacy section and decision labels are provenance, not a competing plan or
 authorization surface.
 
 > **The single most load-bearing artifact in the system.** Everything — gateway,
 > agent loop, TUI, web — builds against this. Source of truth = the protobuf
-> module under [`packages/mcp/proto/agent_os/v1/`](../proto/agent_os/v1); this doc is its map.
+> module under [`packages/mcp/proto/andromeda/v1/`](../proto/andromeda/v1); this doc is its map.
 >
 > **Transport (design §00 S3, LOCKED):** two layers, **one** protobuf schema:
 > 1. **Control plane = Connect (protobuf)** — unary RPCs, generated typed
@@ -34,7 +34,7 @@ authorization surface.
 | `health.proto` | `HealthService` — `GetHealth` (cluster/fabric/PG snapshot + `paused`). |
 | `session_frames.proto` | The **WebSocket** session frames: `ServerFrame` + `ClientFrame` envelopes (§01 G2). |
 
-All in package `agent_os.v1`.
+All in package `andromeda.v1`.
 
 ---
 
@@ -140,8 +140,8 @@ Default outputs (all committable, all in this repo):
 | **Go** | `packages/sdk/contracts-go/gen` | `protocolbuffers/go` + `connectrpc/go` | `connectrpc.com/connect`, `google.golang.org/protobuf` (`go mod tidy`) |
 | **TS** | `packages/sdk/shared-ts/src/gen` | `bufbuild/es` (protobuf-es v2) | `@bufbuild/protobuf`, `@connectrpc/connect` (`bun install`) |
 
-- **Go:** Connect service stubs land in `gen/agent_os/v1/agent_osv1connect`; messages
-  in `gen/agent_os/v1`. `go_package` is injected by buf managed mode.
+- **Go:** Connect service stubs land in `gen/andromeda/v1/andromedav1connect`; messages
+  in `gen/andromeda/v1`. `go_package` is injected by buf managed mode.
 - **TS:** protobuf-es v2 emits the Connect-compatible service descriptors inside
   the `*_pb.ts` files; `@connectrpc/connect` v2 builds typed clients from them
   via `createClient(RegistryService, transport)` — so **no separate connect-es
@@ -155,7 +155,7 @@ Default outputs (all committable, all in this repo):
   in-repository Python consumer changes. Import as:
   ```python
   import agent.gen                      # puts the gen root on sys.path
-  from agent_os.v1 import session_frames_pb2, registry_pb2
+  from andromeda.v1 import session_frames_pb2, registry_pb2
   ```
 
 **Regenerate after any `.proto` edit** and commit the stubs alongside the proto.
@@ -168,20 +168,20 @@ validated separately from generated output.
 
 | File | Kind | Purpose |
 |------|------|---------|
-| `packages/server/inference/python-agent/agent/gen/__init__.py` | source | `sys.path` bootstrap so `from agent_os.v1 import ...` resolves after `import agent.gen` |
-| `packages/server/inference/python-agent/agent/gen/agent_os/__init__.py` | source | Python package marker for the `agent_os` namespace |
-| `packages/server/inference/python-agent/agent/gen/agent_os/v1/__init__.py` | source | Python package marker for the `agent_os.v1` namespace |
+| `packages/server/inference/python-agent/agent/gen/__init__.py` | source | `sys.path` bootstrap so `from andromeda.v1 import ...` resolves after `import agent.gen` |
+| `packages/server/inference/python-agent/agent/gen/andromeda/__init__.py` | source | Python package marker for the `andromeda` namespace |
+| `packages/server/inference/python-agent/agent/gen/andromeda/v1/__init__.py` | source | Python package marker for the `andromeda.v1` namespace |
 | `packages/sdk/shared-ts/src/gen/index.ts` | hand-authored | Re-export barrel so consumers import from `@agent-os/shared-ts/gen` |
-| `packages/server/inference/python-agent/agent/gen/agent_os/v1/*_pb2.py` | **buf-generated** | Protobuf message classes - regenerate, never hand-edit |
-| `packages/server/inference/python-agent/agent/gen/agent_os/v1/*_pb2.pyi` | **buf-generated** | Type stubs - regenerate, never hand-edit |
-| `packages/sdk/shared-ts/src/gen/agent_os/v1/*_pb.ts` | **buf-generated** | protobuf-es v2 message + service descriptors — regenerate, never hand-edit |
+| `packages/server/inference/python-agent/agent/gen/andromeda/v1/*_pb2.py` | **buf-generated** | Protobuf message classes - regenerate, never hand-edit |
+| `packages/server/inference/python-agent/agent/gen/andromeda/v1/*_pb2.pyi` | **buf-generated** | Type stubs - regenerate, never hand-edit |
+| `packages/sdk/shared-ts/src/gen/andromeda/v1/*_pb.ts` | **buf-generated** | protobuf-es v2 message + service descriptors — regenerate, never hand-edit |
 | `packages/sdk/contracts-go/gen/...` | **buf-generated** | Go message + Connect stubs - regenerate, never hand-edit |
 
 ### Python bindings
 
 The inference worker consumes the plain protobuf bindings below
 `packages/server/inference/python-agent/agent/gen`. The gateway consumes the generated
-protobuf and Connect bindings below `packages/server/gateway/agent_os/v1` and mounts
+protobuf and Connect bindings below `packages/server/gateway/andromeda/v1` and mounts
 the implemented services described in [Gateway architecture](../gateway.md).
 
 ---
@@ -227,7 +227,7 @@ bun run check
 
 # Refresh and validate the in-repository Python consumer:
 (cd packages/mcp && bunx --bun @bufbuild/buf generate proto --template buf.gen.python.yaml)
-(cd packages/server/inference/python-agent && uv sync && uv run python -c "import agent.gen; from agent_os.v1 import session_frames_pb2")
+(cd packages/server/inference/python-agent && uv sync && uv run python -c "import agent.gen; from andromeda.v1 import session_frames_pb2")
 ```
 
 ---
@@ -243,10 +243,10 @@ surface.
 
 | Language | Internal path / module identity | Import example | In-repository consumer |
 |----------|---------------------------------|----------------|------------------------|
-| **Go** | `packages/sdk/contracts-go` | `agent_osv1 "github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1"` | Go services under `packages/server/inference/` |
-| **Go Connect** | `packages/sdk/contracts-go/gen/agent_os/v1/agent_osv1connect` | `import "github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1/agent_osv1connect"` | Go services that speak the Connect control plane |
+| **Go** | `packages/sdk/contracts-go` | `andromedav1 "github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1"` | Go services under `packages/server/inference/` |
+| **Go Connect** | `packages/sdk/contracts-go/gen/andromeda/v1/andromedav1connect` | `import "github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1/andromedav1connect"` | Go services that speak the Connect control plane |
 | **TypeScript** | private workspace `@agent-os/shared-ts` | `import { RegistryService } from "@agent-os/shared-ts/gen"` | `packages/web` |
-| **Python** | `agent.gen` bootstrap + `agent_os.v1` | `import agent.gen; from agent_os.v1 import session_frames_pb2, registry_pb2` | `packages/server/inference/python-agent` |
+| **Python** | `agent.gen` bootstrap + `andromeda.v1` | `import agent.gen; from andromeda.v1 import session_frames_pb2, registry_pb2` | `packages/server/inference/python-agent` |
 
 `packages/web` and `packages/app` are currently private placeholder workspaces.
 They import the private `@agent-os/shared-ts` workspace and will host

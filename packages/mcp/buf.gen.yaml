@@ -25,7 +25,7 @@ managed:
   override:
     # Root the Go import path at the contracts-go module's gen package.
     - file_option: go_package_prefix
-      value: github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen
+      value: github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen
 
 plugins:
   # ---- Go: messages + Connect service stubs --------------------------------

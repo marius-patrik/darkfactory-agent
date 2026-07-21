@@ -5,7 +5,7 @@ rolled-up parents. It intentionally excludes the two liveness states
 (``RUN_STATUS_RUNNING`` / ``RUN_STATUS_PAUSED``): this vocabulary represents
 results, not heartbeat or claim liveness.
 
-The protobuf ``RunStatus`` enum (``proto/agent_os/v1/common.proto``) has ten
+The protobuf ``RunStatus`` enum (``proto/andromeda/v1/common.proto``) has ten
 members.  Values ``1..8`` map to the eight result states below.  Values
 ``0`` (``RUN_STATUS_UNSPECIFIED``), ``9`` (``RUN_STATUS_RUNNING``) and
 ``10`` (``RUN_STATUS_PAUSED``) are rejected by ``from_proto`` because they
@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from enum import Enum
 
-import agent.gen  # noqa: F401  # installs the generated agent_os namespace
-from agent_os.v1 import common_pb2
+import agent.gen  # noqa: F401  # installs the generated andromeda namespace
+from andromeda.v1 import common_pb2
 
 
 class StatusValue(str, Enum):
@@ -81,7 +81,7 @@ _STATE_CLASS: dict[StatusValue, str] = {
     StatusValue.expired: "terminal-neg",
 }
 
-# Generated protobuf values from the canonical ``agent_os.v1`` contract.
+# Generated protobuf values from the canonical ``andromeda.v1`` contract.
 _PROTO_VALUE: dict[StatusValue, int] = {
     StatusValue.useful_result: common_pb2.RUN_STATUS_USEFUL_RESULT,
     StatusValue.no_artifact: common_pb2.RUN_STATUS_NO_ARTIFACT,

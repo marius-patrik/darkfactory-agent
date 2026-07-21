@@ -7,7 +7,7 @@
  * consumer pattern used by the in-repository inference Python agent:
  *
  *   import agent.gen
- *   from agent_os.v1 import session_frames_pb2, registry_pb2
+ *   from andromeda.v1 import session_frames_pb2, registry_pb2
  */
 import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
@@ -73,10 +73,10 @@ try {
     { cwd: protoRoot },
   );
 
-  // Replicate the intended consumer layout: agent/gen/agent_os/v1/...
+  // Replicate the intended consumer layout: agent/gen/andromeda/v1/...
   const agentGen = join(tmp, "agent", "gen");
   await mkdir(agentGen, { recursive: true });
-  await rename(join(tmp, "agent_os"), join(agentGen, "agent_os"));
+  await rename(join(tmp, "andromeda"), join(agentGen, "andromeda"));
   await writeFile(join(tmp, "agent", "__init__.py"), "");
   await writeFile(
     join(agentGen, "__init__.py"),
@@ -85,8 +85,8 @@ try {
       "if _gen_root not in _sys.path:\n" +
       "    _sys.path.insert(0, _gen_root)\n",
   );
-  await writeFile(join(agentGen, "agent_os", "__init__.py"), "");
-  await writeFile(join(agentGen, "agent_os", "v1", "__init__.py"), "");
+  await writeFile(join(agentGen, "andromeda", "__init__.py"), "");
+  await writeFile(join(agentGen, "andromeda", "v1", "__init__.py"), "");
 
   // Create a temporary venv with the protobuf runtime.
   const venvDir = join(tmp, ".venv");

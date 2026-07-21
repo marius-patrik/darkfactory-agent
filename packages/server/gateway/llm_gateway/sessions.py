@@ -8,9 +8,9 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
-from agent_os.v1.common_pb import RunStatus, Task
-from agent_os.v1.session_frames_pb import AttachState, PlanState, PlanStep, ServerFrame, SessionEvent, SessionEventKind
-from agent_os.v1.sessions_pb import AttachInfo, Session
+from andromeda.v1.common_pb import RunStatus, Task
+from andromeda.v1.session_frames_pb import AttachState, PlanState, PlanStep, ServerFrame, SessionEvent, SessionEventKind
+from andromeda.v1.sessions_pb import AttachInfo, Session
 from fastapi import WebSocket
 from protobuf import Oneof
 

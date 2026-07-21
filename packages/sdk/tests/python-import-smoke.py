@@ -6,7 +6,7 @@ the in-repository inference Python consumer layout.
 """
 
 import agent.gen
-from agent_os.v1 import common_pb2, registry_pb2, session_frames_pb2
+from andromeda.v1 import common_pb2, registry_pb2, session_frames_pb2
 
 
 def main() -> None:
@@ -14,17 +14,17 @@ def main() -> None:
     assert host.id == "smoke", "protobuf message construction failed"
 
     req = registry_pb2.ListModelsRequest()
-    assert req.DESCRIPTOR.full_name == "agent_os.v1.ListModelsRequest", (
+    assert req.DESCRIPTOR.full_name == "andromeda.v1.ListModelsRequest", (
         f"unexpected message descriptor: {req.DESCRIPTOR.full_name}"
     )
 
     registry_service = registry_pb2.DESCRIPTOR.services_by_name["RegistryService"]
-    assert registry_service.full_name == "agent_os.v1.RegistryService", (
+    assert registry_service.full_name == "andromeda.v1.RegistryService", (
         "unexpected service descriptor"
     )
 
     frame = session_frames_pb2.ServerFrame()
-    assert frame.DESCRIPTOR.full_name == "agent_os.v1.ServerFrame", (
+    assert frame.DESCRIPTOR.full_name == "andromeda.v1.ServerFrame", (
         "unexpected frame descriptor"
     )
 

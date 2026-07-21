@@ -12,7 +12,7 @@ runtime state below `$AGENTS_HOME/runtime/inference`:
 
 Inference does not write the canonical Agent OS session, memory, capability,
 configuration, or credit stores. Its generated `common_pb2` module uses the
-canonical `agent_os.v1` protocol emitted from `packages/mcp/proto`.
+canonical `andromeda.v1` protocol emitted from `packages/mcp/proto`.
 
 ## Contents
 

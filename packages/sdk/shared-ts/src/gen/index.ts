@@ -11,10 +11,10 @@
 // DO NOT EDIT the *_pb.ts files by hand — regenerate with
 // `bun run buf:generate` (root: `buf generate proto`).
 // See packages/mcp/contracts/wire.md §5 for full regeneration notes.
-export * from "./agent_os/v1/common_pb";
-export * from "./agent_os/v1/registry_pb";
-export * from "./agent_os/v1/switchers_pb";
-export * from "./agent_os/v1/sessions_pb";
-export * from "./agent_os/v1/jobs_pb";
-export * from "./agent_os/v1/health_pb";
-export * from "./agent_os/v1/session_frames_pb";
+export * from "./andromeda/v1/common_pb";
+export * from "./andromeda/v1/registry_pb";
+export * from "./andromeda/v1/switchers_pb";
+export * from "./andromeda/v1/sessions_pb";
+export * from "./andromeda/v1/jobs_pb";
+export * from "./andromeda/v1/health_pb";
+export * from "./andromeda/v1/session_frames_pb";

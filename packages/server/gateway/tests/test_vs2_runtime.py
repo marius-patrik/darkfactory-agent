@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 from protobuf import Oneof
 from starlette.websockets import WebSocketDisconnect
 
-from agent_os.v1.common_pb import Fabric, SwitcherAxis, SwitcherScope, SwitcherState, Task
-from agent_os.v1.session_frames_pb import ClientFrame, ServerFrame, Status, Switch, UserInput
-from agent_os.v1.sessions_pb import CreateSessionRequest
+from andromeda.v1.common_pb import Fabric, SwitcherAxis, SwitcherScope, SwitcherState, Task
+from andromeda.v1.session_frames_pb import ClientFrame, ServerFrame, Status, Switch, UserInput
+from andromeda.v1.sessions_pb import CreateSessionRequest
 import llm_gateway.main as gateway_main
 from llm_gateway.control_plane import SessionControlPlane
 from llm_gateway.main import app
@@ -36,7 +36,7 @@ def client(monkeypatch, tmp_path):
 
 def test_generated_connect_handler_serves_registry_rpc(client):
     response = client.post(
-        "/agent_os.v1.RegistryService/ListModels",
+        "/andromeda.v1.RegistryService/ListModels",
         content="{}",
         headers={"content-type": "application/json"},
     )
@@ -50,7 +50,7 @@ def test_generated_connect_handler_serves_registry_rpc(client):
         "conv-14b-1m",
     }
     health = client.post(
-        "/agent_os.v1.HealthService/GetHealth",
+        "/andromeda.v1.HealthService/GetHealth",
         content="{}",
         headers={"content-type": "application/json"},
     )

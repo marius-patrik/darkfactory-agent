@@ -19,7 +19,7 @@ const outputs = [
   "packages/sdk/contracts-go/gen",
   "packages/sdk/shared-ts/src/gen",
   "packages/server/inference/python-agent/agent/gen",
-  "packages/server/gateway/agent_os",
+  "packages/server/gateway/andromeda",
 ];
 const TRANSIENT_RETRY_DELAYS_MS = [5_000, 15_000] as const;
 
@@ -131,7 +131,7 @@ function main(): void {
       join(beforeRoot, "packages/sdk/shared-ts/src/gen/index.ts"),
       join(root, "packages/sdk/shared-ts/src/gen/index.ts"),
     );
-    for (const init of ["__init__.py", "agent_os/__init__.py", "agent_os/v1/__init__.py"]) {
+    for (const init of ["__init__.py", "andromeda/__init__.py", "andromeda/v1/__init__.py"]) {
       const source = join(beforeRoot, "packages/server/inference/python-agent/agent/gen", init);
       const destination = join(root, "packages/server/inference/python-agent/agent/gen", init);
       mkdirSync(dirname(destination), { recursive: true });

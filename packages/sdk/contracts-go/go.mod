@@ -1,4 +1,4 @@
-module github.com/marius-patrik/agents-manager/packages/core/contracts-go
+module github.com/marius-patrik/andromeda/packages/sdk/contracts-go
 
 go 1.26
 

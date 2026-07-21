@@ -6,16 +6,16 @@ import { name as sharedName } from "../shared-ts/src/index";
 import {
   ListModelsRequestSchema,
   RegistryService,
-  file_agent_os_v1_common,
+  file_andromeda_v1_common,
 } from "../shared-ts/src/gen/index";
 
 const request = create(ListModelsRequestSchema, {});
 
 if (
   sharedName !== "@agent-os/shared-ts" ||
-  request.$typeName !== "agent_os.v1.ListModelsRequest" ||
-  file_agent_os_v1_common.name !== "agent_os/v1/common" ||
-  RegistryService.typeName !== "agent_os.v1.RegistryService"
+  request.$typeName !== "andromeda.v1.ListModelsRequest" ||
+  file_andromeda_v1_common.name !== "andromeda/v1/common" ||
+  RegistryService.typeName !== "andromeda.v1.RegistryService"
 ) {
   throw new Error("Andromeda core TypeScript import smoke test failed");
 }

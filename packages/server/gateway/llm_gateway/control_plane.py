@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agent_os.v1.common_pb import Usage
-from agent_os.v1.health_pb import ComponentHealth, GetHealthRequest, GetHealthResponse
-from agent_os.v1.registry_pb import (
+from andromeda.v1.common_pb import Usage
+from andromeda.v1.health_pb import ComponentHealth, GetHealthRequest, GetHealthResponse
+from andromeda.v1.registry_pb import (
     ListHostsRequest,
     ListHostsResponse,
     ListModelsRequest,
@@ -17,7 +17,7 @@ from agent_os.v1.registry_pb import (
     ListProvidersRequest,
     ListProvidersResponse,
 )
-from agent_os.v1.sessions_pb import (
+from andromeda.v1.sessions_pb import (
     AttachSessionRequest,
     AttachSessionResponse,
     CreateSessionRequest,
@@ -27,7 +27,7 @@ from agent_os.v1.sessions_pb import (
     ListSessionsRequest,
     ListSessionsResponse,
 )
-from agent_os.v1.switchers_pb import (
+from andromeda.v1.switchers_pb import (
     GetSwitcherStateRequest,
     GetSwitcherStateResponse,
     ListSwitcherOptionsRequest,

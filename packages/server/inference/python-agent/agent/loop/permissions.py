@@ -6,7 +6,7 @@ from enum import Enum
 
 
 class PermissionMode(str, Enum):
-    """Canonical ``agent_os.v1.PermissionMode`` names used by the loop."""
+    """Canonical ``andromeda.v1.PermissionMode`` names used by the loop."""
 
     plan = "plan"
     ask = "ask"

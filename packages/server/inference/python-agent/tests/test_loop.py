@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 import agent.gen  # noqa: F401
-from agent_os.v1 import common_pb2
+from andromeda.v1 import common_pb2
 
 from agent.loop.acceptance_gate import evaluate
 from agent.loop.context_assembler import ContextAssembler

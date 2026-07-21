@@ -22,9 +22,9 @@ moved to their owners and this document is the map.
 The contract surface is a library, not a CLI or end-user application. It ships
 generated wire-contract stubs for downstream components:
 
-- **Go:** module `github.com/marius-patrik/agents-manager/packages/core/contracts-go`
-  - Messages: `agent_osv1 "github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1"`
-  - Connect services: `"github.com/marius-patrik/agents-manager/packages/core/contracts-go/gen/agent_os/v1/agent_osv1connect"`
+- **Go:** module `github.com/marius-patrik/andromeda/packages/sdk/contracts-go`
+  - Messages: `andromedav1 "github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1"`
+  - Connect services: `"github.com/marius-patrik/andromeda/packages/sdk/contracts-go/gen/andromeda/v1/andromedav1connect"`
   - Consumers: the Go services under `packages/server/inference/`.
   - The module path still says `packages/core` while the directory is
     `packages/sdk/contracts-go`. That identity is embedded in the generated
@@ -34,9 +34,9 @@ generated wire-contract stubs for downstream components:
   - Consumers: `packages/web` and `packages/app`, both still placeholders.
 - **Python:** plain protobuf stubs generated to
   `packages/server/inference/python-agent/agent/gen` and
-  `packages/server/gateway/agent_os`
+  `packages/server/gateway/andromeda`
   - Bootstrap: `import agent.gen`
-  - Messages: `from agent_os.v1 import session_frames_pb2, registry_pb2`
+  - Messages: `from andromeda.v1 import session_frames_pb2, registry_pb2`
   - Consumers: the inference Python agent and the gateway.
 
 `contracts-go/cmd/contracts-go` is a development placeholder; downstream
