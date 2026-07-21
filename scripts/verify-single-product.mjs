@@ -21,10 +21,10 @@ const requiredLayout = [
   "packages/sdk/harness",
   "packages/server/inference",
   "packages/cli",
-  "capabilities/.global/skills",
-  "capabilities/.global/hooks",
-  "capabilities/.global/roles",
-  "capabilities/.global/commands",
+  "tools/capabilities/global/skills",
+  "tools/capabilities/global/hooks",
+  "tools/capabilities/global/roles",
+  "tools/capabilities/global/commands",
 ];
 for (const relative of requiredLayout) {
   if (!fs.statSync(path.join(root, relative), { throwIfNoEntry: false })?.isDirectory()) {
@@ -79,7 +79,7 @@ for (const match of gitmodules.matchAll(/^\s*path\s*=\s*(.+)\s*$/gm)) {
 }
 
 const forbiddenPaths = [
-  // capabilities/.global at the repository root is the authored capability root.
+  // tools/capabilities/global at the repository root is the authored capability root.
   // A copy of it anywhere below the root is rejected, which is what a leaked
   // provider or state home looks like. All three spellings are covered: the
   // pre-rebrand state root .agents, the current state root .andromeda, and the

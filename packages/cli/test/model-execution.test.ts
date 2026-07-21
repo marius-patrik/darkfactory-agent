@@ -53,7 +53,7 @@ async function fixture(): Promise<{ root: string; state: SharedState; receiptDir
     },
   });
   const receiptDir = path.join(root, ".darkfactory");
-  await mkdir(receiptDir);
+  await mkdir(receiptDir, { recursive: true });
   return { root, state, receiptDir };
 }
 

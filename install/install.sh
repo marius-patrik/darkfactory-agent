@@ -319,10 +319,10 @@ install_launcher() {
 }
 
 install_default_capabilities() {
-  local skill_root="$ANDROMEDA_ROOT/capabilities/.global/skills"
-  local role_root="$ANDROMEDA_ROOT/capabilities/.global/roles"
-  local command_root="$ANDROMEDA_ROOT/capabilities/.global/commands"
-  local persona="$ANDROMEDA_ROOT/capabilities/.global/persona.md"
+  local skill_root="$ANDROMEDA_ROOT/tools/capabilities/global/skills"
+  local role_root="$ANDROMEDA_ROOT/tools/capabilities/global/roles"
+  local command_root="$ANDROMEDA_ROOT/tools/capabilities/global/commands"
+  local persona="$ANDROMEDA_ROOT/tools/capabilities/global/persona.md"
   local identity_bundle skill_path name
 
   [ -d "$skill_root" ] || die "bundled skill floor is missing: $skill_root"
