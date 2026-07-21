@@ -83,8 +83,14 @@ export const CI_SUITE_NAMES = Object.freeze([
   "review",
 ]);
 
+// A backstop against a hung test, not a performance assertion. The Windows
+// hosted runner degrades badly under load - manager legs have taken 22 to 27
+// minutes against roughly 8 healthy - and at 90s the cross-process lock test
+// and the redaction sweep were being killed mid-flight rather than hanging.
+// A genuine hang still fails here, just later; a slow runner no longer reds
+// the build.
 export function managerTestTimeoutMs(platform = process.platform) {
-  return platform === "win32" ? 90_000 : 30_000;
+  return platform === "win32" ? 240_000 : 60_000;
 }
 
 const suites = {

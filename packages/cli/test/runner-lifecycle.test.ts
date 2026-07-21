@@ -1241,7 +1241,12 @@ describe("runner lifecycle start postconditions", () => {
         scheduler,
         startObservationTimeoutMs: 20,
         startObservationIntervalMs: 2,
-        readinessObservationTimeoutMs: 500,
+        // Deliberately far above the start-observation window. The assertion
+        // below proves the operation gives up on the start postcondition and
+        // never falls through to the readiness path; separating the two by
+        // orders of magnitude is what makes that provable on a loaded runner
+        // instead of a coin flip against scheduling noise.
+        readinessObservationTimeoutMs: 10_000,
         readinessObservationIntervalMs: 20,
       };
 
@@ -1259,7 +1264,11 @@ describe("runner lifecycle start postconditions", () => {
       expect(result.issues, action).toEqual([
         "runner host start postcondition timed out before its process became observable",
       ]);
-      expect(elapsedMs, action).toBeLessThan(300);
+      // Well under readinessObservationTimeoutMs, so falling through to the
+      // readiness path fails this outright, while ordinary CI scheduling noise
+      // does not. The previous bound was 300ms against a 500ms readiness
+      // timeout, which left no daylight between the two and flaked repeatedly.
+      expect(elapsedMs, action).toBeLessThan(3_000);
       expect(kit.schedulerCalls, action).toEqual([`start:${RUNNER_SCHEDULED_TASK}`]);
       expect(kit.hostState.instances, action).toEqual([]);
     }
