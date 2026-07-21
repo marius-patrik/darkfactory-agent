@@ -21,9 +21,9 @@ REAL_GIT="$(command -v git)"
 mkdir -p "$ANDROMEDA_USER_HOME" "$FAKE_BIN"
 
 # Snapshot the current checkout, including tracked edits and untracked source
-# files, into a local dev branch without changing the caller's repository.
+# files, into a local main branch without changing the caller's repository.
 git clone --no-hardlinks "$ROOT_DIR" "$SOURCE_DIR" >/dev/null
-git -C "$SOURCE_DIR" checkout -q -B dev
+git -C "$SOURCE_DIR" checkout -q -B main
 
 exclude_args=()
 while IFS= read -r submodule_path; do
@@ -141,7 +141,7 @@ run_installer() {
     HOME="$ANDROMEDA_USER_HOME" \
     ANDROMEDA_SOURCE="$SOURCE_DIR" \
     ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
-    ANDROMEDA_BRANCH=dev \
+    ANDROMEDA_BRANCH=main \
     ANDROMEDA_HOME="$ANDROMEDA_HOME" \
     ANDROMEDA_USER_HOME="$ANDROMEDA_USER_HOME" \
     ANDROMEDA_ROOT="$ANDROMEDA_ROOT" \
@@ -158,14 +158,14 @@ EDGE_USER_HOME="$SANDBOX/edge-home"
 EDGE_ANDROMEDA_HOME="$EDGE_USER_HOME/.andromeda"
 EDGE_ROOT="$EDGE_USER_HOME/marius-patrik/Andromeda"
 mkdir -p "$(dirname "$EDGE_ROOT")" "$SANDBOX/edge-git"
-git clone --quiet --branch dev --separate-git-dir="$SANDBOX/edge-git/repository" "$SOURCE_DIR" "$EDGE_ROOT"
+git clone --quiet --branch main --separate-git-dir="$SANDBOX/edge-git/repository" "$SOURCE_DIR" "$EDGE_ROOT"
 test -f "$EDGE_ROOT/.git"
 env \
   PATH="$FAKE_BIN:$PATH" \
   HOME="$EDGE_USER_HOME" \
   ANDROMEDA_SOURCE="$SOURCE_DIR" \
   ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
-  ANDROMEDA_BRANCH=dev \
+  ANDROMEDA_BRANCH=main \
   ANDROMEDA_HOME="$EDGE_ANDROMEDA_HOME" \
   ANDROMEDA_USER_HOME="$EDGE_USER_HOME" \
   ANDROMEDA_ROOT="$EDGE_ROOT" \
@@ -184,7 +184,7 @@ env \
   HOME="$LEGACY_USER_HOME" \
   ANDROMEDA_SOURCE="$SOURCE_DIR" \
   ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
-  ANDROMEDA_BRANCH=dev \
+  ANDROMEDA_BRANCH=main \
   ANDROMEDA_HOME="$LEGACY_ANDROMEDA_HOME" \
   ANDROMEDA_USER_HOME="$LEGACY_USER_HOME" \
   ANDROMEDA_ROOT="$LEGACY_ROOT" \
@@ -207,14 +207,14 @@ esac
 DENIED_USER_HOME="$SANDBOX/denied-home"
 DENIED_ROOT="$DENIED_USER_HOME/marius-patrik/Andromeda"
 mkdir -p "$(dirname "$DENIED_ROOT")"
-git clone --quiet --branch dev "$SOURCE_DIR" "$DENIED_ROOT"
+git clone --quiet --branch main "$SOURCE_DIR" "$DENIED_ROOT"
 git -C "$DENIED_ROOT" remote set-url origin https://example.invalid/not-andromeda.git
 if env \
   PATH="$FAKE_BIN:$PATH" \
   HOME="$DENIED_USER_HOME" \
   ANDROMEDA_SOURCE="$SOURCE_DIR" \
   ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
-  ANDROMEDA_BRANCH=dev \
+  ANDROMEDA_BRANCH=main \
   ANDROMEDA_HOME="$DENIED_USER_HOME/.andromeda" \
   ANDROMEDA_USER_HOME="$DENIED_USER_HOME" \
   ANDROMEDA_ROOT="$DENIED_ROOT" \
@@ -229,14 +229,14 @@ grep -F "canonical checkout origin is https://example.invalid/not-andromeda.git,
 NESTED_USER_HOME="$SANDBOX/nested-home"
 NESTED_PARENT="$NESTED_USER_HOME/marius-patrik"
 NESTED_ROOT="$NESTED_PARENT/nested/Andromeda"
-git clone --quiet --branch dev "$SOURCE_DIR" "$NESTED_PARENT"
+git clone --quiet --branch main "$SOURCE_DIR" "$NESTED_PARENT"
 mkdir -p "$NESTED_ROOT"
 if env \
   PATH="$FAKE_BIN:$PATH" \
   HOME="$NESTED_USER_HOME" \
   ANDROMEDA_SOURCE="$SOURCE_DIR" \
   ANDROMEDA_DATA_SOURCE="$STUB_ROOT/data" \
-  ANDROMEDA_BRANCH=dev \
+  ANDROMEDA_BRANCH=main \
   ANDROMEDA_HOME="$NESTED_USER_HOME/.andromeda" \
   ANDROMEDA_USER_HOME="$NESTED_USER_HOME" \
   ANDROMEDA_ROOT="$NESTED_ROOT" \

@@ -5,7 +5,9 @@ umask 077
 
 readonly REPO_URL="https://github.com/marius-patrik/Andromeda.git"
 readonly SOURCE_URL="${ANDROMEDA_SOURCE:-$REPO_URL}"
-readonly SOURCE_BRANCH="${ANDROMEDA_BRANCH:-dev}"
+# main is the only branch. dev was deleted 2026-07-21 when the repository went
+# trunk-based, so defaulting to it made every source install fail closed.
+readonly SOURCE_BRANCH="${ANDROMEDA_BRANCH:-main}"
 readonly DATA_REPO_URL="https://github.com/marius-patrik/Andromeda-data.git"
 readonly DATA_SOURCE_URL="${ANDROMEDA_DATA_SOURCE:-$DATA_REPO_URL}"
 readonly DATA_BRANCH="main"
