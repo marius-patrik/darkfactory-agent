@@ -82,7 +82,7 @@ test("documented branch policy matches the enforced check names", async () => {
   assert.match(policy, /Force-pushes, deletion, and administrative gate bypass remain disabled/);
 });
 
-test("Andromeda-data posture records the compensating control without choosing billing or visibility", async () => {
+test("private-data posture records the compensating control without choosing billing or visibility", async () => {
   const posture = await readFile("docs/managed-enforcement.md", "utf8");
   assert.match(posture, /private repository/);
   assert.match(posture, /Upgrade to GitHub Pro or make this repository public/);

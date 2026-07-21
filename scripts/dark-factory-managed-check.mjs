@@ -20,8 +20,8 @@ function readConfig() {
   if (config.schemaVersion !== 1) {
     throw new Error("Managed repository config must use schemaVersion 1.");
   }
-  if (config.dataRepo !== "marius-patrik/Andromeda-data") {
-    throw new Error("Managed repository config must use canonical Andromeda-data as its source authority.");
+  if (config.dataRepo !== "marius-patrik/private-data") {
+    throw new Error("Managed repository config must use canonical private-data as its source authority.");
   }
   if (config.ledgerRepo !== "marius-patrik/darkfactory-data") {
     throw new Error("Managed repository config must use darkfactory-data as its runtime ledger authority.");

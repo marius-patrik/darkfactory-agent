@@ -8,7 +8,7 @@ readonly SOURCE_URL="${ANDROMEDA_SOURCE:-$REPO_URL}"
 # main is the only branch. dev was deleted 2026-07-21 when the repository went
 # trunk-based, so defaulting to it made every source install fail closed.
 readonly SOURCE_BRANCH="${ANDROMEDA_BRANCH:-main}"
-readonly DATA_REPO_URL="https://github.com/marius-patrik/Andromeda-data.git"
+readonly DATA_REPO_URL="https://github.com/marius-patrik/private-data.git"
 readonly DATA_SOURCE_URL="${ANDROMEDA_DATA_SOURCE:-$DATA_REPO_URL}"
 readonly DATA_BRANCH="main"
 
@@ -120,10 +120,10 @@ install_or_update_state_checkout() {
       die "ANDROMEDA_HOME is on $current_branch, expected $DATA_BRANCH"
     [ -z "$(git -C "$ANDROMEDA_HOME" status --porcelain --untracked-files=no)" ] ||
       die "ANDROMEDA_HOME has tracked changes: $ANDROMEDA_HOME"
-    echo "Updating Andromeda-data state checkout in $ANDROMEDA_HOME ..."
+    echo "Updating private-data state checkout in $ANDROMEDA_HOME ..."
     git -C "$ANDROMEDA_HOME" pull --rebase "$DATA_SOURCE_URL" "$DATA_BRANCH"
   elif [ -z "$(find "$ANDROMEDA_HOME" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-    echo "Installing Andromeda-data state checkout into $ANDROMEDA_HOME ..."
+    echo "Installing private-data state checkout into $ANDROMEDA_HOME ..."
     git clone --branch "$DATA_BRANCH" --single-branch "$DATA_SOURCE_URL" "$ANDROMEDA_HOME"
     git -C "$ANDROMEDA_HOME" remote set-url origin "$DATA_REPO_URL"
   else
@@ -146,10 +146,10 @@ migrate_legacy_state_checkout() {
     die "legacy ANDROMEDA_HOME contains a symbolic link; refusing state migration"
   fi
 
-  echo "Migrating existing Agent OS state into an Andromeda-data checkout ..."
+  echo "Migrating existing Agent OS state into an private-data checkout ..."
   if ! git clone --branch "$DATA_BRANCH" --single-branch "$DATA_SOURCE_URL" "$stage"; then
     rm -rf -- "$stage"
-    die "could not stage the Andromeda-data checkout"
+    die "could not stage the private-data checkout"
   fi
   git -C "$stage" remote set-url origin "$DATA_REPO_URL"
   if ! cp -a "$ANDROMEDA_HOME/." "$stage/"; then
@@ -159,7 +159,7 @@ migrate_legacy_state_checkout() {
   chmod -R go-rwx -- "$stage"
   [ -z "$(git -C "$stage" status --porcelain --untracked-files=no)" ] || {
     rm -rf -- "$stage"
-    die "legacy Agent OS state conflicts with tracked Andromeda-data content"
+    die "legacy Agent OS state conflicts with tracked private-data content"
   }
 
   mv -- "$ANDROMEDA_HOME" "$backup"
@@ -376,7 +376,7 @@ main() {
   run_launcher state init
   if [ ! -f "$ANDROMEDA_HOME/secrets/ANDROMEDA_SYNC_KEY.secret" ]; then
     if [ -n "$(git -C "$ANDROMEDA_HOME" ls-files -- 'backups/events')" ]; then
-      die "Andromeda-data contains encrypted backups; install the existing ANDROMEDA_SYNC_KEY before continuing"
+      die "private-data contains encrypted backups; install the existing ANDROMEDA_SYNC_KEY before continuing"
     fi
     run_launcher sync enable --generate-key
   else

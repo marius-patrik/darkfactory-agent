@@ -372,7 +372,7 @@ async function stateRepositoryCheck(state: SharedState): Promise<StateDoctorChec
     message:
       inspection.issues.length === 0
         ? `ANDROMEDA_HOME is the clean ${inspection.repository} ${inspection.branch} checkout with ${inspection.backupBundles} encrypted backup bundle(s)`
-        : "ANDROMEDA_HOME is not the canonical clean Andromeda-data checkout",
+        : "ANDROMEDA_HOME is not the canonical clean private-data checkout",
     details: { ...inspection },
   };
 }

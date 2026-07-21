@@ -3,7 +3,7 @@ import path from "node:path";
 import { validateAgentExecutionReceipt } from "./df-model-policy.mjs";
 
 export const API_ROOT = "https://api.github.com";
-export const AGENT_OS_DATA_REPO = "marius-patrik/Andromeda-data";
+export const AGENT_OS_DATA_REPO = "marius-patrik/private-data";
 export const DARK_FACTORY_DATA_REPO = "marius-patrik/darkfactory-data";
 export const PARKED_REPOS = new Set([
   "marius-patrik/fabrica",

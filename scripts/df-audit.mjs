@@ -50,7 +50,7 @@ export const ANDROMEDA_LAYOUT = [
   { name: "SkyAgent", path: "plugins/SkyAgent", repo: "marius-patrik/SkyAgent" },
   { name: "Singularity", path: "apps/Singularity", repo: "marius-patrik/Singularity" },
   { name: "Fabrica", path: "apps/Fabrica", repo: "marius-patrik/Fabrica" },
-  { name: "data", path: "data/andromeda", repo: "marius-patrik/Andromeda-data" },
+  { name: "data", path: "data/andromeda", repo: "marius-patrik/private-data" },
   { name: "darkfactory-data", path: "data/darkfactory", repo: "marius-patrik/darkfactory-data" }
 ];
 
@@ -198,7 +198,7 @@ export async function runRepositoryDoctor(github, options = {}) {
   const controlRepo = options.controlRepo || CONTROL_REPO;
   const controlRevision = await resolvePinnedRevision(github, controlRepo, options.controlRevision, "main", "trusted control");
   let agentOsDataRevision = options.agentOsDataRevision
-    ? assertExactCommit(options.agentOsDataRevision, "canonical Andromeda-data")
+    ? assertExactCommit(options.agentOsDataRevision, "canonical private-data")
     : null;
   const registry = options.registry || await readManagedRepoRegistry(options.root || process.cwd());
   const targets = await resolveDoctorTargets(github, controlRepo, registry, options);
@@ -255,7 +255,7 @@ export async function runRepositoryDoctor(github, options = {}) {
         parseRepo(AGENT_OS_DATA_REPO),
         null,
         "main",
-        "canonical Andromeda-data"
+        "canonical private-data"
       );
     }
 
@@ -407,7 +407,7 @@ async function auditTargetRepository(github, repository, metadata, options) {
       {
         severity: "critical",
         repairClass: "pr",
-        repair: ["Open one reviewed Andromeda-data source-policy PR that adds this exact repository as active; never override a parked or archived entry."]
+        repair: ["Open one reviewed private-data source-policy PR that adds this exact repository as active; never override a parked or archived entry."]
       }
     ));
   }
@@ -935,7 +935,7 @@ async function auditReleaseLane(github, repository, comparison, pulls, devRevisi
 export async function auditManagedFileDrift(github, repository, targetRef, controlRepo = CONTROL_REPO, options = {}) {
   if (!targetRef) return [doctorFinding("managed-target-ref-missing", "managed file drift", "Cannot inspect managed files without a target ref.", { severity: "critical" })];
   const controlRevision = assertExactCommit(options.controlRevision, "trusted control");
-  const agentOsDataRevision = assertExactCommit(options.agentOsDataRevision, "canonical Andromeda-data");
+  const agentOsDataRevision = assertExactCommit(options.agentOsDataRevision, "canonical private-data");
   const findings = [];
   const manifestText = await getOptionalFileContent(github, controlRepo, ".darkfactory/managed-repository.json", controlRevision);
   const manifest = parseManagedManifest(manifestText);
@@ -988,7 +988,7 @@ export async function auditManagedFileDrift(github, repository, targetRef, contr
         severity: "critical",
         repairClass: "blocked",
         evidence: releaseLaneIssue.html_url ? [{ label: `Issue #${releaseLaneIssue.number}`, url: releaseLaneIssue.html_url }] : [],
-        repair: ["Reconcile the canonical Andromeda-data managed manifest with DarkFactory #41 before any managed setup PR is created."]
+        repair: ["Reconcile the canonical private-data managed manifest with DarkFactory #41 before any managed setup PR is created."]
       }
     ));
   }
@@ -1037,7 +1037,7 @@ async function auditProjectOverlay(github, repository, targetRef, agentOsDataRev
     const actual = await getOptionalFileContent(github, repository, targetPath, targetRef);
     if (actual === null || normalizeText(actual) !== normalizeText(expected)) {
       findings.push(doctorFinding(`managed-project-overlay-${slug(targetPath)}`, "managed file drift", `Project overlay \`${targetPath}\` is ${actual === null ? "missing" : "drifted"}.`, {
-        severity: "error", repair: ["Reconcile from the repository-specific Andromeda-data overlay through managed setup."]
+        severity: "error", repair: ["Reconcile from the repository-specific private-data overlay through managed setup."]
       }));
     }
   }
@@ -1258,9 +1258,9 @@ export function auditMachineRuntimeEvidence(evidence) {
     repairClass: "auto",
     repair: [repair]
   }));
-  if (!observed.agentsHomeExists) blocked("agents-home-checkout-missing", "Canonical ANDROMEDA_HOME checkout is missing or inaccessible.", "Restore the canonical Andromeda-data checkout before machine convergence.");
+  if (!observed.agentsHomeExists) blocked("agents-home-checkout-missing", "Canonical ANDROMEDA_HOME checkout is missing or inaccessible.", "Restore the canonical private-data checkout before machine convergence.");
   if (!observed.stateDoctorOk) blocked("agents-state-doctor-failed", "Canonical Agent OS state doctor did not complete cleanly.", "Repair every canonical Agent OS state-doctor finding before DarkFactory may treat machine wiring as healthy.");
-  if (!observed.stateRepositoryOk) blocked("agents-home-checkout-invalid", "ANDROMEDA_HOME is not proven as the clean canonical Andromeda-data main checkout.", "Repair canonical state repository identity and tracked cleanliness through Agent OS.");
+  if (!observed.stateRepositoryOk) blocked("agents-home-checkout-invalid", "ANDROMEDA_HOME is not proven as the clean canonical private-data main checkout.", "Repair canonical state repository identity and tracked cleanliness through Agent OS.");
   if (!observed.launcherBound) blocked("canonical-launcher-binding-invalid", "Canonical Agent OS launcher binding is missing, unrunnable, or not bound to the observed state root.", "Repair the canonical launcher through Agent OS; never fall back to PATH selection.");
   if (!observed.versionObserved) blocked("canonical-launcher-version-unobservable", "Canonical launcher/source version is unobservable.", "Expose a stable Agent OS version/source-install receipt.");
   if (!observed.packageRegistered) automatic("darkfactory-package-unregistered", "DarkFactory is not registered in the canonical Agent OS package registry.", "Build the trusted landed package and register it through the exact canonical Agent OS launcher.");
@@ -1964,12 +1964,12 @@ export async function auditRetiredAuthorityNames(github, repository, ref) {
     {
       id: "retired-agents-data-repository-name",
       pattern: /marius-patrik\/(?:agents-data|agent-os-data)\b/i,
-      message: "Active authority still names the retired Agent OS data repository; canonical repository is `marius-patrik/Andromeda-data`."
+      message: "Active authority still names the retired Agent OS data repository; canonical repository is `marius-patrik/private-data`."
     },
     {
       id: "retired-agent-os-data-path",
       pattern: /(?:\$ANDROMEDA_ROOT|ANDROMEDA_ROOT|\.andromeda)\s*[\\/]data[\\/]agent-os\b/i,
-      message: "Active authority still names the retired nested Agent OS data path; canonical state is the `$ANDROMEDA_HOME` checkout of Andromeda-data."
+      message: "Active authority still names the retired nested Agent OS data path; canonical state is the `$ANDROMEDA_HOME` checkout of private-data."
     },
     {
       id: "retired-agents-manager-owner-name",
