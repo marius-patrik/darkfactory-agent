@@ -499,7 +499,7 @@ function securityNormalizedView(text: string): string {
 }
 
 export function defaultPromptsRoot(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "prompts");
+  return resolve(dirname(fileURLToPath(import.meta.url)), "prompts");
 }
 
 /** Extract the set of `{{ variable }}` placeholders used by a template. */
