@@ -6,7 +6,7 @@
       "state": "active",
       "note": "Canonical Andromeda source and product integration root."
     },
-    "marius-patrik/andromeda-data": {
+    "marius-patrik/private-data": {
       "state": "active",
       "note": "Canonical private Andromeda data and managed repository policy source."
     }

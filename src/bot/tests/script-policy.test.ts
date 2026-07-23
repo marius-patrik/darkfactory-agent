@@ -170,7 +170,7 @@ test("prdScaffoldPullRequestBody includes the scaffold marker and file list", ()
 
   assert.match(body, /<!-- dark-factory:prd-scaffold -->/);
   assert.match(body, /- `PRD.md`/);
-  assert.match(body, /- `packages\/core\/PRD.md`/);
+  assert.match(body, /- `src\/core\/PRD.md`/);
 });
 
 test("task class labels classify work without selecting model settings", () => {
