@@ -6,7 +6,8 @@ This product is licensed under the Apache License, Version 2.0.
 Andromeda incorporates or derives from the following source projects:
 
 - Frog/Froq/Grok agent harness and TUI, pinned at
-  8ca53649, Copyright 2023-2026 SpaceXAI, Apache-2.0. Its complete
+  8ca536491d725724151680ac7f467e9015368b21, Copyright 2023-2026
+  SpaceXAI, Apache-2.0. Its complete
   THIRD-PARTY-NOTICES file and vendored notices must remain with the imported
   source and binary distribution.
 - Understory, code pinned at

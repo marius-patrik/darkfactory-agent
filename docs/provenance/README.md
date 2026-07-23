@@ -6,7 +6,7 @@ and verification receipts for components folded into Andromeda.
 | Component | Imported source | History policy | License |
 | --- | --- | --- | --- |
 | Understory | `thecodacus/understory@912cfa6d4f407ffdb768bcd667bd701ccfe9ecb2` | Full ancestry through the code pin; later upstream license confirmation retained separately | Apache-2.0 |
-| Frog | `marius-patrik/Frog@8ca53649` | Full branches/tags preserved before exhaustive rename | Apache-2.0 plus bundled third-party notices |
+| Frog | `marius-patrik/Frog@8ca536491d725724151680ac7f467e9015368b21` | Full branches/tags preserved before exhaustive rename | Apache-2.0 plus bundled third-party notices |
 | AMS | `marius-patrik/accumulative-matrix-sweeping@c564fb9` | Full branches/tags preserved | Owner-relicensed Apache-2.0 |
 | PAES | `marius-patrik/PAES@68f3bb69df81a1ecdf88cd2a7daec567ab606f27` | Public history plus recovered enterprise archival lineage at `d235ac54a13828caac6129de30892d3ff4ff53a8` | Apache-2.0 |
 | Memory | `marius-patrik/Memory@af5a2e02b99cc004e30b338f60de60789ea45775` | Existing ancestry retained after reachability proof | Owner-relicensed Apache-2.0 |
