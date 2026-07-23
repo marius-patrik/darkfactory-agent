@@ -112,22 +112,108 @@ function canonicalFrontmatterValue(
     }
     return value;
   }
-  if (Array.isArray(value)) {
-    return value.map((member, index) =>
-      canonicalFrontmatterValue(member, `${field}[${index}]`, depth + 1, budget),
-    );
-  }
   if (typeof value === "object") {
-    const output: Record<string, MemoryFrontmatterValue> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort(compareMemoryText)) {
+    let isArray: boolean;
+    let prototype: object | null;
+    let keys: (string | symbol)[];
+    const descriptors = new Map<string | symbol, PropertyDescriptor>();
+    try {
+      isArray = Array.isArray(value);
+      prototype = Object.getPrototypeOf(value) as object | null;
+      keys = Reflect.ownKeys(value);
+      for (const key of keys) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+        if (!descriptor) throw new Error("missing property descriptor");
+        descriptors.set(key, descriptor);
+      }
+    } catch {
+      throw new MemoryConceptError(
+        `${field} cannot be inspected as a plain data value`,
+        "INVALID_FRONTMATTER",
+      );
+    }
+
+    if (isArray) {
+      if (prototype !== Array.prototype) {
+        throw new MemoryConceptError(`${field} must be a plain array`, "INVALID_FRONTMATTER");
+      }
+      const lengthDescriptor = descriptors.get("length");
+      if (
+        !lengthDescriptor ||
+        !("value" in lengthDescriptor) ||
+        lengthDescriptor.enumerable ||
+        !Number.isSafeInteger(lengthDescriptor.value) ||
+        lengthDescriptor.value < 0 ||
+        lengthDescriptor.value > MAX_MEMORY_FRONTMATTER_NODES
+      ) {
+        throw new MemoryConceptError(`${field} must be a bounded dense array`, "INVALID_FRONTMATTER");
+      }
+      const length = lengthDescriptor.value as number;
+      const indices = new Map<number, PropertyDescriptor>();
+      for (const key of keys) {
+        if (typeof key !== "string") {
+          throw new MemoryConceptError(`${field} contains a symbol key`, "INVALID_FRONTMATTER");
+        }
+        if (key === "length") continue;
+        const descriptor = descriptors.get(key)!;
+        const index = Number(key);
+        if (
+          !/^(?:0|[1-9][0-9]*)$/.test(key) ||
+          !Number.isSafeInteger(index) ||
+          index < 0 ||
+          index >= length ||
+          !descriptor.enumerable ||
+          !("value" in descriptor)
+        ) {
+          throw new MemoryConceptError(
+            `${field} must contain only enumerable data elements`,
+            "INVALID_FRONTMATTER",
+          );
+        }
+        indices.set(index, descriptor);
+      }
+      if (indices.size !== length) {
+        throw new MemoryConceptError(`${field} must be a bounded dense array`, "INVALID_FRONTMATTER");
+      }
+      const output: MemoryFrontmatterValue[] = [];
+      for (let index = 0; index < length; index += 1) {
+        const descriptor = indices.get(index);
+        if (!descriptor || !("value" in descriptor)) {
+          throw new MemoryConceptError(`${field} must be a bounded dense array`, "INVALID_FRONTMATTER");
+        }
+        output.push(
+          canonicalFrontmatterValue(descriptor.value, `${field}[${index}]`, depth + 1, budget),
+        );
+      }
+      return output;
+    }
+
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new MemoryConceptError(`${field} must be a plain object`, "INVALID_FRONTMATTER");
+    }
+    for (const key of keys) {
+      if (typeof key !== "string") {
+        throw new MemoryConceptError(`${field} contains a symbol key`, "INVALID_FRONTMATTER");
+      }
+      const descriptor = descriptors.get(key)!;
+      if (!descriptor.enumerable || !("value" in descriptor)) {
+        throw new MemoryConceptError(
+          `${field} must contain only enumerable data properties`,
+          "INVALID_FRONTMATTER",
+        );
+      }
       if (!key || FORBIDDEN_OBJECT_KEYS.has(key)) {
         throw new MemoryConceptError(`${field} contains forbidden key ${JSON.stringify(key)}`, "INVALID_FRONTMATTER");
       }
       if (Buffer.byteLength(key, "utf8") > MAX_MEMORY_FRONTMATTER_KEY_BYTES) {
         throw new MemoryConceptError(`${field} contains an oversized key`, "INVALID_FRONTMATTER");
       }
+    }
+    const output: Record<string, MemoryFrontmatterValue> = {};
+    for (const key of (keys as string[]).sort(compareMemoryText)) {
+      const descriptor = descriptors.get(key)!;
       output[key] = canonicalFrontmatterValue(
-        (value as Record<string, unknown>)[key],
+        descriptor.value,
         `${field}.${key}`,
         depth + 1,
         budget,

@@ -12,6 +12,7 @@ import {
   type CanonicalMemorySnapshot,
   type CanonicalMemoryTransaction,
   type LegacyMemorySource,
+  type MemoryFrontmatterValue,
 } from "../../engine/memory";
 
 function hash(value: string): string {
@@ -418,6 +419,100 @@ describe("Understory-derived canonical memory boundary", () => {
     }
   });
 
+  test("nested frontmatter must remain plain data for both put and patch admission", async () => {
+    const authority = new FakeCanonicalMemoryAuthority([
+      concept("/concepts/fact.md", "fact", "Fact", "Original.\n"),
+    ]);
+    const projection = new UnderstoryMemoryProjection();
+    const service = new UnderstoryMemoryService(authority, projection);
+    const options = {
+      actor: "memory-plugin:test",
+      evidence: { uri: "session://test/nested-validation", contentHash: hash("nested validation") },
+    };
+    let getterCalls = 0;
+    const accessor = {};
+    Object.defineProperty(accessor, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "must-not-run";
+      },
+    });
+    const customPrototype = Object.assign(Object.create({ inherited: "denied" }) as object, {
+      visible: "also-denied",
+    });
+    const symbolBearing = { visible: "denied" };
+    Object.defineProperty(symbolBearing, Symbol("hidden"), {
+      enumerable: true,
+      value: "denied",
+    });
+    const nonEnumerable = {};
+    Object.defineProperty(nonEnumerable, "hidden", {
+      enumerable: false,
+      value: "denied",
+    });
+    const revocable = Proxy.revocable({ visible: "denied" }, {});
+    revocable.revoke();
+    const nullPrototype = Object.assign(Object.create(null) as Record<string, MemoryFrontmatterValue>, {
+      visible: "accepted",
+    });
+    expect(
+      parseMemoryConcept({
+        path: "/concepts/null-prototype.md",
+        raw: serializeMemoryConcept(
+          { type: "fact", nested: nullPrototype },
+          "Null-prototype records remain valid plain data.\n",
+        ),
+      }).frontmatter.nested,
+    ).toEqual({ visible: "accepted" });
+    try {
+      const baseline = await service.refresh();
+      const reads = authority.readCalls;
+      const currentHash = hash(authority.snapshot.documents[0].raw);
+      for (const nested of [
+        accessor,
+        customPrototype,
+        symbolBearing,
+        nonEnumerable,
+        revocable.proxy,
+      ]) {
+        expect(() =>
+          service.update(
+            [
+              {
+                type: "put",
+                path: "/concepts/fact.md",
+                expectedContentHash: currentHash,
+                frontmatter: { type: "fact", nested },
+                body: "Candidate.\n",
+              },
+            ] as never,
+            options,
+          ),
+        ).toThrow(/plain object|enumerable data properties|symbol key|cannot be inspected/);
+        expect(() =>
+          service.update(
+            [
+              {
+                type: "patch",
+                path: "/concepts/fact.md",
+                expectedContentHash: currentHash,
+                frontmatter: { nested },
+              },
+            ] as never,
+            options,
+          ),
+        ).toThrow(/plain object|enumerable data properties|symbol key|cannot be inspected/);
+      }
+      expect(getterCalls).toBe(0);
+      expect(authority.readCalls).toBe(reads);
+      expect(authority.transactions).toHaveLength(0);
+      expect(projection.metadata()).toEqual(baseline);
+    } finally {
+      projection.close();
+    }
+  });
+
   test("FTS row tampering is discarded by deterministic projection admission", () => {
     const snapshot = {
       revision: "fts-authority",
@@ -427,7 +522,12 @@ describe("Understory-derived canonical memory boundary", () => {
     try {
       const baseline = projection.rebuild(snapshot);
       const database = (
-        projection as unknown as { database: { exec(statement: string): void } }
+        projection as unknown as {
+          database: {
+            exec(statement: string): void;
+            query(statement: string): { get(): unknown };
+          };
+        }
       ).database;
       database.exec("DELETE FROM concept_fts WHERE path = '/concepts/fact.md'");
       expect(projection.search("canonical searchable")).toEqual([]);
@@ -450,7 +550,12 @@ describe("Understory-derived canonical memory boundary", () => {
     try {
       const baseline = projection.rebuild(snapshot);
       const database = (
-        projection as unknown as { database: { exec(statement: string): void } }
+        projection as unknown as {
+          database: {
+            exec(statement: string): void;
+            query(statement: string): { get(): unknown };
+          };
+        }
       ).database;
       database.exec(`
         DELETE FROM links;
@@ -473,21 +578,108 @@ describe("Understory-derived canonical memory boundary", () => {
   test("projection schema and metadata corruption rebuild fail-closed from Markdown", () => {
     const snapshot = {
       revision: "schema-authority",
-      documents: [concept("/concepts/fact.md", "fact", "Fact", "Canonical.\n")],
+      documents: [
+        concept("/concepts/a.md", "fact", "A", "Canonical link to [B](/concepts/b.md).\n"),
+        concept("/concepts/b.md", "fact", "B", "Canonical target.\n"),
+      ],
     };
     const projection = new UnderstoryMemoryProjection();
     try {
       const baseline = projection.rebuild(snapshot);
       const database = (
-        projection as unknown as { database: { exec(statement: string): void } }
+        projection as unknown as {
+          database: {
+            exec(statement: string): void;
+            query(statement: string): { get(): unknown };
+          };
+        }
       ).database;
       database.exec("UPDATE projection_meta SET value = '999' WHERE key = 'schema_version'");
       expect(projection.metadata()).toBeNull();
       expect(projection.ensure(snapshot)).toEqual(baseline);
-      database.exec("DROP TABLE links");
+      database.exec(`
+        DROP TABLE links;
+        CREATE TABLE links (
+          source TEXT NOT NULL,
+          target TEXT NOT NULL
+        );
+        INSERT INTO links(source, target) VALUES ('/concepts/a.md', '/concepts/b.md');
+      `);
+      expect(projection.graph().edges).toEqual([
+        { source: "/concepts/a.md", target: "/concepts/b.md" },
+      ]);
+      expect(
+        (database.query("SELECT sql FROM sqlite_master WHERE name = 'links'").get() as { sql: string }).sql,
+      ).not.toContain("REFERENCES");
       expect(projection.ensure(snapshot)).toEqual(baseline);
+      const restoredLinksSql = (
+        database.query("SELECT sql FROM sqlite_master WHERE name = 'links'").get() as { sql: string }
+      ).sql;
+      expect(restoredLinksSql).toContain("REFERENCES concepts(path) ON DELETE CASCADE");
+      expect(restoredLinksSql).toContain("PRIMARY KEY (source, target)");
+      expect(restoredLinksSql).toContain("STRICT");
       expect(projection.metadata()).toEqual(baseline);
-      expect(projection.read("/concepts/fact.md")?.body).toBe("Canonical.\n");
+      expect(projection.graph().edges).toEqual([
+        { source: "/concepts/a.md", target: "/concepts/b.md" },
+      ]);
+      expect(projection.read("/concepts/a.md")?.body).toBe(
+        "Canonical link to [B](/concepts/b.md).\n",
+      );
+      database.exec("PRAGMA foreign_keys = OFF");
+      expect(database.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 0 });
+      expect(projection.ensure(snapshot)).toEqual(baseline);
+      expect(database.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+    } finally {
+      projection.close();
+    }
+  });
+
+  test("alternate FTS schema with identical rows is rejected and rebuilt", () => {
+    const snapshot = {
+      revision: "fts-schema-authority",
+      documents: [concept("/concepts/fact.md", "fact", "Fact", "Canonical searchable term.\n")],
+    };
+    const projection = new UnderstoryMemoryProjection();
+    try {
+      const baseline = projection.rebuild(snapshot);
+      const database = (
+        projection as unknown as {
+          database: {
+            exec(statement: string): void;
+            query(statement: string): { get(): unknown };
+          };
+        }
+      ).database;
+      database.exec(`
+        DROP TABLE concept_fts;
+        CREATE VIRTUAL TABLE concept_fts USING fts5(
+          path,
+          title,
+          description,
+          tags,
+          body,
+          tokenize = 'ascii'
+        );
+        INSERT INTO concept_fts(path, title, description, tags, body)
+        VALUES ('/concepts/fact.md', 'Fact', '', '', 'Canonical searchable term.\n');
+      `);
+      expect(projection.search("canonical searchable")[0]?.path).toBe("/concepts/fact.md");
+      expect(
+        (
+          database.query("SELECT sql FROM sqlite_master WHERE name = 'concept_fts'").get() as {
+            sql: string;
+          }
+        ).sql,
+      ).toContain("tokenize = 'ascii'");
+      expect(projection.ensure(snapshot)).toEqual(baseline);
+      expect(
+        (
+          database.query("SELECT sql FROM sqlite_master WHERE name = 'concept_fts'").get() as {
+            sql: string;
+          }
+        ).sql,
+      ).toContain("tokenize = 'unicode61 remove_diacritics 2'");
+      expect(projection.search("canonical searchable")[0]?.path).toBe("/concepts/fact.md");
     } finally {
       projection.close();
     }

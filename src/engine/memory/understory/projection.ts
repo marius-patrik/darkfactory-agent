@@ -32,6 +32,46 @@ const MAX_SEARCH_TERM_BYTES = 256;
 const MAX_SEARCH_FILTER_BYTES = 512;
 const MAX_SEARCH_TAGS = 128;
 
+const PROJECTION_SCHEMA_SQL = `
+  DROP TABLE IF EXISTS concept_fts;
+  DROP TABLE IF EXISTS broken_links;
+  DROP TABLE IF EXISTS links;
+  DROP TABLE IF EXISTS concepts;
+  DROP TABLE IF EXISTS projection_meta;
+  CREATE TABLE projection_meta (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+  ) STRICT;
+  CREATE TABLE concepts (
+    path TEXT PRIMARY KEY NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT,
+    description TEXT,
+    tags_json TEXT NOT NULL,
+    body TEXT NOT NULL,
+    raw TEXT NOT NULL,
+    content_hash TEXT NOT NULL
+  ) STRICT;
+  CREATE TABLE links (
+    source TEXT NOT NULL REFERENCES concepts(path) ON DELETE CASCADE,
+    target TEXT NOT NULL REFERENCES concepts(path) ON DELETE CASCADE,
+    PRIMARY KEY (source, target)
+  ) STRICT;
+  CREATE TABLE broken_links (
+    source TEXT NOT NULL REFERENCES concepts(path) ON DELETE CASCADE,
+    target TEXT NOT NULL,
+    PRIMARY KEY (source, target)
+  ) STRICT;
+  CREATE VIRTUAL TABLE concept_fts USING fts5(
+    path,
+    title,
+    description,
+    tags,
+    body,
+    tokenize = 'unicode61 remove_diacritics 2'
+  );
+`;
+
 interface StoredConcept {
   path: string;
   type: string;
@@ -54,6 +94,35 @@ interface StoredFtsConcept {
 interface ProjectionMetadataRow {
   key: string;
   value: string;
+}
+
+interface StoredSchemaObject {
+  type: string;
+  name: string;
+  tbl_name: string;
+  sql: string | null;
+}
+
+let cachedProjectionSchemaSignature: string | undefined;
+
+function projectionSchemaSignature(database: Database): string {
+  const rows = database
+    .query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
+    .all() as StoredSchemaObject[];
+  return JSON.stringify(rows);
+}
+
+function expectedProjectionSchemaSignature(): string {
+  if (cachedProjectionSchemaSignature !== undefined) return cachedProjectionSchemaSignature;
+  const reference = new Database(":memory:", { create: true, strict: true });
+  try {
+    reference.exec("PRAGMA foreign_keys = ON");
+    reference.exec(PROJECTION_SCHEMA_SQL);
+    cachedProjectionSchemaSignature = projectionSchemaSignature(reference);
+    return cachedProjectionSchemaSignature;
+  } finally {
+    reference.close();
+  }
 }
 
 function requiredRevision(value: string): string {
@@ -359,46 +428,12 @@ export class UnderstoryMemoryProjection {
     const concepts = parseCanonicalMemorySnapshot(snapshot);
     const digest = projectionDigest(snapshot, concepts);
     const graph = graphRows(concepts);
+    this.database.exec("PRAGMA foreign_keys = ON");
     const rebuild = this.database.transaction(() => {
-      this.database.exec(`
-        DROP TABLE IF EXISTS concept_fts;
-        DROP TABLE IF EXISTS broken_links;
-        DROP TABLE IF EXISTS links;
-        DROP TABLE IF EXISTS concepts;
-        DROP TABLE IF EXISTS projection_meta;
-        CREATE TABLE projection_meta (
-          key TEXT PRIMARY KEY NOT NULL,
-          value TEXT NOT NULL
-        ) STRICT;
-        CREATE TABLE concepts (
-          path TEXT PRIMARY KEY NOT NULL,
-          type TEXT NOT NULL,
-          title TEXT,
-          description TEXT,
-          tags_json TEXT NOT NULL,
-          body TEXT NOT NULL,
-          raw TEXT NOT NULL,
-          content_hash TEXT NOT NULL
-        ) STRICT;
-        CREATE TABLE links (
-          source TEXT NOT NULL REFERENCES concepts(path) ON DELETE CASCADE,
-          target TEXT NOT NULL REFERENCES concepts(path) ON DELETE CASCADE,
-          PRIMARY KEY (source, target)
-        ) STRICT;
-        CREATE TABLE broken_links (
-          source TEXT NOT NULL REFERENCES concepts(path) ON DELETE CASCADE,
-          target TEXT NOT NULL,
-          PRIMARY KEY (source, target)
-        ) STRICT;
-        CREATE VIRTUAL TABLE concept_fts USING fts5(
-          path,
-          title,
-          description,
-          tags,
-          body,
-          tokenize = 'unicode61 remove_diacritics 2'
-        );
-      `);
+      this.database.exec(PROJECTION_SCHEMA_SQL);
+      if (projectionSchemaSignature(this.database) !== expectedProjectionSchemaSignature()) {
+        throw new Error("memory projection schema did not rebuild exactly");
+      }
       const insertConcept = this.database.prepare(
         "INSERT INTO concepts(path, type, title, description, tags_json, body, raw, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       );
@@ -438,6 +473,9 @@ export class UnderstoryMemoryProjection {
     const concepts = parseCanonicalMemorySnapshot(snapshot);
     const expectedDigest = projectionDigest(snapshot, concepts);
     try {
+      if (projectionSchemaSignature(this.database) !== expectedProjectionSchemaSignature()) {
+        throw new Error("memory projection schema does not match the canonical derivative schema");
+      }
       const current = this.metadata();
       const expectedMetadata: ProjectionMetadataRow[] = [
         { key: "concept_count", value: String(concepts.length) },
@@ -475,6 +513,7 @@ export class UnderstoryMemoryProjection {
       const expectedConcepts = concepts.map(expectedStoredConcept);
       const expectedFts = concepts.map(expectedFtsConcept);
       const expectedGraph = graphRows(concepts);
+      const foreignKeysEnabled = this.database.query("PRAGMA foreign_keys").values() as unknown[][];
       const integrity = this.database.query("PRAGMA integrity_check").values() as unknown[][];
       const foreignKeyErrors = this.database.query("PRAGMA foreign_key_check").values() as unknown[][];
       // FTS5's integrity-check verifies the index, not only its externally visible content rows.
@@ -483,6 +522,9 @@ export class UnderstoryMemoryProjection {
         current?.revision === snapshot.revision &&
         current.digest === expectedDigest &&
         current.conceptCount === concepts.length &&
+        foreignKeysEnabled.length === 1 &&
+        foreignKeysEnabled[0]?.length === 1 &&
+        foreignKeysEnabled[0][0] === 1 &&
         integrity.length === 1 &&
         integrity[0]?.length === 1 &&
         integrity[0][0] === "ok" &&
