@@ -1069,7 +1069,7 @@ export async function auditRepositoryTree(repository, tree, options = {}) {
     const sensitive = lower.some((segment) => ["agents_secrets", "secrets"].includes(segment)) || /(^|\/)(auth\.json|\.env)$/i.test(filePath);
     const nestedGitMetadata = /(^|\/)\.git($|\/)/i.test(filePath) || (filePath !== ".gitmodules" && filePath.endsWith("/.gitmodules"));
 
-    if (!options.isData && (nestedAgents || nestedDarkFactory)) {
+    if (!options.isData && (nestedAgents || retiredStateRoot)) {
       findings.push(doctorFinding(`state-boundary-${slug(filePath)}`, "state boundary", `Repository-local control/state path \`${filePath}\` is outside the allowed root authority.`, { severity: "critical" }));
     }
     if (providerState || sensitive) {

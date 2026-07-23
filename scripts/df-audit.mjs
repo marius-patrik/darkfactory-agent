@@ -1066,14 +1066,14 @@ export async function auditRepositoryTree(repository, tree, options = {}) {
     // .agents is the retired state-root spelling and stays rejected outright.
     const allowedProjectAuthority = filePath === ".agents/project" || filePath.startsWith(".agents/project/");
     const allowedConfigAuthority = filePath === ".agents" || filePath.startsWith(".agents/");
-    const nestedAgents = lower.includes(".agents");
-    const nestedDarkFactory = lower.includes(".agents") && !allowedConfigAuthority && !allowedProjectAuthority;
+    const retiredStateRoot = lower.includes(".andromeda");
+    const nestedAgents = lower.includes(".agents") && !allowedConfigAuthority && !allowedProjectAuthority;
     const providerState = lower.some((segment) => PROVIDER_STATE_SEGMENTS.has(segment));
     const generated = lower.some((segment) => GENERATED_SEGMENTS.has(segment));
     const sensitive = lower.some((segment) => ["andromeda_secrets", "secrets"].includes(segment)) || /(^|\/)(auth\.json|\.env)$/i.test(filePath);
     const nestedGitMetadata = /(^|\/)\.git($|\/)/i.test(filePath) || (filePath !== ".gitmodules" && filePath.endsWith("/.gitmodules"));
 
-    if (!options.isData && (nestedAgents || nestedDarkFactory)) {
+    if (!options.isData && (nestedAgents || retiredStateRoot)) {
       findings.push(doctorFinding(`state-boundary-${slug(filePath)}`, "state boundary", `Repository-local control/state path \`${filePath}\` is outside the allowed root authority.`, { severity: "critical" }));
     }
     if (providerState || sensitive) {
