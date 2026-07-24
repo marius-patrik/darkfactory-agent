@@ -155,9 +155,10 @@ if (rootPackage.name !== "@marius-patrik/andromeda") {
 if (rootPackage.bin?.andromeda !== "./src/cli/cli.ts") {
   issues.push("root package.json must own the authoritative andromeda CLI entrypoint");
 }
-// Nothing may reintroduce the retired agents command as a bin alias.
-if (rootPackage.bin?.agents) {
-  issues.push("root package.json reintroduces the retired agents CLI alias");
+for (const alias of ["agent", "agents"]) {
+  if (rootPackage.bin?.[alias] !== rootPackage.bin?.andromeda) {
+    issues.push(`root package.json must map the ${alias} alias to the authoritative andromeda CLI entrypoint`);
+  }
 }
 
 // One package, no workspaces: the product is a single @marius-patrik/andromeda
@@ -199,7 +200,20 @@ const manifests = [];
 for (const relative of tracked.filter((name) => name.endsWith("agent.package.json") && !carriedTree(name))) {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, relative), "utf8"));
   manifests.push({ relative, manifest });
-  if (manifest.schemaVersion !== 1 || typeof manifest.id !== "string" || !manifest.id || manifest.kind === "agent") {
+  const validV1 = manifest.schemaVersion === 1;
+  const validV2 =
+    manifest.schemaVersion === 2 &&
+    typeof manifest.publisher === "string" &&
+    Boolean(manifest.publisher) &&
+    typeof manifest.version === "string" &&
+    Boolean(manifest.version) &&
+    typeof manifest.license === "string" &&
+    Boolean(manifest.license) &&
+    manifest.compatibility?.api === "2" &&
+    typeof manifest.runtime?.kind === "string" &&
+    manifest.contributions &&
+    manifest.permissions;
+  if ((!validV1 && !validV2) || typeof manifest.id !== "string" || !manifest.id || manifest.kind === "agent") {
     issues.push(`invalid canonical package manifest: ${relative}`);
   }
 }

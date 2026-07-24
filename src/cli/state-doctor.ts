@@ -530,10 +530,22 @@ export function launcherNameForPlatform(platform: NodeJS.Platform): string {
   return platform === "win32" ? "andromeda.ps1" : "andromeda";
 }
 
+export function launcherNamesForPlatform(
+  platform: NodeJS.Platform,
+): readonly [string, string, string] {
+  const suffix = platform === "win32" ? ".ps1" : "";
+  return [
+    `andromeda${suffix}`,
+    `agent${suffix}`,
+    `agents${suffix}`,
+  ];
+}
+
 async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
   const binDirectory = path.join(state.stateDir, "bin");
   const launcherName = launcherNameForPlatform(process.platform);
   const launcher = path.join(binDirectory, launcherName);
+  const launcherNames = launcherNamesForPlatform(process.platform);
   const windows = process.platform === "win32";
   const issues: string[] = [];
   try {
@@ -543,8 +555,15 @@ async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
       issues.push(`bin mode is ${modeString(directoryInfo.mode)}, expected 0o700`);
     }
     const entries = await readdir(binDirectory, { withFileTypes: true });
-    if (entries.length !== 1 || entries[0]?.name !== launcherName) {
-      issues.push(`bin must contain exactly one ${launcherName} launcher`);
+    const entryNames = entries.map((entry) => entry.name).sort();
+    const expectedNames = [...launcherNames].sort();
+    if (
+      entryNames.length !== expectedNames.length ||
+      entryNames.some((entry, index) => entry !== expectedNames[index])
+    ) {
+      issues.push(
+        `bin must contain exactly ${launcherNames.join(", ")}`,
+      );
     }
     const launcherInfo = await lstat(launcher);
     if (!launcherInfo.isFile() || launcherInfo.isSymbolicLink()) issues.push("andromeda launcher must be a physical file");
@@ -552,6 +571,22 @@ async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
       issues.push(`andromeda launcher mode is ${modeString(launcherInfo.mode)}, expected 0o700`);
     }
     const content = await readFile(launcher, "utf8");
+    for (const aliasName of launcherNames.slice(1)) {
+      const alias = path.join(binDirectory, aliasName);
+      const aliasInfo = await lstat(alias);
+      if (!aliasInfo.isFile() || aliasInfo.isSymbolicLink()) {
+        issues.push(`${aliasName} alias must be a physical file`);
+        continue;
+      }
+      if (!windows && (aliasInfo.mode & 0o777) !== 0o700) {
+        issues.push(
+          `${aliasName} alias mode is ${modeString(aliasInfo.mode)}, expected 0o700`,
+        );
+      }
+      if ((await readFile(alias, "utf8")) !== content) {
+        issues.push(`${aliasName} alias differs from ${launcherName}`);
+      }
+    }
     const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
     const powerShellQuote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
     for (const [name, value] of [
@@ -580,8 +615,17 @@ async function launcherCheck(state: SharedState): Promise<StateDoctorCheck> {
   return {
     id: "launcher",
     ok: issues.length === 0,
-    message: issues.length === 0 ? "one private launcher is bound to the canonical source and state roots" : "launcher layout or binding is invalid",
-    details: { launcher, issues },
+    message:
+      issues.length === 0
+        ? "andromeda, agent, and agents are exact aliases bound to canonical source and state roots"
+        : "launcher layout or binding is invalid",
+    details: {
+      launcher,
+      aliases: launcherNames.slice(1).map((name) =>
+        path.join(binDirectory, name),
+      ),
+      issues,
+    },
   };
 }
 

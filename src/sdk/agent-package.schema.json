@@ -1,0 +1,673 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://andromeda.dev/schemas/agent-package-v2.json",
+  "title": "Andromeda public plugin manifest",
+  "description": "Strict schema for declarative or WASI Andromeda plugins. Native executable and script runtimes are intentionally absent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "publisher",
+    "id",
+    "kind",
+    "version",
+    "license",
+    "compatibility",
+    "runtime",
+    "contributions",
+    "permissions"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 2
+    },
+    "publisher": {
+      "$ref": "#/$defs/id"
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "name": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "kind": {
+      "enum": [
+        "app",
+        "data",
+        "package",
+        "workspace",
+        "harness",
+        "cli",
+        "skill",
+        "plugin",
+        "hook",
+        "template"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$"
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9.:+() -]+$"
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "andromeda",
+        "api"
+      ],
+      "properties": {
+        "andromeda": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "api": {
+          "const": "2"
+        }
+      }
+    },
+    "description": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "runtime": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "declarative"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "module",
+            "sha256"
+          ],
+          "properties": {
+            "kind": {
+              "const": "wasi"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^(?=.{1,240}$)(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|/|$))[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?(?:/(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|/|$))[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)*\\.wasm$"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      ]
+    },
+    "contributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/agentContributions"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command"
+          }
+        },
+        "tui": {
+          "$ref": "#/$defs/tuiContributions"
+        },
+        "web": {
+          "$ref": "#/$defs/webContributions"
+        },
+        "server": {
+          "$ref": "#/$defs/serverContributions"
+        },
+        "models": {
+          "$ref": "#/$defs/descriptorList"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "commands"
+          ],
+          "properties": {
+            "commands": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "models"
+          ],
+          "properties": {
+            "models": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "agent"
+          ],
+          "properties": {
+            "agent": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "required": [
+                    "tools"
+                  ],
+                  "properties": {
+                    "tools": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "skills"
+                  ],
+                  "properties": {
+                    "skills": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "roles"
+                  ],
+                  "properties": {
+                    "roles": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "hooks"
+                  ],
+                  "properties": {
+                    "hooks": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "tui"
+          ],
+          "properties": {
+            "tui": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "required": [
+                    "actions"
+                  ],
+                  "properties": {
+                    "actions": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "panels"
+                  ],
+                  "properties": {
+                    "panels": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "web"
+          ],
+          "properties": {
+            "web": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "required": [
+                    "routes"
+                  ],
+                  "properties": {
+                    "routes": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "panels"
+                  ],
+                  "properties": {
+                    "panels": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "settings"
+                  ],
+                  "properties": {
+                    "settings": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "server"
+          ],
+          "properties": {
+            "server": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "required": [
+                    "routes"
+                  ],
+                  "properties": {
+                    "routes": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "jobs"
+                  ],
+                  "properties": {
+                    "jobs": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "events"
+                  ],
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaces",
+        "sessions",
+        "memory",
+        "models",
+        "networkOrigins",
+        "secrets",
+        "clipboard",
+        "notifications",
+        "externalUrls"
+      ],
+      "properties": {
+        "workspaces": {
+          "$ref": "#/$defs/resourcePermission"
+        },
+        "sessions": {
+          "$ref": "#/$defs/resourcePermission"
+        },
+        "memory": {
+          "$ref": "#/$defs/resourcePermission"
+        },
+        "models": {
+          "$ref": "#/$defs/stringList"
+        },
+        "networkOrigins": {
+          "$ref": "#/$defs/stringList"
+        },
+        "secrets": {
+          "$ref": "#/$defs/stringList"
+        },
+        "clipboard": {
+          "$ref": "#/$defs/resourcePermission"
+        },
+        "notifications": {
+          "type": "boolean"
+        },
+        "externalUrls": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "declarative"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "runtime"
+        ]
+      },
+      "then": {
+        "properties": {
+          "contributions": {
+            "type": "object",
+            "properties": {
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "handler": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "declarative"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "wasi"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "runtime"
+        ]
+      },
+      "then": {
+        "properties": {
+          "contributions": {
+            "type": "object",
+            "properties": {
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "handler": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "wasi"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "commandName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "resourcePermission": {
+      "enum": [
+        "none",
+        "read",
+        "write"
+      ]
+    },
+    "stringList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "descriptor"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "descriptor": {
+          "type": "string",
+          "pattern": "^(?=.{1,240}$)(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|/|$))[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?(?:/(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|/|$))[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)*\\.json$"
+        }
+      }
+    },
+    "descriptorList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/descriptor"
+      }
+    },
+    "agentContributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "skills": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "roles": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "hooks": {
+          "$ref": "#/$defs/descriptorList"
+        }
+      }
+    },
+    "tuiContributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "panels": {
+          "$ref": "#/$defs/descriptorList"
+        }
+      }
+    },
+    "webContributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "panels": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "settings": {
+          "$ref": "#/$defs/descriptorList"
+        }
+      }
+    },
+    "serverContributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "jobs": {
+          "$ref": "#/$defs/descriptorList"
+        },
+        "events": {
+          "$ref": "#/$defs/descriptorList"
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "description",
+        "handler"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/commandName"
+        },
+        "description": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/commandName"
+          }
+        },
+        "requestedTopLevelAlias": {
+          "$ref": "#/$defs/commandName"
+        },
+        "handler": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "action"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "declarative"
+                },
+                "action": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9._:/-]{0,191}$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "export"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "wasi"
+                },
+                "export": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

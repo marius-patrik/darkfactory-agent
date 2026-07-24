@@ -71,6 +71,19 @@
       ]
     },
     {
+      "id": "command-registry",
+      "path": "src/commands",
+      "suite": "commands",
+      "platforms": [
+        "ubuntu-latest",
+        "windows-latest"
+      ],
+      "requiredPaths": [
+        "src/commands/registry.ts",
+        "src/commands/test/registry.test.ts"
+      ]
+    },
+    {
       "id": "memory-plugin",
       "path": "src/memory",
       "suite": "memory-plugin",

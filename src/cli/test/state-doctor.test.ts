@@ -3,11 +3,19 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeF
 import os from "node:os";
 import path from "node:path";
 import { ensureSharedState, sharedStateAt, systemDataPath } from "../state";
-import { doctorState, formatStateDoctor, launcherNameForPlatform } from "../state-doctor";
+import {
+  doctorState,
+  formatStateDoctor,
+  launcherNameForPlatform,
+  launcherNamesForPlatform,
+} from "../state-doctor";
 import { readStateManifest, stateV2Paths } from "../state-v2";
 import { toolCanonicalPath, toolForbiddenPath } from "../state-consolidation";
 import { rebuildMemoryProjections, rememberMemory, type MemoryEvent } from "../memory";
-import { activateIdentityBundle, installCapability } from "../capabilities";
+import {
+  activateIdentityBundle,
+  importBundledLegacySkill,
+} from "../capabilities";
 import { recordSourceInstall } from "../source-install";
 import { enableEventSync } from "../event-sync";
 import { createSession, rebuildSessionProjections, sessionPaths } from "../../sdk/harness/session";
@@ -50,8 +58,7 @@ async function ensureDoctorProduct(state: ReturnType<typeof tempState>): Promise
   await git(state.stateDir, ["commit", "-q", "-m", "state fixture"]);
   await ensureSharedState(state);
   await enableEventSync(state, true);
-  await installCapability(state, {
-    kind: "skill",
+  await importBundledLegacySkill(state, {
     name: "test",
     source: path.join(sourceRoot, ".agents", "global", "skills", "test"),
   });
@@ -79,18 +86,33 @@ async function ensureDoctorProduct(state: ReturnType<typeof tempState>): Promise
     launcherContent,
     { mode: 0o700 },
   );
+  for (const aliasName of launcherNamesForPlatform(process.platform).slice(1)) {
+    await copyFile(launcher, path.join(bin, aliasName));
+  }
   if (process.platform !== "win32") {
     await chmod(bin, 0o700);
-    await chmod(launcher, 0o700);
+    for (const name of launcherNamesForPlatform(process.platform)) {
+      await chmod(path.join(bin, name), 0o700);
+    }
   }
   await recordSourceInstall(state);
 }
 
 describe("read-only Agent OS state doctor", () => {
-  test("selects one platform-native launcher name", () => {
+  test("launcher regression primary: selects the canonical platform launcher and exact aliases", () => {
     expect(launcherNameForPlatform("win32")).toBe("andromeda.ps1");
     expect(launcherNameForPlatform("darwin")).toBe("andromeda");
     expect(launcherNameForPlatform("linux")).toBe("andromeda");
+    expect(launcherNamesForPlatform("win32")).toEqual([
+      "andromeda.ps1",
+      "agent.ps1",
+      "agents.ps1",
+    ]);
+    expect(launcherNamesForPlatform("linux")).toEqual([
+      "andromeda",
+      "agent",
+      "agents",
+    ]);
   });
   test("does not initialize or create files while diagnosing missing state", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-doctor-empty-"));
@@ -348,7 +370,7 @@ describe("read-only Agent OS state doctor", () => {
     }
   });
 
-  test("fails when source provenance, launcher cardinality, or a canonical registry drifts", async () => {
+  test("launcher regression denied: extra launchers still fail with other product drift", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-doctor-product-drift-"));
     try {
       const state = tempState(root);
@@ -362,6 +384,32 @@ describe("read-only Agent OS state doctor", () => {
       expect(report.checks.find((item) => item.id === "source_install")?.ok).toBe(false);
       expect(report.checks.find((item) => item.id === "launcher")?.ok).toBe(false);
       expect(report.checks.find((item) => item.id === "registry_integrity")?.ok).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("launcher regression edge: a non-identical alias fails closed", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agents-doctor-alias-drift-"));
+    try {
+      const state = tempState(root);
+      await ensureDoctorProduct(state);
+      const alias = launcherNamesForPlatform(process.platform)[1];
+      await writeFile(
+        path.join(state.stateDir, "bin", alias),
+        process.platform === "win32"
+          ? "Write-Output 'drift'\n"
+          : "#!/usr/bin/env bash\necho drift\n",
+        { mode: 0o700 },
+      );
+
+      const report = await doctorState(state);
+      const check = report.checks.find((item) => item.id === "launcher");
+      expect(report.ok).toBe(false);
+      expect(check?.ok).toBe(false);
+      expect(JSON.stringify(check?.details)).toContain(
+        `${alias} alias differs`,
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

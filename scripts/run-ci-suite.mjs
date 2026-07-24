@@ -71,6 +71,7 @@ function runGatewayPytest(marker) {
 export const CI_SUITE_NAMES = Object.freeze([
   "inventory",
   "core",
+  "commands",
   "gateway",
   "gateway-real",
   "engine-real",
@@ -112,6 +113,16 @@ const suites = {
     run("core Go contracts", "go", ["test", "./..."], {
       cwd: path.join(root, "src", "sdk", "contracts-go"),
     });
+  },
+  commands() {
+    run("command registry types", "bun", [
+      "./node_modules/typescript/bin/tsc",
+      "--noEmit",
+    ]);
+    run("command registry tests", "bun", [
+      "test",
+      ...discoverBunTests(path.join("src", "commands", "test")),
+    ]);
   },
   gateway() {
     requireUv();

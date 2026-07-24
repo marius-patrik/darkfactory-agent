@@ -8,30 +8,31 @@ import { convergeMachineRuntime, type MachineProcessRunner } from "../machine-se
 
 const LANDED_REVISION = "a".repeat(40);
 
-test("machine setup builds and registers the exact package before proving its CLI binding", async () => {
+test("machine setup refuses legacy package binding before build or registration", async () => {
   await withFixture(async ({ agentsHome, packageRoot }) => {
     const calls: string[] = [];
-    const run = fixtureRunner(calls, { packageRegistered: true });
-    const receipts = await convergeMachineRuntime({
-      agentsHome,
-      packageRoot,
-      findingIds: ["darkfactory-package-unregistered", "darkfactory-command-unrunnable"],
-      platform: "win32",
-      run
-    });
+    const run = fixtureRunner(calls, {});
+    await assert.rejects(
+      convergeMachineRuntime({
+        agentsHome,
+        packageRoot,
+        findingIds: [
+          "darkfactory-package-unregistered",
+          "darkfactory-command-unrunnable"
+        ],
+        platform: "win32",
+        run
+      }),
+      /legacy DarkFactory package binding .* is disabled/
+    );
 
     assert.deepEqual(calls, [
       "git rev-parse HEAD",
       "git status --porcelain",
       "git remote get-url origin",
       "git ls-remote --exit-code origin refs/heads/main",
-      "pwsh -NoProfile -File launcher state doctor --json",
-      "npm.cmd run build",
-      `pwsh -NoProfile -File launcher packages register ${packageRoot}`,
-      "pwsh -NoProfile -File launcher packages list --json",
-      "pwsh -NoProfile -File launcher packages run darkfactory -- --help"
+      "pwsh -NoProfile -File launcher state doctor --json"
     ]);
-    assert.equal(receipts[0]?.action, "machine-package-binding");
   });
 });
 
@@ -130,7 +131,6 @@ function fixtureRunner(
   calls: string[],
   options: {
     stateHealthy?: boolean;
-    packageRegistered?: boolean;
     runnerInstalled?: boolean;
     packageOrigin?: string;
     packageDirty?: boolean;
@@ -149,12 +149,6 @@ function fixtureRunner(
     if (args.includes("doctor")) {
       const healthy = options.stateHealthy !== false;
       return result({ ok: healthy, checks: [{ id: "state_repository", ok: healthy }, { id: "launcher", ok: healthy }] }, healthy ? 0 : 1);
-    }
-    if (args.includes("list") && args.includes("packages")) {
-      const registrationPath = args.includes("list") && options.packageRegistered !== false
-        ? calls.find((call) => call.includes(" packages register "))?.split(" packages register ")[1]
-        : null;
-      return result(registrationPath ? [{ id: "darkfactory", path: registrationPath }] : []);
     }
     if (args.includes("status") && args.includes("runner")) {
       const installed = runnerConverged || options.runnerInstalled !== false;

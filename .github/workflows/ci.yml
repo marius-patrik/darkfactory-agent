@@ -26,6 +26,12 @@ jobs:
           - suite: core
             runner: windows-latest
             label: core platform
+          - suite: commands
+            runner: ubuntu-latest
+            label: command registry
+          - suite: commands
+            runner: windows-latest
+            label: command registry platform
           - suite: gateway
             runner: ubuntu-latest
             label: gateway

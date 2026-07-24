@@ -51,8 +51,14 @@ within_sandbox "$ANDROMEDA_ROOT" || die "ANDROMEDA_ROOT escapes the disposable s
 [ "$ANDROMEDA_HOME" != "/Users/user/.agents" ] || die "refusing to smoke-test against live personal state"
 
 case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) launcher="$ANDROMEDA_HOME/bin/andromeda.ps1" ;;
-  *) launcher="$ANDROMEDA_HOME/bin/andromeda" ;;
+  MINGW*|MSYS*|CYGWIN*)
+    launcher="$ANDROMEDA_HOME/bin/andromeda.ps1"
+    launcher_aliases=("$ANDROMEDA_HOME/bin/agent.ps1" "$ANDROMEDA_HOME/bin/agents.ps1")
+    ;;
+  *)
+    launcher="$ANDROMEDA_HOME/bin/andromeda"
+    launcher_aliases=("$ANDROMEDA_HOME/bin/agent" "$ANDROMEDA_HOME/bin/agents")
+    ;;
 esac
 
 invoke_launcher() {
@@ -61,15 +67,24 @@ invoke_launcher() {
     *) "$launcher" "$@" ;;
   esac
 }
-[ -f "$launcher" ] || die "agents launcher is missing: $launcher"
-[ ! -L "$launcher" ] || die "agents launcher must be a regular file, not a symlink"
+[ -f "$launcher" ] || die "andromeda launcher is missing: $launcher"
+[ ! -L "$launcher" ] || die "andromeda launcher must be a regular file, not a symlink"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) ;;
-  *) [ -x "$launcher" ] || die "agents launcher is not executable" ;;
+  *) [ -x "$launcher" ] || die "andromeda launcher is not executable" ;;
 esac
+for alias in "${launcher_aliases[@]}"; do
+  [ -f "$alias" ] || die "command alias is missing: $alias"
+  [ ! -L "$alias" ] || die "command alias must be a regular file, not a symlink: $alias"
+  cmp -s "$launcher" "$alias" || die "command alias differs from the andromeda launcher: $alias"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *) [ -x "$alias" ] || die "command alias is not executable: $alias" ;;
+  esac
+done
 
 entry_count="$(find "$ANDROMEDA_HOME/bin" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')"
-[ "$entry_count" = "1" ] || die "ANDROMEDA_HOME/bin must contain only the agents launcher"
+[ "$entry_count" = "3" ] || die "ANDROMEDA_HOME/bin must contain exactly andromeda, agent, and agents"
 
 while IFS= read -r component_path; do
   [ -n "$component_path" ] || continue

@@ -223,7 +223,6 @@ agents identity activate <source-directory> [--replace]
 agents cli list|doctor
 agents cli pin [codex|claude|kimi|agy|all]
 agents cli env <codex|claude|kimi|agy>
-agents packages register <path>
 agents packages list [--json]
 agents packages run <name-or-path> -- <args...>
 agents packages distro <define|install|upgrade|remove> ...
@@ -242,7 +241,7 @@ agents harness run <name> -- <args...>
 agents session run --provider <id> --model <model> [--mode chat|task] [--session <id>] [--stream] <prompt>
 agents session list [--json]
 agents session show <id> [--json]
-agents install <skill|plugin|hook|template|cli|harness> <name> <source-path-or-git-url> [--replace]
+agents install <skill|plugin|hook|template|cli|harness> <publisher/id> <source-path-or-git-url> [--replace]
 agents installs [--json]
 agents secrets list [--json]
 agents secrets set <NAME> [--from-file path]

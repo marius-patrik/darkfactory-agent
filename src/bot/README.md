@@ -78,9 +78,13 @@ To install the app on every repository, use the GitHub App installation UI and c
 ```powershell
 npm ci
 npm run build
-agents packages register src/darkfactory
 agents state doctor
 ```
+
+Direct package registration is disabled. DarkFactory remains an internal
+legacy package until its service is rewritten for schema v2 atomic
+installation; machine setup fails closed instead of registering that mutable
+native checkout.
 
 Store local secrets through Agent OS. Secret values are not printed by the manager:
 

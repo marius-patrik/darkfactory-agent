@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   cp,
   lstat,
@@ -14,6 +15,8 @@ import os from "node:os";
 import path from "node:path";
 import {
   activateIdentityBundle,
+  importBundledLegacySkill,
+  inspectCapabilityIntegrity,
   installCapability,
   type CapabilityPublicationBoundary,
 } from "../capabilities";
@@ -22,7 +25,9 @@ import {
   readInstalls,
   sharedState,
 } from "../state";
-import { readPackageRegistrations } from "../packages";
+import {
+  readPackageRegistrations,
+} from "../packages";
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 const cliPath = path.join(repoRoot, "cli.ts");
@@ -109,16 +114,65 @@ async function snapshotTree(root: string): Promise<SnapshotEntry[]> {
 async function writeSkillFixture(
   root: string,
   description: string,
+  publisher = "andromeda-test",
+  id = "probe",
 ): Promise<void> {
   await mkdir(root, { recursive: true });
   await Bun.write(
     path.join(root, "SKILL.md"),
-    `---\nname: probe\ndescription: "${description}"\n---\n\n# ${description}\n`,
+    `---\nname: ${id}\ndescription: "${description}"\n---\n\n# ${description}\n`,
   );
   await Bun.write(
     path.join(root, "agent.package.json"),
-    `${JSON.stringify({ schemaVersion: 1, id: "probe", kind: "skill", description })}\n`,
+    `${JSON.stringify(publicCapabilityManifest(id, "skill", publisher))}\n`,
   );
+}
+
+function publicCapabilityManifest(
+  id: string,
+  kind: "skill" | "plugin" | "hook" | "template" | "cli" | "harness",
+  publisher = "andromeda-test",
+) {
+  return {
+    schemaVersion: 2,
+    publisher,
+    id,
+    name: `${publisher}/${id}`,
+    kind,
+    version: "1.0.0",
+    license: "Apache-2.0",
+    compatibility: {
+      andromeda: ">=0.10.0 <2.0.0",
+      api: "2",
+    },
+    runtime: {
+      kind: "declarative",
+    },
+    contributions: {
+      commands: [
+        {
+          id: "probe",
+          name: "probe",
+          description: "Run the probe.",
+          handler: {
+            kind: "declarative",
+            action: "probe.run",
+          },
+        },
+      ],
+    },
+    permissions: {
+      workspaces: "none",
+      sessions: "none",
+      memory: "none",
+      models: [],
+      networkOrigins: [],
+      secrets: [],
+      clipboard: "none",
+      notifications: false,
+      externalUrls: [],
+    },
+  };
 }
 
 async function writeIdentityFixture(
@@ -143,25 +197,22 @@ describe("install CLI", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-install-"));
     try {
       const source = path.join(root, "source-skill");
-      await mkdir(source, { recursive: true });
-      await Bun.write(
-        path.join(source, "SKILL.md"),
-        '---\nname: probe\ndescription: "A deterministic probe."\n---\n\n# Probe skill\n',
-      );
+      await writeSkillFixture(source, "A deterministic probe.");
+      const identity = "andromeda-test/probe";
 
       const install = await runAgents(root, [
         "install",
         "skill",
-        "probe",
+        identity,
         source,
       ]);
       expect(install.code).toBe(0);
-      expect(install.stdout).toContain("installed skill probe sha256=");
+      expect(install.stdout).toContain(`installed skill ${identity} sha256=`);
+      const installs = await readInstalls(sharedState(root));
+      expect(installs).toHaveLength(1);
       expect(
-        await Bun.file(
-          path.join(root, ".agents", "skills", "probe", "SKILL.md"),
-        ).text(),
-      ).toContain("# Probe skill");
+        await Bun.file(path.join(installs[0].path, "SKILL.md")).text(),
+      ).toContain("# A deterministic probe.");
       const registryBefore = await Bun.file(
         path.join(root, ".agents", "installs.json"),
       ).text();
@@ -169,19 +220,17 @@ describe("install CLI", () => {
       const duplicate = await runAgents(root, [
         "install",
         "skill",
-        "probe",
+        identity,
         source,
       ]);
       expect(duplicate.code).toBe(0);
-      expect(duplicate.stdout).toContain("verified skill probe sha256=");
+      expect(duplicate.stdout).toContain(`verified skill ${identity} sha256=`);
       expect(
         await Bun.file(path.join(root, ".agents", "installs.json")).text(),
       ).toBe(registryBefore);
 
-      const installs = await readInstalls(sharedState(root));
-      expect(installs).toHaveLength(1);
       expect(installs[0].kind).toBe("skill");
-      expect(installs[0].name).toBe("probe");
+      expect(installs[0].name).toBe(identity);
       expect(installs[0].sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(
         await Bun.file(
@@ -222,14 +271,11 @@ describe("install CLI", () => {
     );
     try {
       const source = path.join(root, "source-skill");
-      await mkdir(source, { recursive: true });
+      await writeSkillFixture(source, "First.");
       const skillFile = path.join(source, "SKILL.md");
-      await Bun.write(
-        skillFile,
-        '---\nname: probe\ndescription: "First."\n---\n',
-      );
+      const identity = "andromeda-test/probe";
       expect(
-        (await runAgents(root, ["install", "skill", "probe", source])).code,
+        (await runAgents(root, ["install", "skill", identity, source])).code,
       ).toBe(0);
       const firstHash = (await readInstalls(sharedState(root)))[0].sha256;
 
@@ -240,7 +286,7 @@ describe("install CLI", () => {
       const conflict = await runAgents(root, [
         "install",
         "skill",
-        "probe",
+        identity,
         source,
       ]);
       expect(conflict.code).toBe(1);
@@ -252,12 +298,14 @@ describe("install CLI", () => {
       const replacement = await runAgents(root, [
         "install",
         "skill",
-        "probe",
+        identity,
         source,
         "--replace",
       ]);
       expect(replacement.code).toBe(0);
-      expect(replacement.stdout).toContain("replaced skill probe sha256=");
+      expect(replacement.stdout).toContain(
+        `replaced skill ${identity} sha256=`,
+      );
       const next = (await readInstalls(sharedState(root)))[0];
       expect(next.sha256).not.toBe(firstHash);
       expect(await Bun.file(path.join(next.path, "SKILL.md")).text()).toContain(
@@ -276,10 +324,14 @@ describe("install CLI", () => {
       const malformed = path.join(root, "malformed");
       await mkdir(malformed, { recursive: true });
       await Bun.write(path.join(malformed, "SKILL.md"), "# No frontmatter\n");
+      await Bun.write(
+        path.join(malformed, "agent.package.json"),
+        JSON.stringify(publicCapabilityManifest("malformed", "skill")),
+      );
       const malformedResult = await runAgents(root, [
         "install",
         "skill",
-        "malformed",
+        "andromeda-test/malformed",
         malformed,
       ]);
       expect(malformedResult.code).toBe(1);
@@ -289,13 +341,13 @@ describe("install CLI", () => {
       await mkdir(secret, { recursive: true });
       await Bun.write(
         path.join(secret, "agent.package.json"),
-        '{"schemaVersion":1,"id":"secret","kind":"plugin"}\n',
+        JSON.stringify(publicCapabilityManifest("secret", "plugin")),
       );
       await Bun.write(path.join(secret, "auth.json"), "{}\n");
       const secretResult = await runAgents(root, [
         "install",
         "plugin",
-        "secret",
+        "andromeda-test/secret",
         secret,
       ]);
       expect(secretResult.code).toBe(1);
@@ -306,7 +358,7 @@ describe("install CLI", () => {
         await mkdir(linked, { recursive: true });
         await Bun.write(
           path.join(linked, "agent.package.json"),
-          '{"schemaVersion":1,"id":"linked","kind":"plugin"}\n',
+          JSON.stringify(publicCapabilityManifest("linked", "plugin")),
         );
         await symlink(
           path.join(linked, "agent.package.json"),
@@ -315,7 +367,7 @@ describe("install CLI", () => {
         const linkedResult = await runAgents(root, [
           "install",
           "plugin",
-          "linked",
+          "andromeda-test/linked",
           linked,
         ]);
         expect(linkedResult.code).toBe(1);
@@ -323,16 +375,8 @@ describe("install CLI", () => {
       }
 
       expect(await readInstalls(sharedState(root))).toEqual([]);
-      expect(
-        await Bun.file(
-          path.join(root, ".agents", "skills", "malformed"),
-        ).exists(),
-      ).toBe(false);
-      expect(
-        await Bun.file(
-          path.join(root, ".agents", "plugins", "secret"),
-        ).exists(),
-      ).toBe(false);
+      expect(await readdir(path.join(root, ".agents", "skills"))).toEqual([]);
+      expect(await readdir(path.join(root, ".agents", "plugins"))).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -347,30 +391,334 @@ describe("install CLI", () => {
       await mkdir(source, { recursive: true });
       await Bun.write(
         path.join(source, "agent.package.json"),
-        JSON.stringify({
-          schemaVersion: 1,
-          id: "probe-harness",
-          kind: "harness",
-          entry: `${process.execPath} probe.ts`,
-          requires: { clis: [], state: ["credits"] },
-        }),
+        JSON.stringify(publicCapabilityManifest("probe-harness", "harness")),
       );
 
       const install = await runAgents(root, [
         "install",
         "harness",
-        "probe-harness",
+        "andromeda-test/probe-harness",
         source,
       ]);
       expect(install.code).toBe(0);
 
       const registrations = await readPackageRegistrations(sharedState(root));
       expect(registrations).toHaveLength(1);
-      expect(registrations[0].id).toBe("probe-harness");
+      expect(registrations[0].id).toBe("andromeda-test/probe-harness");
       expect(registrations[0].kind).toBe("harness");
-      expect(registrations[0].path).toBe(
-        path.join(root, ".agents", "harnesses", "probe-harness"),
+      expect(path.dirname(registrations[0].path)).toBe(
+        path.join(root, ".agents", "harnesses"),
       );
+      expect(path.basename(registrations[0].path)).toMatch(/^v2-[a-f0-9]{64}$/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects direct registration of an invalid payload before state mutation", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "agents-package-register-invalid-"),
+    );
+    try {
+      const invalid = path.join(root, "invalid-package");
+      await mkdir(invalid, { recursive: true });
+      const manifest = publicCapabilityManifest("invalid", "plugin");
+      (manifest as any).runtime = {
+        kind: "wasi",
+        module: "runtime/missing.wasm",
+        sha256: "f".repeat(64),
+      };
+      (manifest.contributions.commands[0] as any).handler = {
+        kind: "wasi",
+        export: "missing",
+      };
+      await Bun.write(
+        path.join(invalid, "agent.package.json"),
+        JSON.stringify(manifest),
+      );
+      const rejected = await runAgents(root, [
+        "packages",
+        "register",
+        invalid,
+      ]);
+      expect(rejected.code).toBe(1);
+      expect(rejected.stderr).toContain(
+        "packages register is disabled; use andromeda install",
+      );
+      expect(
+        await Bun.file(path.join(root, ".agents")).exists(),
+      ).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("serializes concurrent installs whose requested command aliases collide", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "agents-package-install-race-"),
+    );
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const identitySource = path.join(root, "identity-source");
+      await writeIdentityFixture(identitySource, "Concurrent install test.");
+      await activateIdentityBundle(state, identitySource, { replace: true });
+      await rm(identitySource, { recursive: true, force: true });
+      const candidates = [
+        { id: "candidate-a", source: path.join(root, "candidate-a") },
+        { id: "candidate-b", source: path.join(root, "candidate-b") },
+      ];
+      for (const { id, source } of candidates) {
+        await mkdir(source, { recursive: true });
+        const manifest = publicCapabilityManifest(
+          id,
+          "plugin",
+          "collision",
+        );
+        (
+          manifest.contributions.commands[0] as
+            typeof manifest.contributions.commands[number] & {
+              requestedTopLevelAlias: string;
+            }
+        ).requestedTopLevelAlias = "shared-probe";
+        await Bun.write(
+          path.join(source, "agent.package.json"),
+          JSON.stringify(manifest),
+        );
+      }
+      const results = await Promise.allSettled(
+        candidates.map(({ id, source }) =>
+          installCapability(state, {
+            kind: "plugin",
+            name: `collision/${id}`,
+            source,
+          }),
+        ),
+      );
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      const rejection = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      expect(String(rejection?.reason)).toContain(
+        "command token collision: shared-probe",
+      );
+
+      const installs = await readInstalls(state);
+      const registrations = await readPackageRegistrations(state);
+      expect(installs).toHaveLength(1);
+      expect(registrations).toHaveLength(1);
+      expect(registrations[0]).toMatchObject({
+        id: installs[0].name,
+        kind: installs[0].kind,
+        source: installs[0].source,
+        path: installs[0].path,
+      });
+      const inspection = await inspectCapabilityIntegrity(state);
+      expect(inspection).toMatchObject({
+        ok: true,
+        installs: 1,
+        storeObjects: 2,
+      });
+      expect(inspection.issues).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps equal package ids from different publishers distinct in state and on disk", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "agents-install-qualified-id-"),
+    );
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      for (const publisher of ["alpha", "beta"]) {
+        const source = path.join(root, `${publisher}-shared`);
+        await mkdir(source, { recursive: true });
+        await Bun.write(
+          path.join(source, "agent.package.json"),
+          JSON.stringify(
+            publicCapabilityManifest("shared", "plugin", publisher),
+          ),
+        );
+        await expect(
+          installCapability(state, {
+            kind: "plugin",
+            name: `${publisher}/shared`,
+            source,
+          }),
+        ).resolves.toMatchObject({ changed: true, replaced: false });
+      }
+
+      const installs = await readInstalls(state);
+      expect(installs.map((item) => item.name).sort()).toEqual([
+        "alpha/shared",
+        "beta/shared",
+      ]);
+      expect(new Set(installs.map((item) => item.path)).size).toBe(2);
+      for (const record of installs) {
+        expect(path.dirname(record.path)).toBe(state.pluginsDir);
+        expect(path.basename(record.path)).toMatch(/^v2-[a-f0-9]{64}$/);
+      }
+      expect(
+        (await readPackageRegistrations(state))
+          .map((item) => item.id)
+          .sort(),
+      ).toEqual(["alpha/shared", "beta/shared"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects incompatible public packages without publishing state", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "agents-install-compatibility-"),
+    );
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const source = path.join(root, "future-plugin");
+      await mkdir(source, { recursive: true });
+      const manifest = publicCapabilityManifest("future", "plugin");
+      manifest.compatibility.andromeda = ">=999.0.0";
+      await Bun.write(
+        path.join(source, "agent.package.json"),
+        JSON.stringify(manifest),
+      );
+      const before = await snapshotTree(state.stateDir);
+
+      await expect(
+        installCapability(state, {
+          kind: "plugin",
+          name: "andromeda-test/future",
+          source,
+        }),
+      ).rejects.toThrow(
+        "requires Andromeda >=999.0.0, current version is 0.10.0",
+      );
+      expect(await snapshotTree(state.stateDir)).toEqual(before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a noncanonical installed registration before publication", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "agents-install-command-preflight-"),
+    );
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const broken = path.join(root, "broken-registration");
+      await mkdir(broken, { recursive: true });
+      await Bun.write(
+        path.join(broken, "agent.package.json"),
+        '{"schemaVersion":1,"id":"broken","kind":"plugin"}\n',
+      );
+      await Bun.write(
+        state.packagesFile,
+        `${JSON.stringify(
+          [
+            {
+              id: "broken/public",
+              kind: "plugin",
+              path: broken,
+              manifestPath: path.join(broken, "agent.package.json"),
+              registeredAt: new Date(0).toISOString(),
+            },
+          ],
+          null,
+          2,
+        )}\n`,
+      );
+
+      const candidate = path.join(root, "candidate");
+      await mkdir(candidate, { recursive: true });
+      await Bun.write(
+        path.join(candidate, "agent.package.json"),
+        JSON.stringify(publicCapabilityManifest("candidate", "plugin")),
+      );
+      const before = await snapshotTree(state.stateDir);
+      await expect(
+        installCapability(state, {
+          kind: "plugin",
+          name: "andromeda-test/candidate",
+          source: candidate,
+        }),
+      ).rejects.toThrow(
+        "package registry contains no canonical install for: broken/public",
+      );
+      expect(await snapshotTree(state.stateDir)).toEqual(before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps legacy skills behind the path-pinned first-party import bridge", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "agents-install-legacy-bridge-"),
+    );
+    try {
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const arbitrary = path.join(root, "legacy-skill");
+      await mkdir(arbitrary, { recursive: true });
+      await Bun.write(
+        path.join(arbitrary, "SKILL.md"),
+        '---\nname: legacy\ndescription: "Legacy."\n---\n',
+      );
+      const before = await snapshotTree(state.stateDir);
+
+      await expect(
+        installCapability(state, {
+          kind: "skill",
+          name: "legacy-owner/legacy",
+          source: arbitrary,
+        }),
+      ).rejects.toThrow("requires agent.package.json");
+      await expect(
+        importBundledLegacySkill(state, {
+          name: "legacy",
+          source: arbitrary,
+        }),
+      ).rejects.toThrow("internal bundled-skill import is path-pinned");
+      expect(await snapshotTree(state.stateDir)).toEqual(before);
+
+      const bundledPass = path.resolve(
+        repoRoot,
+        "..",
+        "..",
+        ".agents",
+        "global",
+        "skills",
+        "pass",
+      );
+      const imported = await importBundledLegacySkill(state, {
+        name: "pass",
+        source: bundledPass,
+      });
+      expect(imported.record).toMatchObject({
+        kind: "skill",
+        name: "pass",
+        path: path.join(state.skillsDir, "pass"),
+      });
+      const provenance = (
+        await readdir(path.join(state.stateDir, "provenance", "migrations"))
+      ).find((name) => name.startsWith("capability-skill-pass-"));
+      expect(provenance).toBeDefined();
+      const receipt = (await Bun.file(
+        path.join(
+          state.stateDir,
+          "provenance",
+          "migrations",
+          provenance!,
+          "manifest.json",
+        ),
+      ).json()) as { importMode?: string };
+      expect(receipt.importMode).toBe("andromeda-bundled-skill-v1");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -380,13 +728,16 @@ describe("install CLI", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "agents-identity-"));
     try {
       const skill = path.join(root, "probe-skill");
-      await mkdir(skill, { recursive: true });
-      await Bun.write(
-        path.join(skill, "SKILL.md"),
-        '---\nname: probe\ndescription: "Probe."\n---\n',
-      );
+      await writeSkillFixture(skill, "Probe.");
       expect(
-        (await runAgents(root, ["install", "skill", "probe", skill])).code,
+        (
+          await runAgents(root, [
+            "install",
+            "skill",
+            "andromeda-test/probe",
+            skill,
+          ])
+        ).code,
       ).toBe(0);
 
       const source = path.join(root, "identity-source");
@@ -428,7 +779,7 @@ describe("install CLI", () => {
       );
       expect(
         await Bun.file(path.join(identity, "capabilities.md")).text(),
-      ).toContain("## probe");
+      ).toContain("## andromeda-test/probe");
       expect(await readdir(path.join(identity, "roles"))).toEqual([
         "review.yaml",
       ]);
@@ -479,7 +830,7 @@ describe("install CLI", () => {
       await expect(
         installCapability(state, {
           kind: "harness",
-          name: "missing",
+          name: "andromeda-test/missing",
           source: missing,
         }),
       ).rejects.toThrow("requires agent.package.json");
@@ -493,24 +844,26 @@ describe("install CLI", () => {
       await expect(
         installCapability(state, {
           kind: "harness",
-          name: "retired",
+          name: "andromeda-test/retired",
           source: retired,
         }),
       ).rejects.toThrow("agents.package.json is not supported");
 
-      const noEntry = path.join(root, "missing-entry");
-      await mkdir(noEntry, { recursive: true });
+      const legacyNative = path.join(root, "legacy-native");
+      await mkdir(legacyNative, { recursive: true });
       await Bun.write(
-        path.join(noEntry, "agent.package.json"),
-        '{"schemaVersion":1,"id":"no-entry","kind":"harness"}\n',
+        path.join(legacyNative, "agent.package.json"),
+        '{"schemaVersion":1,"id":"legacy-native","kind":"harness","entry":"bun main.ts"}\n',
       );
       await expect(
         installCapability(state, {
           kind: "harness",
-          name: "no-entry",
-          source: noEntry,
+          name: "andromeda-test/legacy-native",
+          source: legacyNative,
         }),
-      ).rejects.toThrow("requires a non-empty entry command");
+      ).rejects.toThrow(
+        "schemaVersion 2 is required for public capabilities",
+      );
 
       const oldSchema = path.join(root, "old-schema");
       await mkdir(oldSchema, { recursive: true });
@@ -521,26 +874,117 @@ describe("install CLI", () => {
       await expect(
         installCapability(state, {
           kind: "plugin",
-          name: "old-schema",
+          name: "andromeda-test/old-schema",
           source: oldSchema,
         }),
-      ).rejects.toThrow("schemaVersion must be 1");
+      ).rejects.toThrow("schemaVersion 2 is required for public capabilities");
 
       const invalidShape = path.join(root, "invalid-shape");
       await mkdir(invalidShape, { recursive: true });
+      const invalidManifest = {
+        ...publicCapabilityManifest("invalid-shape", "plugin"),
+        provides: "old-shape",
+      };
       await Bun.write(
         path.join(invalidShape, "agent.package.json"),
-        '{"schemaVersion":1,"id":"invalid-shape","kind":"plugin","provides":"old-shape"}\n',
+        JSON.stringify(invalidManifest),
       );
       await expect(
         installCapability(state, {
           kind: "plugin",
-          name: "invalid-shape",
+          name: "andromeda-test/invalid-shape",
           source: invalidShape,
         }),
-      ).rejects.toThrow("provides must be an array of non-empty strings");
+      ).rejects.toThrow("manifest contains unsupported field provides");
 
+      const native = path.join(root, "native-entry");
+      await mkdir(native, { recursive: true });
+      await Bun.write(
+        path.join(native, "agent.package.json"),
+        JSON.stringify({
+          ...publicCapabilityManifest("native-entry", "plugin"),
+          entry: "node plugin.js",
+        }),
+      );
+      await expect(
+        installCapability(state, {
+          kind: "plugin",
+          name: "andromeda-test/native-entry",
+          source: native,
+        }),
+      ).rejects.toThrow("manifest contains unsupported field entry");
+
+      const wasi = path.join(root, "wasi-plugin");
+      await mkdir(path.join(wasi, "runtime"), { recursive: true });
+      const wasm = Uint8Array.from([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x0d, 0x01, 0x09, 0x72, 0x75, 0x6e, 0x5f, 0x70, 0x72, 0x6f,
+        0x62, 0x65, 0x00, 0x00,
+        0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b,
+      ]);
+      await Bun.write(path.join(wasi, "runtime", "plugin.wasm"), wasm);
+      const wasiManifest = publicCapabilityManifest("wasi-plugin", "plugin");
+      (wasiManifest as any).runtime = {
+        kind: "wasi",
+        module: "runtime/plugin.wasm",
+        sha256: "f".repeat(64),
+      };
+      (wasiManifest.contributions.commands[0] as any).handler = {
+        kind: "wasi",
+        export: "run_probe",
+      };
+      await Bun.write(
+        path.join(wasi, "agent.package.json"),
+        JSON.stringify(wasiManifest),
+      );
+      await expect(
+        installCapability(state, {
+          kind: "plugin",
+          name: "andromeda-test/wasi-plugin",
+          source: wasi,
+        }),
+      ).rejects.toThrow(
+        "WASI module digest does not match runtime.sha256",
+      );
       expect(await snapshotTree(state.stateDir)).toEqual(before);
+
+      (wasiManifest.runtime as any).sha256 = createHash("sha256")
+        .update(wasm)
+        .digest("hex");
+      await Bun.write(
+        path.join(wasi, "agent.package.json"),
+        JSON.stringify(wasiManifest),
+      );
+      await expect(
+        installCapability(state, {
+          kind: "plugin",
+          name: "andromeda-test/wasi-plugin",
+          source: wasi,
+        }),
+      ).resolves.toMatchObject({
+        changed: true,
+      });
+
+      (wasiManifest.contributions.commands[0] as any).handler.export =
+        "missing_export";
+      await Bun.write(
+        path.join(wasi, "agent.package.json"),
+        JSON.stringify(wasiManifest),
+      );
+      const beforeMissingExport = await snapshotTree(state.stateDir);
+      await expect(
+        installCapability(state, {
+          kind: "plugin",
+          name: "andromeda-test/wasi-plugin",
+          source: wasi,
+          replace: true,
+        }),
+      ).rejects.toThrow(
+        "WASI command export is missing or not a function: missing_export",
+      );
+      expect(await snapshotTree(state.stateDir)).toEqual(beforeMissingExport);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -559,7 +1003,7 @@ describe("install CLI", () => {
       await writeSkillFixture(secondSource, "Second version");
       await installCapability(state, {
         kind: "skill",
-        name: "probe",
+        name: "andromeda-test/probe",
         source: firstSource,
         now: new Date("2026-01-01T00:00:00.000Z"),
       });
@@ -578,7 +1022,7 @@ describe("install CLI", () => {
         await expect(
           installCapability(state, {
             kind: "skill",
-            name: "probe",
+            name: "andromeda-test/probe",
             source: secondSource,
             replace: true,
             now: new Date("2026-02-01T00:00:00.000Z"),
@@ -597,7 +1041,7 @@ describe("install CLI", () => {
 
       const replacement = await installCapability(state, {
         kind: "skill",
-        name: "probe",
+        name: "andromeda-test/probe",
         source: secondSource,
         replace: true,
         now: new Date("2026-02-01T00:00:00.000Z"),
@@ -608,7 +1052,7 @@ describe("install CLI", () => {
 
       const replay = await installCapability(state, {
         kind: "skill",
-        name: "probe",
+        name: "andromeda-test/probe",
         source: secondSource,
         now: new Date("2030-01-01T00:00:00.000Z"),
       });
@@ -685,7 +1129,7 @@ describe("install CLI", () => {
       await writeSkillFixture(secondSource, "Second version");
       await installCapability(state, {
         kind: "skill",
-        name: "probe",
+        name: "andromeda-test/probe",
         source: firstSource,
         now: new Date("2026-01-01T00:00:00.000Z"),
       });
@@ -697,7 +1141,7 @@ describe("install CLI", () => {
         import { sharedState } from ${JSON.stringify(stateModule)};
         await installCapability(sharedState(process.env.TEST_ROOT), {
           kind: "skill",
-          name: "probe",
+          name: "andromeda-test/probe",
           source: process.env.TEST_SOURCE,
           replace: true,
           now: new Date("2026-02-01T00:00:00.000Z"),
@@ -723,7 +1167,7 @@ describe("install CLI", () => {
 
       const recovered = await installCapability(state, {
         kind: "skill",
-        name: "probe",
+        name: "andromeda-test/probe",
         source: firstSource,
         now: new Date("2030-01-01T00:00:00.000Z"),
       });

@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  ensureSharedState,
+  sharedState,
+} from "../state";
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 const cliPath = path.join(repoRoot, "cli.ts");
@@ -36,10 +40,15 @@ async function runAgents(
 }
 
 describe("harness CLI", () => {
-  test("runs harnesses with agents-owned environment", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "agents-harness-"));
+  test("doctor and run commands reject a tampered external legacy registry before execution", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "agents-package-registry-tamper-"),
+    );
     try {
-      const harness = path.join(root, "probe-harness");
+      const state = sharedState(root);
+      await ensureSharedState(state);
+      const harness = path.join(root, "external-harness");
+      const marker = path.join(root, "executed.txt");
       await mkdir(harness, { recursive: true });
       await Bun.write(
         path.join(harness, "agent.package.json"),
@@ -48,119 +57,57 @@ describe("harness CLI", () => {
           id: "probe",
           kind: "harness",
           entry: `${process.execPath} probe.ts`,
-          requires: { clis: [], state: ["skills", "plugins", "hooks", "credits"] },
         }),
       );
       await Bun.write(
         path.join(harness, "probe.ts"),
-        [
-          "import path from 'node:path';",
-          "const out = Bun.argv[2];",
-          "const passthrough = Bun.argv.slice(3);",
-          "await Bun.write(out, JSON.stringify({",
-          "  ANDROMEDA_BIN: process.env.ANDROMEDA_BIN,",
-          "  ANDROMEDA_BIN_SCRIPT: process.env.ANDROMEDA_BIN_SCRIPT,",
-          "  ANDROMEDA_HOME: process.env.ANDROMEDA_HOME,",
-          "  ANDROMEDA_ROOT: process.env.ANDROMEDA_ROOT,",
-          "  ANDROMEDA_DATA: process.env.ANDROMEDA_DATA,",
-          "  ANDROMEDA_WORKSPACE: process.env.ANDROMEDA_WORKSPACE,",
-          "  ANDROMEDA_CLIS: process.env.ANDROMEDA_CLIS,",
-          "  ANDROMEDA_CREDITS: process.env.ANDROMEDA_CREDITS,",
-          "  ANDROMEDA_DATA_REPOS: process.env.ANDROMEDA_DATA_REPOS,",
-          "  ANDROMEDA_SYSTEM_DATA_ROOT: process.env.ANDROMEDA_SYSTEM_DATA_ROOT,",
-          "  ANDROMEDA_HARNESS_HOME: process.env.ANDROMEDA_HARNESS_HOME,",
-          "  passthrough,",
-          "}));",
-        ].join("\n"),
-      );
-
-      const register = await runAgents(root, ["packages", "register", harness]);
-      expect(register.code).toBe(0);
-
-      const output = path.join(root, "env.json");
-      const run = await runAgents(root, ["harness", "run", "probe", "--", output, "--probe"]);
-      expect(run.code).toBe(0);
-
-      const env = JSON.parse(await Bun.file(output).text()) as Record<string, unknown>;
-      expect(env.ANDROMEDA_BIN).toBe(process.execPath);
-      expect(env.ANDROMEDA_BIN_SCRIPT).toBe(cliPath);
-      expect(env.ANDROMEDA_HOME).toBe(path.join(root, ".agents"));
-      expect(env.ANDROMEDA_ROOT).toBe(root);
-      expect(env.ANDROMEDA_DATA).toBeUndefined();
-      expect(env.ANDROMEDA_WORKSPACE).toBe(path.join(root, ".agents", "runtime", "workspaces"));
-      expect(env.ANDROMEDA_CLIS).toBe(path.join(root, ".agents", "clis"));
-      expect(env.ANDROMEDA_CREDITS).toBe(path.join(root, ".agents", "credits.json"));
-      expect(env.ANDROMEDA_DATA_REPOS).toBe(path.join(root, ".agents", "data-repos.json"));
-      expect(env.ANDROMEDA_SYSTEM_DATA_ROOT).toBe(path.join(root, ".agents"));
-      expect(env.ANDROMEDA_HARNESS_HOME).toBe(path.join(root, ".agents", "harnesses", "probe", "runtime"));
-      expect(JSON.stringify(env.passthrough)).toBe(JSON.stringify(["--probe"]));
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("runs packages with the shared Agent OS environment", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "agents-package-run-"));
-    try {
-      const pkg = path.join(root, "probe-package");
-      await mkdir(pkg, { recursive: true });
-      await Bun.write(
-        path.join(pkg, "agent.package.json"),
-        JSON.stringify({
-          schemaVersion: 1,
-          id: "probe-package",
-          kind: "package",
-          entry: `${process.execPath} cli.ts`,
-          requires: { state: ["secrets", "credits"] },
-        }),
+        `await Bun.write(${JSON.stringify(marker)}, "executed\\n");\n`,
       );
       await Bun.write(
-        path.join(pkg, "cli.ts"),
-        [
-          "const out = Bun.argv[2];",
-          "await Bun.write(out, JSON.stringify({",
-          "  ANDROMEDA_HOME: process.env.ANDROMEDA_HOME,",
-          "  ANDROMEDA_ROOT: process.env.ANDROMEDA_ROOT,",
-          "  ANDROMEDA_DATA: process.env.ANDROMEDA_DATA,",
-          "  ANDROMEDA_WORKSPACE: process.env.ANDROMEDA_WORKSPACE,",
-          "  ANDROMEDA_SECRETS: process.env.ANDROMEDA_SECRETS,",
-          "  ANDROMEDA_DATA_REPOS: process.env.ANDROMEDA_DATA_REPOS,",
-          "  ANDROMEDA_SYSTEM_DATA_ROOT: process.env.ANDROMEDA_SYSTEM_DATA_ROOT,",
-          "  PROJECT_DATA_ROOT: process.env.PROJECT_DATA_ROOT,",
-          "  args: Bun.argv.slice(3),",
-          "}));",
-        ].join("\n"),
+        state.packagesFile,
+        `${JSON.stringify(
+          [
+            {
+              id: "probe",
+              kind: "harness",
+              path: harness,
+              manifestPath: path.join(harness, "agent.package.json"),
+              registeredAt: new Date(0).toISOString(),
+            },
+          ],
+          null,
+          2,
+        )}\n`,
       );
 
-      const register = await runAgents(root, ["packages", "register", pkg]);
-      expect(register.code).toBe(0);
-      const dataRepo = await runAgents(root, [
-        "data",
-        "repo",
-        "set",
-        "project-data",
-        "marius-patrik/project-data",
-        "--path",
-        "data/project",
-        "--env",
-        "PROJECT_DATA_ROOT",
-      ]);
-      expect(dataRepo.code).toBe(0);
+      const doctor = await runAgents(root, ["state", "doctor", "--json"]);
+      expect(doctor.code).toBe(1);
+      const report = JSON.parse(doctor.stdout) as {
+        checks: Array<{
+          id: string;
+          ok: boolean;
+          details?: { issues?: string[] };
+        }>;
+      };
+      const capability = report.checks.find(
+        (check) => check.id === "capability_integrity",
+      );
+      expect(capability?.ok).toBe(false);
+      expect(capability?.details?.issues?.join("\n")).toContain(
+        "package registry contains no canonical install for: probe",
+      );
 
-      const output = path.join(root, "package-env.json");
-      const run = await runAgents(root, ["packages", "run", "probe-package", "--", output, "--probe"]);
-      expect(run.code).toBe(0);
-
-      const env = JSON.parse(await Bun.file(output).text()) as Record<string, unknown>;
-      expect(env.ANDROMEDA_HOME).toBe(path.join(root, ".agents"));
-      expect(env.ANDROMEDA_ROOT).toBe(root);
-      expect(env.ANDROMEDA_DATA).toBeUndefined();
-      expect(env.ANDROMEDA_WORKSPACE).toBe(path.join(root, ".agents", "runtime", "workspaces"));
-      expect(env.ANDROMEDA_SECRETS).toBe(path.join(root, ".agents", "secrets"));
-      expect(env.ANDROMEDA_DATA_REPOS).toBe(path.join(root, ".agents", "data-repos.json"));
-      expect(env.ANDROMEDA_SYSTEM_DATA_ROOT).toBe(path.join(root, ".agents"));
-      expect(env.PROJECT_DATA_ROOT).toBe(path.join(root, "data", "project"));
-      expect(JSON.stringify(env.args)).toBe(JSON.stringify(["--probe"]));
+      for (const command of [
+        ["harness", "run", "probe"],
+        ["packages", "run", "probe"],
+      ]) {
+        const run = await runAgents(root, command);
+        expect(run.code).toBe(1);
+        expect(run.stderr).toContain(
+          "package registry contains no canonical install for: probe",
+        );
+        expect(await Bun.file(marker).exists()).toBe(false);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

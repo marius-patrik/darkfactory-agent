@@ -106,8 +106,8 @@ exec $(printf '%q' "$REAL_BUN") "\$@"
 EOF
 chmod 700 "$FAKE_BIN/bun"
 
-# Plant obsolete launchers to prove that installation converges bin/ to the one
-# supported command rather than preserving wrapper drift.
+# Plant obsolete launchers to prove that installation converges bin/ to the
+# three exact supported command aliases rather than preserving wrapper drift.
 mkdir -p "$ANDROMEDA_HOME/bin"
 touch "$ANDROMEDA_HOME/bin/claude" "$ANDROMEDA_HOME/bin/codex" "$ANDROMEDA_HOME/bin/kimi"
 

@@ -1,12 +1,16 @@
 import path from "node:path";
 import { lstat, stat } from "node:fs/promises";
 import type { InstallKind, SharedState } from "./state";
-import { writeTextAtomic } from "./state-v2";
-import { withStateFileLock } from "./state-lock";
+import {
+  assertAgentPackageCompatibilityV2,
+  parseAgentPackageManifestV2,
+  type AgentPackageDescriptorV2,
+} from "../sdk/shared-ts/plugin-manifest";
+import { CommandRegistry } from "../commands/registry";
 
 export type PackageKind = InstallKind;
 
-export interface AgentsPackageManifest {
+export interface LegacyAgentsPackageManifest {
   schemaVersion: 1;
   id: string;
   name?: string;
@@ -29,6 +33,16 @@ export interface AgentsPackageManifest {
   provides?: string[];
 }
 
+export type AgentsPackageManifest =
+  | LegacyAgentsPackageManifest
+  | AgentPackageDescriptorV2;
+
+export interface ReadPackageManifestOptions {
+  artifactSha256?: string;
+  requireSchemaVersion2?: boolean;
+  andromedaVersion?: string;
+}
+
 export interface PackageRegistration {
   id: string;
   kind: PackageKind;
@@ -41,6 +55,20 @@ export interface PackageRegistration {
 const manifestName = "agent.package.json";
 const retiredManifestNames = ["agents.package.json", "agent.json", "package.agent.json"];
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const SAFE_PUBLIC_QUALIFIED_ID =
+  /^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9][a-z0-9._-]{0,127}$/;
+const LEGACY_MANIFEST_FIELDS = new Set([
+  "schemaVersion",
+  "id",
+  "name",
+  "kind",
+  "description",
+  "entry",
+  "workingDirectory",
+  "requires",
+  "dataRepo",
+  "provides",
+]);
 
 async function exists(file: string): Promise<boolean> {
   try {
@@ -73,13 +101,41 @@ export async function findManifest(packageDir: string): Promise<string | null> {
   }
 }
 
-export async function readPackageManifest(packageDir: string): Promise<AgentsPackageManifest | null> {
+export async function readPackageManifest(
+  packageDir: string,
+  options: ReadPackageManifestOptions = {},
+): Promise<AgentsPackageManifest | null> {
   const file = await findManifest(packageDir);
   if (!file) return null;
   const parsed = JSON.parse(await Bun.file(file).text()) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${file}: manifest must be an object`);
-  const raw = parsed as Partial<AgentsPackageManifest>;
-  if (raw.schemaVersion !== 1) throw new Error(`${file}: schemaVersion must be 1`);
+  const record = parsed as Record<string, unknown>;
+  if (record.schemaVersion === 2) {
+    const manifest = parseAgentPackageManifestV2(record, {
+      source: file,
+      artifactSha256: options.artifactSha256,
+    });
+    if (options.andromedaVersion !== undefined) {
+      assertAgentPackageCompatibilityV2(
+        manifest,
+        options.andromedaVersion,
+        { source: file },
+      );
+    }
+    return manifest;
+  }
+  if (options.requireSchemaVersion2) {
+    throw new Error(`${file}: schemaVersion 2 is required for public capabilities`);
+  }
+  if (record.schemaVersion !== 1) {
+    throw new Error(`${file}: schemaVersion must be 1 or 2`);
+  }
+  for (const field of Object.keys(record)) {
+    if (!LEGACY_MANIFEST_FIELDS.has(field)) {
+      throw new Error(`${file}: unsupported manifest field ${field}`);
+    }
+  }
+  const raw = record as unknown as Partial<LegacyAgentsPackageManifest>;
   if (!raw.id || typeof raw.id !== "string" || !SAFE_ID.test(raw.id)) throw new Error(`${file}: id is invalid`);
   if (!raw.kind || typeof raw.kind !== "string") throw new Error(`${file}: kind is required`);
   for (const [field, value] of [
@@ -108,6 +164,12 @@ export async function readPackageManifest(packageDir: string): Promise<AgentsPac
   };
 }
 
+export function packageManifestIdentity(
+  manifest: AgentsPackageManifest,
+): string {
+  return manifest.schemaVersion === 2 ? manifest.qualifiedId : manifest.id;
+}
+
 function stringList(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
   const seen = new Set<string>();
@@ -126,20 +188,29 @@ function assertRelativePath(value: unknown, field: string): asserts value is str
   }
 }
 
-function parseRequires(value: unknown, file: string): AgentsPackageManifest["requires"] {
+function parseRequires(value: unknown, file: string): LegacyAgentsPackageManifest["requires"] {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${file}: requires must be an object`);
   const record = value as Record<string, unknown>;
+  for (const field of Object.keys(record)) {
+    if (field !== "clis" && field !== "state") {
+      throw new Error(`${file}: unsupported requires field ${field}`);
+    }
+  }
   return {
     clis: record.clis === undefined ? undefined : stringList(record.clis, `${file}: requires.clis`),
     state: record.state === undefined ? undefined : stringList(record.state, `${file}: requires.state`),
   };
 }
 
-function parseDataRepo(value: unknown): AgentsPackageManifest["dataRepo"] {
+function parseDataRepo(value: unknown): LegacyAgentsPackageManifest["dataRepo"] {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("dataRepo must be an object");
   const record = value as Record<string, unknown>;
+  const allowed = new Set(["id", "repo", "path", "branch", "managedPath", "env"]);
+  for (const field of Object.keys(record)) {
+    if (!allowed.has(field)) throw new Error(`dataRepo contains unsupported field ${field}`);
+  }
   if (typeof record.id !== "string" || !SAFE_ID.test(record.id)) throw new Error("dataRepo.id is invalid");
   if (typeof record.repo !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(record.repo)) throw new Error("dataRepo.repo is invalid");
   assertRelativePath(record.path, "dataRepo.path");
@@ -171,7 +242,8 @@ export async function readPackageRegistrations(state: SharedState): Promise<Pack
       typeof record !== "object" ||
       Array.isArray(record) ||
       typeof record.id !== "string" ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(record.id) ||
+      (!SAFE_ID.test(record.id) &&
+        !SAFE_PUBLIC_QUALIFIED_ID.test(record.id)) ||
       typeof record.kind !== "string" ||
       typeof record.path !== "string" ||
       !path.isAbsolute(record.path) ||
@@ -191,19 +263,25 @@ export async function readPackageRegistrations(state: SharedState): Promise<Pack
   return parsed as PackageRegistration[];
 }
 
-export async function writePackageRegistrations(state: SharedState, registrations: PackageRegistration[]): Promise<void> {
-  await withStateFileLock(state, "packages", () =>
-    writeTextAtomic(state.packagesFile, `${JSON.stringify(registrations, null, 2)}\n`),
+export function assertPublicPackageCommandSet(
+  manifests: readonly AgentPackageDescriptorV2[],
+): void {
+  const registry = new CommandRegistry();
+  // Alias grants are a separate permission decision. Admission still reserves
+  // every requested top-level token so two packages cannot be installed into
+  // a state that could never grant both requests safely.
+  const requestedAliases = manifests.flatMap((manifest) =>
+    manifest.contributions.commands.flatMap((command) =>
+      command.requestedTopLevelAlias
+        ? [`${manifest.qualifiedId}:${command.requestedTopLevelAlias}`]
+        : [],
+    ),
   );
-}
-
-export async function upsertPackageRegistration(state: SharedState, registration: Omit<PackageRegistration, "registeredAt">): Promise<void> {
-  await withStateFileLock(state, "packages", async () => {
-    const registrations = await readPackageRegistrations(state);
-    const next: PackageRegistration = { ...registration, registeredAt: new Date().toISOString() };
-    const index = registrations.findIndex((item) => item.id === registration.id);
-    if (index === -1) registrations.push(next);
-    else registrations[index] = { ...registrations[index], ...next };
-    await writeTextAtomic(state.packagesFile, `${JSON.stringify(registrations, null, 2)}\n`);
-  });
+  for (const manifest of [...manifests].sort((left, right) =>
+    left.qualifiedId.localeCompare(right.qualifiedId),
+  )) {
+    registry.registerPluginCommands(manifest, {
+      approvedTopLevelAliases: requestedAliases,
+    });
+  }
 }

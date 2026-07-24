@@ -16,14 +16,21 @@ import {
   type CreditStore,
   type SharedState,
 } from "./state";
-import { activateIdentityBundle, installCapability, type CapabilityKind } from "./capabilities";
+import {
+  activateIdentityBundle,
+  importBundledLegacySkill,
+  inspectCapabilityIntegrity,
+  installCapability,
+  readAdmittedPackageRegistrations,
+  recoverCapabilityPlatform,
+  type CapabilityKind,
+} from "./capabilities";
 import { canonicalChildEnvironment } from "./runtime-paths";
 import {
   readPackageManifest,
-  readPackageRegistrations,
-  upsertPackageRegistration,
   type AgentsPackageManifest,
 } from "./packages";
+import { readAuthoritativeProductVersion } from "./product-version";
 import { listSecrets, secretPath, syncGitHubSecret, writeSecret } from "./secrets";
 import { osCommand } from "./os-lifecycle";
 import { runnerCommand } from "./runner-lifecycle";
@@ -79,6 +86,10 @@ import {
   startOrchestratorHeartbeat,
   type OrchestratorHeartbeatController,
 } from "./orchestrator";
+import {
+  createBuiltinCommandRegistry,
+  selectCommandInvocation,
+} from "../commands/registry";
 
 const invocationRoot = process.cwd();
 const root = invocationRoot;
@@ -115,9 +126,10 @@ function runtimeState(): SharedState {
 }
 
 function help(): void {
-  console.log(`andromeda - Bun agent package manager
+  console.log(`andromeda - unified agent, model, memory, and workspace runtime
 
 Usage:
+  andromeda [--provider <id>] [--model <model>] [--mode <mode>]
   andromeda run --model-tier low|medium|high|max --effort low|medium|high --execution-policy read-only|workspace-write --tool-policy standard|none --receipt <absolute-new-path> [--mode orchestrator|default|chat|task] [--prompt-file <absolute-path> | --prompt-stdin | <prompt>]
   andromeda run [--mode orchestrator|default] [--provider <id>] [--model <model>] [--tui] <prompt>
   andromeda route probe [--model-tier low|medium|high|max] [--effort low|medium|high] [--json]
@@ -152,7 +164,6 @@ Usage:
   andromeda cli list|doctor
   andromeda cli pin [codex|claude|kimi|agy|all]
   andromeda cli env <codex|claude|kimi|agy>
-  andromeda packages register <path>
   andromeda packages list [--json]
   andromeda packages run <name-or-path> -- <args...>
   andromeda packages distro <define|install|upgrade|remove> ...
@@ -171,8 +182,11 @@ Usage:
   andromeda session run --provider <id> --model <model> [--mode chat|task] [--session <id>] [--stream] <prompt>
   andromeda session list [--json]
   andromeda session show <id> [--json]
-  andromeda install <skill|plugin|hook|template|cli|harness> <name> <source-path-or-git-url> [--replace]
+  andromeda install <skill|plugin|hook|template|cli|harness> <publisher/id> <source-path-or-git-url> [--replace]
   andromeda installs [--json]
+  andromeda plugins list [--json]
+  andromeda plugins doctor [--json]
+  andromeda plugins recover [--json]
   andromeda secrets list [--json]
   andromeda secrets set <NAME> [--from-file path]
   andromeda secrets path <NAME>
@@ -197,6 +211,7 @@ Usage:
   andromeda os remove <name> [--prune-data] [--dry-run]
   andromeda os deploy <profile> [--image andromeda-os] [--env andromeda-os] [--channel dev] [--dry-run]
   andromeda runner install|enable|disable|status|repair [--json]
+  andromeda version
 
 All runtime data is shared through .agents so every managed CLI sees the same
 skills, plugins, CLI metadata, and credit store.`);
@@ -498,29 +513,19 @@ async function cliCommand(args: string[]): Promise<void> {
 
 async function packageCommand(args: string[], flags: Record<string, string | boolean>): Promise<void> {
   const [action, packagePath] = args;
+  if (action === "register") {
+    throw new Error(
+      "packages register is disabled; use andromeda install <kind> <publisher/id> <source> for full admission and atomic publication",
+    );
+  }
   const state = runtimeState();
   await ensureSharedState(state);
   if (!action || action === "list") {
-    const registrations = await readPackageRegistrations(state);
+    const registrations = (await readAdmittedPackageRegistrations(state)).map(
+      (item) => item.registration,
+    );
     if (flags.json) console.log(JSON.stringify(registrations, null, 2));
     else for (const item of registrations) console.log(`${item.kind.padEnd(8)} ${item.id.padEnd(24)} ${item.path}`);
-    return;
-  }
-  if (action === "register") {
-    if (!packagePath) throw new Error("packages register requires a path");
-    const fullPath = path.resolve(root, packagePath);
-    const packageManifest = await readPackageManifest(fullPath);
-    if (!packageManifest) throw new Error(`no package manifest found in ${packagePath}`);
-    await upsertPackageRegistration(state, {
-      id: packageManifest.id,
-      kind: packageManifest.kind,
-      path: fullPath,
-      manifestPath: path.join(fullPath, "agent.package.json"),
-    });
-    if (packageManifest.dataRepo) {
-      await upsertDataRepo(state, packageManifest.dataRepo);
-    }
-    console.log(`registered ${packageManifest.kind} ${packageManifest.id}`);
     return;
   }
   if (action === "run") {
@@ -561,9 +566,8 @@ async function findRunnablePackage(
   state: SharedState,
   query: string,
 ): Promise<{ id: string; path: string; manifest: AgentsPackageManifest } | null> {
-  for (const registration of await readPackageRegistrations(state)) {
-    const packageManifest = await readPackageManifest(registration.path);
-    if (!packageManifest) continue;
+  for (const admitted of await readAdmittedPackageRegistrations(state)) {
+    const { registration, manifest: packageManifest } = admitted;
     if (
       registration.id === query ||
       registration.path === query ||
@@ -1010,11 +1014,16 @@ async function sessionsCommand(args: string[], flags: Record<string, string | bo
 }
 
 async function harnessesFromState(state: SharedState): Promise<Array<{ id: string; path: string; manifest: AgentsPackageManifest }>> {
-  const registrations = await readPackageRegistrations(state);
   const out: Array<{ id: string; path: string; manifest: AgentsPackageManifest }> = [];
-  for (const registration of registrations.filter((item) => item.kind === "harness")) {
-    const packageManifest = await readPackageManifest(registration.path);
-    if (packageManifest) out.push({ id: registration.id, path: registration.path, manifest: packageManifest });
+  for (const admitted of await readAdmittedPackageRegistrations(state)) {
+    const { registration, manifest } = admitted;
+    if (registration.kind === "harness") {
+      out.push({
+        id: registration.id,
+        path: registration.path,
+        manifest,
+      });
+    }
   }
   return out;
 }
@@ -1052,7 +1061,10 @@ async function runHarness(
   if (code !== 0) process.exitCode = code;
 }
 
-function sharedHarnessEnv(state: SharedState, harness: { id: string }): Record<string, string> {
+function sharedHarnessEnv(
+  state: SharedState,
+  harness: { path: string },
+): Record<string, string> {
   return {
     ANDROMEDA_BIN: process.execPath,
     ANDROMEDA_BIN_SCRIPT: Bun.argv[1] ? path.resolve(Bun.argv[1]) : "",
@@ -1070,7 +1082,7 @@ function sharedHarnessEnv(state: SharedState, harness: { id: string }): Record<s
     ANDROMEDA_CREDITS: state.creditsFile,
     ANDROMEDA_DATA_REPOS: state.dataReposFile,
     ANDROMEDA_ENVIRONMENTS: state.environmentsFile,
-    ANDROMEDA_HARNESS_HOME: path.join(state.harnessesDir, harness.id, "runtime"),
+    ANDROMEDA_HARNESS_HOME: path.join(harness.path, "runtime"),
   };
 }
 
@@ -1156,13 +1168,41 @@ async function install(values: string[], flags: Record<string, string | boolean>
   if (!kind || !["skill", "plugin", "hook", "template", "cli", "harness"].includes(kind)) {
     throw new Error("install kind must be skill, plugin, hook, template, cli, or harness");
   }
-  if (!name || !source) throw new Error("install requires a name and source");
+  if (!name || !source || values.length !== 3) {
+    throw new Error("install requires a kind, identity, and source");
+  }
+  const allowedFlags = new Set(["replace", "internal-bundled"]);
+  const unsupportedFlag = Object.keys(flags).find(
+    (flag) => !allowedFlags.has(flag),
+  );
+  if (unsupportedFlag) throw new Error(`install does not support --${unsupportedFlag}`);
 
   const state = runtimeState();
   await ensureSharedState(state);
-  const result = await installCapability(state, { kind, name, source, replace: Boolean(flags.replace) });
+  const internalBundled = flags["internal-bundled"] === true;
+  if (flags["internal-bundled"] !== undefined && !internalBundled) {
+    throw new Error("--internal-bundled takes no value");
+  }
+  if (internalBundled && kind !== "skill") {
+    throw new Error("--internal-bundled is reserved for first-party legacy skills");
+  }
+  const result = internalBundled
+    ? await importBundledLegacySkill(state, {
+        name,
+        source,
+        replace: Boolean(flags.replace),
+      })
+    : await installCapability(state, {
+        kind,
+        name,
+        source,
+        replace: Boolean(flags.replace),
+      });
   const action = result.changed ? (result.replaced ? "replaced" : "installed") : "verified";
-  console.log(`${action} ${kind} ${name} sha256=${result.record.sha256}`);
+  const prefix = internalBundled ? "imported internal legacy" : action;
+  console.log(
+    `${prefix} ${kind} ${result.record.name} sha256=${result.record.sha256}`,
+  );
 }
 
 async function installs(flags: Record<string, string | boolean>): Promise<void> {
@@ -1171,6 +1211,49 @@ async function installs(flags: Record<string, string | boolean>): Promise<void> 
   const records = await readInstalls(state);
   if (flags.json) console.log(JSON.stringify(records, null, 2));
   else for (const record of records) console.log(`${record.kind.padEnd(8)} ${record.name.padEnd(24)} ${record.path}`);
+}
+
+async function pluginsCommand(
+  values: string[],
+  flags: Record<string, string | boolean>,
+): Promise<void> {
+  const [action = "list", ...extra] = values;
+  if (extra.length > 0) throw new Error(`plugins ${action} accepts no positional arguments`);
+  const state = runtimeState();
+  await ensureSharedState(state);
+  if (action === "list") {
+    const records = (await readInstalls(state)).filter(
+      (record) => record.kind === "plugin",
+    );
+    if (flags.json) console.log(JSON.stringify(records, null, 2));
+    else {
+      for (const record of records) {
+        console.log(`${record.name.padEnd(24)} sha256:${record.sha256}`);
+      }
+    }
+    return;
+  }
+  if (action === "doctor" || action === "recover") {
+    const report =
+      action === "recover"
+        ? await recoverCapabilityPlatform(state)
+        : await inspectCapabilityIntegrity(state);
+    if (flags.json) console.log(JSON.stringify(report, null, 2));
+    else if (report.ok) {
+      console.log(
+        `ok plugins=${report.installs} storeObjects=${report.storeObjects}`,
+      );
+    } else {
+      console.error(report.issues.join("\n"));
+    }
+    if (!report.ok) process.exitCode = 1;
+    return;
+  }
+  throw new Error(`unknown plugins action: ${action}`);
+}
+
+async function versionCommand(): Promise<void> {
+  console.log(await readAuthoritativeProductVersion());
 }
 
 async function identityCommand(values: string[], flags: Record<string, string | boolean>): Promise<void> {
@@ -1355,35 +1438,56 @@ async function doctor(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const [command = "help", ...rest] = Bun.argv.slice(2);
+  const { command, args: rest } = selectCommandInvocation(Bun.argv.slice(2));
   const { values, flags } = parseArgs(rest);
-  if (command === "help" || flags.help) return help();
-  if (command === "run") return runCommand(values, flags);
-  if (command === "route") return routeCommand(values, flags);
-  if (command === "tui") return tuiCommand(values, flags);
-  if (command === "sessions") return sessionsCommand(values, flags);
-  if (command === "list") return list(flags);
-  if (command === "info") return info(values[0], flags);
-  if (command === "add") return add(values, flags);
-  if (command === "remove") return remove(values[0]);
-  if (command === "sync") return syncCommand(values, flags);
-  if (command === "state") return stateCommand(values, flags);
-  if (command === "memory") return memoryCommand(runtimeState(), values, flags);
-  if (command === "identity") return identityCommand(values, flags);
-  if (command === "cli") return cliCommand(rest);
-  if (command === "packages") return packageCommand(values, flags);
-  if (command === "env") return envCommand(values, flags);
-  if (command === "data") return dataCommand(values, flags);
-  if (command === "harness") return harnessCommand(values, flags);
-  if (command === "session") return sessionCommand(values, flags);
-  if (command === "install") return install(values, flags);
-  if (command === "installs") return installs(flags);
-  if (command === "secrets") return secretsCommand(values, flags);
-  if (command === "credits") return credits(values, flags);
-  if (command === "doctor") return doctor();
-  if (command === "os") return osCommand(rest);
-  if (command === "runner") return runnerCommand(rest);
-  throw new Error(`unknown command: ${command}`);
+  const registry = createBuiltinCommandRegistry();
+  const descriptor = registry.resolve(flags.help ? "help" : command);
+  if (!descriptor) throw new Error(`unknown command: ${command}`);
+  if (descriptor.handler.kind !== "host-rpc") {
+    throw new Error(
+      `command ${descriptor.name} is not executable by the built-in router`,
+    );
+  }
+  const handlers: Record<
+    string,
+    () => void | Promise<void>
+  > = {
+    "builtin.help": () => help(),
+    "builtin.version": () => versionCommand(),
+    "builtin.run": () => runCommand(values, flags),
+    "builtin.route": () => routeCommand(values, flags),
+    "builtin.tui": () => tuiCommand(values, flags),
+    "builtin.sessions": () => sessionsCommand(values, flags),
+    "builtin.list": () => list(flags),
+    "builtin.info": () => info(values[0], flags),
+    "builtin.add": () => add(values, flags),
+    "builtin.remove": () => remove(values[0]),
+    "builtin.sync": () => syncCommand(values, flags),
+    "builtin.state": () => stateCommand(values, flags),
+    "builtin.memory": () => memoryCommand(runtimeState(), values, flags),
+    "builtin.identity": () => identityCommand(values, flags),
+    "builtin.cli": () => cliCommand(rest),
+    "builtin.packages": () => packageCommand(values, flags),
+    "builtin.env": () => envCommand(values, flags),
+    "builtin.data": () => dataCommand(values, flags),
+    "builtin.harness": () => harnessCommand(values, flags),
+    "builtin.session": () => sessionCommand(values, flags),
+    "builtin.install": () => install(values, flags),
+    "builtin.installs": () => installs(flags),
+    "builtin.plugins": () => pluginsCommand(values, flags),
+    "builtin.secrets": () => secretsCommand(values, flags),
+    "builtin.credits": () => credits(values, flags),
+    "builtin.doctor": () => doctor(),
+    "builtin.os": () => osCommand(rest),
+    "builtin.runner": () => runnerCommand(rest),
+  };
+  const handler = handlers[descriptor.handler.method];
+  if (!handler) {
+    throw new Error(
+      `built-in command handler is not registered: ${descriptor.handler.method}`,
+    );
+  }
+  return handler();
 }
 
 main().catch((error) => {

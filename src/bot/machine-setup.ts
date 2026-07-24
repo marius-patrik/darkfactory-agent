@@ -67,21 +67,9 @@ export async function convergeMachineRuntime(input: MachineConvergenceInput): Pr
   const findings = new Set(input.findingIds);
   const receipts: SetupReceipt[] = [];
   if ([...findings].some((id) => PACKAGE_FINDINGS.has(id))) {
-    const npm = platform === "win32" ? "npm.cmd" : "npm";
-    const build = run(npm, ["run", "build"], { cwd: packageRoot, env: { ...process.env, ANDROMEDA_HOME: agentsHome } });
-    if (build.status !== 0) throw commandFailure("npm run build", build);
-    invokeAgents(["packages", "register", packageRoot]);
-    const packages = parseJson(invokeAgents(["packages", "list", "--json"]), "Agent OS package registry");
-    if (!Array.isArray(packages) || !packages.some((entry) => isRecord(entry) && entry.id === "darkfactory" && path.resolve(String(entry.path || "")) === packageRoot)) {
-      throw new Error("DarkFactory package registration did not converge to the exact trusted package root");
-    }
-    invokeAgents(["packages", "run", "darkfactory", "--", "--help"]);
-    receipts.push({
-      action: "machine-package-binding",
-      target: "canonical-agent-os",
-      status: "applied",
-      detail: `Built the trusted landed DarkFactory package at ${landedRevision}, registered its exact root, and proved the package-owned CLI help runs through Agent OS.`
-    });
+    throw new Error(
+      `legacy DarkFactory package binding at ${landedRevision} is disabled until it is rewritten for schema v2 atomic installation`
+    );
   }
 
   if ([...findings].some((id) => RUNNER_FINDINGS.has(id))) {

@@ -229,24 +229,21 @@ source_identity() {
 install_launcher() {
   local bin_dir="$ANDROMEDA_HOME/bin"
   local launcher
-  local temporary bun_bin entry
+  local temporary bun_bin entry alias suffix
 
   launcher="$(launcher_path)"
 
   mkdir -p "$bin_dir"
   chmod 700 "$bin_dir"
 
-  # ANDROMEDA_HOME/bin is owned by Agent OS. The final product exposes one command
-  # here; provider executables remain opaque under clis/<provider>/bin.
+  # ANDROMEDA_HOME/bin is owned by Andromeda. Provider executables remain
+  # opaque under clis/<provider>/bin; these three files are exact aliases for
+  # the same command router.
   shopt -s nullglob dotglob
   for entry in "$bin_dir"/*; do
-    [ "$entry" = "$launcher" ] && continue
     rm -rf -- "$entry"
   done
   shopt -u nullglob dotglob
-  if [ -e "$launcher" ] || [ -L "$launcher" ]; then
-    rm -rf -- "$launcher"
-  fi
 
   if is_windows; then
     command -v bun.exe >/dev/null 2>&1 || die "a native bun.exe is required for the Windows launcher"
@@ -318,6 +315,15 @@ install_launcher() {
   fi
   chmod 700 "$temporary"
   mv -f "$temporary" "$launcher"
+  if is_windows; then
+    suffix=".ps1"
+  else
+    suffix=""
+  fi
+  for alias in agent agents; do
+    cp -- "$launcher" "$bin_dir/$alias$suffix"
+    chmod 700 "$bin_dir/$alias$suffix"
+  done
 }
 
 install_default_capabilities() {
@@ -334,7 +340,7 @@ install_default_capabilities() {
   for skill_path in "$skill_root"/*; do
     [ -d "$skill_path" ] || continue
     name="$(basename "$skill_path")"
-    run_launcher install skill "$name" "$skill_path" --replace
+    run_launcher install skill "$name" "$skill_path" --replace --internal-bundled
   done
 
   identity_bundle="$ANDROMEDA_HOME/runtime/tmp/bundled-identity-source"
@@ -388,7 +394,7 @@ main() {
   run_launcher state doctor
 
   echo "Agent OS is ready: $(launcher_path)"
-  echo "Add $ANDROMEDA_HOME/bin to PATH to invoke agents by name."
+  echo "Add $ANDROMEDA_HOME/bin to PATH to invoke andromeda, agent, or agents."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

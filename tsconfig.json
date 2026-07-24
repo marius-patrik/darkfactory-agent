@@ -8,5 +8,9 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src/cli/**/*.ts", "src/cli/test/**/*.ts"]
+  "include": [
+    "src/cli/**/*.ts",
+    "src/commands/**/*.ts",
+    "src/sdk/shared-ts/plugin-manifest.ts"
+  ]
 }
